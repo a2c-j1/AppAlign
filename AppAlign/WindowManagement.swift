@@ -318,7 +318,7 @@ struct WindowMover {
 
         var lastError: WindowManagementError = .operationFailed
 
-        for attempt in 0...retryLimit {
+        for attempt in 0 ... retryLimit {
             do {
                 // Some apps clamp size based on their current position. Re-applying
                 // position after size keeps the requested origin explicit while the
