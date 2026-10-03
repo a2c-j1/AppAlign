@@ -14,3 +14,21 @@ Use Xcode 26 or newer on macOS 15 or newer. Open `AppAlign.xcodeproj` and run th
 ## Pull requests
 
 Describe the user-visible behavior, permission impact, and how the change was checked. Include screenshots for visual changes.
+
+Target pull requests as follows:
+
+- `feature/*` and `bugfix/*` → `develop`
+- `release/*` → `main` and `develop` (complete both merges for the release)
+- `hotfix/*` → `main` and `develop` (complete both merges)
+
+Use lowercase kebab-case branch names. Keep `main` release-ready and use `develop` for integration. Tag releases on `main` with a `v` prefix, such as `v0.1.0`.
+
+## Starting work
+
+```sh
+git switch develop
+git pull --ff-only
+git switch -c feature/short-name
+```
+
+Before opening a pull request, build the app with the command in the README and describe the result in the pull request.

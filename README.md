@@ -31,6 +31,18 @@ Open `AppAlign.xcodeproj` in Xcode, select the `AppAlign` scheme, and run. The p
 xcodebuild -project AppAlign.xcodeproj -scheme AppAlign -destination 'platform=macOS' build
 ```
 
+## Branching and releases
+
+This repository uses a lightweight Git Flow:
+
+- `main` contains release-ready code. Create version tags from `main` (for example, `v0.1.0`).
+- `develop` is the shared integration branch for the next release.
+- Create `feature/<short-name>` from `develop`, then merge it back into `develop` through a pull request.
+- Create `release/<version>` from `develop` when preparing a release. Stabilize it there, then merge it into both `main` and `develop` and tag the `main` merge.
+- Create `hotfix/<short-name>` from `main` for urgent production fixes, then merge the fix into both `main` and `develop`.
+
+Use pull requests for shared branches (`develop` and `main`); do not push feature work directly to them. Branch names use lowercase kebab-case. Commit subjects describe the intent of the change.
+
 ## Repository layout
 
 - `AppAlign/` — application source and assets
