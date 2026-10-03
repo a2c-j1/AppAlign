@@ -36,7 +36,10 @@ xcodebuild -project AppAlign.xcodeproj -scheme AppAlign -destination 'platform=m
 - `AppAlign/` — application source and assets
 - `AppAlign.xcodeproj/` — Xcode project
 - `docs/` — product and technical notes
+- `THIRD_PARTY_NOTICES.md` — third-party reference and attribution requirements
 
 ## License
 
 All rights reserved. Licensing will be decided before public distribution.
+
+Third-party references and attribution requirements are documented in `THIRD_PARTY_NOTICES.md`. This does not change the license of AppAlign source code.
