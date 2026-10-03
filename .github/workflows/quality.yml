@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   swift-quality:
-    name: SwiftFormat + SwiftLint
+    name: SwiftFormat + SwiftLint + Build
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -29,6 +29,9 @@ jobs:
 
       - name: Lint Swift
         run: swiftlint lint --config .swiftlint.yml
+
+      - name: Build macOS app
+        run: xcodebuild -quiet -project AppAlign.xcodeproj -scheme AppAlign -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
 
   semgrep:
     name: Semgrep

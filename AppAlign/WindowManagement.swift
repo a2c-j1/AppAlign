@@ -1,6 +1,6 @@
 import Combine
 import AppKit
-import ApplicationServices
+@preconcurrency import ApplicationServices
 import Foundation
 
 enum WindowManagementError: LocalizedError {
