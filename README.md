@@ -1,0 +1,42 @@
+# AppAlign
+
+AppAlign is a native macOS window manager inspired by Microsoft PowerToys FancyZones. It will let people define screen zones and place windows into them with predictable keyboard and drag interactions.
+
+## Project status
+
+This repository contains the initial project scaffold. The first milestone is a dependable single-display zone editor and window placement flow. Multi-display layouts, import/export, and advanced automation can follow once the core interaction is proven.
+
+## Product principles
+
+- Native macOS experience, built with Swift and SwiftUI.
+- Make the layout visible and understandable before changing a window.
+- Keep window management local; request Accessibility access only when the user enables placement.
+- Start with explicit user actions and reversible placement. Avoid background behavior that surprises people.
+
+## Planned first milestone
+
+1. Show connected displays and an editable zone layout.
+2. Provide a small set of useful templates and a custom split editor.
+3. Let users assign a keyboard shortcut and move the focused window into a zone.
+4. Persist layouts per display and restore them on launch.
+5. Explain and verify the macOS Accessibility permission flow.
+
+## Development
+
+Requirements: macOS 15 or later, Xcode 26 or later.
+
+Open `AppAlign.xcodeproj` in Xcode, select the `AppAlign` scheme, and run. The project uses SwiftUI and has no third-party package dependencies.
+
+```sh
+xcodebuild -project AppAlign.xcodeproj -scheme AppAlign -destination 'platform=macOS' build
+```
+
+## Repository layout
+
+- `AppAlign/` — application source and assets
+- `AppAlign.xcodeproj/` — Xcode project
+- `docs/` — product and technical notes
+
+## License
+
+All rights reserved. Licensing will be decided before public distribution.
