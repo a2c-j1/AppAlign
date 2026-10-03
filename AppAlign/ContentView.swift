@@ -1,33 +1,92 @@
 import SwiftUI
 
 struct ContentView: View {
+    @EnvironmentObject private var placementController: PlacementController
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("AppAlign")
                     .font(.largeTitle.weight(.semibold))
-                Text("Arrange windows into spaces that fit your work.")
+                Text("Accessibility and window-placement proof of concept")
                     .foregroundStyle(.secondary)
             }
 
-            ContentUnavailableView {
-                Label("Your first layout starts here", systemImage: "rectangle.split.3x1")
-            } description: {
-                Text("Display detection and the zone editor are the first milestone.")
-            }
-            .frame(minHeight: 220)
+            GroupBox("Accessibility") {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label(
+                            placementController.accessibilityGranted ? "Access granted" : "Access required",
+                            systemImage: placementController.accessibilityGranted ? "checkmark.shield" : "hand.raised"
+                        )
+                        Spacer()
 
-            HStack {
-                Label("Accessibility access will be requested when placement is enabled.", systemImage: "hand.raised")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Get Started") {}
-                    .buttonStyle(.borderedProminent)
-                    .disabled(true)
+                        if placementController.accessibilityGranted {
+                            Button("Refresh") {
+                                placementController.refreshAccessibility()
+                            }
+                        } else {
+                            Button("Request Access") {
+                                placementController.requestAccessibilityAccess()
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+
+                    Text("AppAlign only requests Accessibility access when window placement is used. The app is intentionally not sandboxed because macOS Accessibility APIs must control windows owned by other applications.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
             }
+
+            GroupBox("Focused-window placement") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Keep another app active, open the AppAlign menu-bar item, and choose “Capture Focused Window”. AppAlign excludes its own windows, dialogs, minimized/full-screen windows, and windows whose position or size is not writable.")
+                        .font(.callout)
+
+                    HStack {
+                        Button("Move +32 pt") {
+                            placementController.moveCapturedWindow()
+                        }
+                        .disabled(!placementController.hasCapturedWindow)
+
+                        Button("Restore") {
+                            placementController.restoreCapturedWindow()
+                        }
+                        .disabled(!placementController.canRestore)
+
+                        Button("Forget Capture") {
+                            placementController.clearCapture()
+                        }
+                        .disabled(!placementController.hasCapturedWindow)
+                    }
+
+                    Text(placementController.statusMessage)
+                        .font(.callout.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+
+                    if let requestedFrame = placementController.requestedFrame {
+                        Text("Requested: \(PlacementController.describe(requestedFrame))")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let actualFrame = placementController.actualFrame {
+                        Text("Actual: \(PlacementController.describe(actualFrame))")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
+
+            Spacer()
         }
         .padding(28)
-        .frame(minWidth: 560, minHeight: 390)
+        .frame(minWidth: 620, minHeight: 430)
     }
 }
