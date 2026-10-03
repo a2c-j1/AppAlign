@@ -1,0 +1,14 @@
+version = 1
+name = "AppAlign"
+
+[setup]
+script = "scripts/setup.sh"
+
+[setup.darwin]
+script = "scripts/setup.sh"
+
+[cleanup]
+script = "scripts/cleanup.sh"
+
+[cleanup.darwin]
+script = "scripts/cleanup.sh"

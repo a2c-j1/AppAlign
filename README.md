@@ -52,3 +52,15 @@ Use pull requests for shared branches (`develop` and `main`); do not push featur
 ## License
 
 All rights reserved. Licensing will be decided before public distribution.
+
+## Automation
+
+The repository keeps build tasks in `scripts/` and calls them from Codex environment setup and GitHub Actions:
+
+- `scripts/setup.sh` checks macOS/Xcode and resolves Swift packages.
+- `scripts/build.sh` builds the app into `build/DerivedData`.
+- `scripts/test.sh` runs build smoke checks for the app bundle and executable. XCTest coverage can be added when a test target is introduced.
+- `scripts/release.sh [version]` archives an unsigned macOS app and creates a ZIP plus SHA-256 file under `build/release`.
+- `scripts/cleanup.sh` removes generated files under `build/`.
+
+Pushes and pull requests to `main` or `develop` run the smoke checks. Pushing a `v*` tag creates a GitHub release with the ZIP and checksum.
