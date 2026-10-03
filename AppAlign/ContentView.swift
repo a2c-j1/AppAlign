@@ -43,7 +43,11 @@ struct ContentView: View {
 
             GroupBox("Focused-window placement") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Keep another app active, open the AppAlign menu-bar item, and choose “Capture Focused Window”. AppAlign excludes its own windows, dialogs, minimized/full-screen windows, and windows whose position or size is not writable.")
+                    Text(
+                        "Keep another app active, open the AppAlign menu-bar item, and choose “Capture Focused Window”. " +
+                            "AppAlign excludes its own windows, dialogs, minimized/full-screen windows, and windows whose " +
+                            "position or size is not writable."
+                    )
                         .font(.callout)
 
                     HStack {

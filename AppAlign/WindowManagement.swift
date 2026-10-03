@@ -160,6 +160,8 @@ struct AXWindow {
         }
 
         var point = CGPoint.zero
+        // CoreFoundation type ID was checked immediately above.
+        // swiftlint:disable:next force_cast
         guard AXValueGetValue(value as! AXValue, .cgPoint, &point) else {
             throw WindowManagementError.invalidAttribute(attribute: attribute as String)
         }
@@ -183,6 +185,8 @@ struct AXWindow {
         }
 
         var size = CGSize.zero
+        // CoreFoundation type ID was checked immediately above.
+        // swiftlint:disable:next force_cast
         guard AXValueGetValue(value as! AXValue, .cgSize, &size) else {
             throw WindowManagementError.invalidAttribute(attribute: attribute as String)
         }
@@ -223,6 +227,8 @@ struct WindowRepository {
             throw WindowManagementError.invalidFocusedWindow
         }
 
+        // CoreFoundation type ID was checked immediately above.
+        // swiftlint:disable:next force_cast
         let element = value as! AXUIElement
         var pid = applicationPID
         let pidResult = AXUIElementGetPid(element, &pid)
