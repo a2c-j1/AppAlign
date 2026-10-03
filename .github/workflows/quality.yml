@@ -1,0 +1,43 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift-quality:
+    name: SwiftFormat + SwiftLint
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Swift quality tools
+        run: brew install swiftformat swiftlint
+
+      - name: Check formatting
+        run: swiftformat --lint AppAlign --config .swiftformat
+
+      - name: Lint Swift
+        run: swiftlint lint --config .swiftlint.yml
+
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Scan architectural rules
+        run: semgrep scan --config .semgrep.yml --error AppAlign
