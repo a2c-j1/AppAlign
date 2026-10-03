@@ -1,0 +1,33 @@
+included:
+  - AppAlign
+
+excluded:
+  - AppAlign/Assets.xcassets
+
+strict: true
+reporter: github-actions-logging
+
+line_length:
+  warning: 240
+  error: 320
+
+file_length:
+  warning: 600
+  error: 800
+
+type_body_length:
+  warning: 250
+  error: 350
+
+function_body_length:
+  warning: 80
+  error: 120
+
+cyclomatic_complexity:
+  warning: 20
+  error: 30
+
+identifier_name:
+  excluded:
+    - id
+    - pid

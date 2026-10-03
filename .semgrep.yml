@@ -1,0 +1,46 @@
+rules:
+  - id: appalign.swift.no-force-try
+    languages:
+      - generic
+    severity: ERROR
+    message: Avoid try! in runtime window-management code; propagate or handle the failure.
+    paths:
+      include:
+        - AppAlign/**/*.swift
+    pattern-regex: '\btry!\s+'
+
+  - id: appalign.ax.centralize-direct-access
+    languages:
+      - generic
+    severity: ERROR
+    message: Keep direct AXUIElement access inside WindowManagement.swift so timeout, filtering, and error handling stay centralized.
+    paths:
+      include:
+        - AppAlign/**/*.swift
+      exclude:
+        - AppAlign/WindowManagement.swift
+    pattern-regex: '\bAXUIElement(?:CreateApplication|CopyAttributeValue|GetPid|IsAttributeSettable|PerformAction|SetAttributeValue|SetMessagingTimeout)\s*\('
+
+  - id: appalign.input.centralize-event-tap
+    languages:
+      - generic
+    severity: ERROR
+    message: Create CGEvent taps only inside InputMonitor.swift; event callbacks must remain a dedicated input boundary.
+    paths:
+      include:
+        - AppAlign/**/*.swift
+      exclude:
+        - AppAlign/InputMonitor.swift
+    pattern-regex: '\b(?:CGEvent\.tapCreate|CGEventTapCreate)\s*\('
+
+  - id: appalign.spaces.centralize-private-api
+    languages:
+      - generic
+    severity: ERROR
+    message: Keep private CGS/SLS Space API calls isolated behind SpaceProvider.swift.
+    paths:
+      include:
+        - AppAlign/**/*.swift
+      exclude:
+        - AppAlign/SpaceProvider.swift
+    pattern-regex: '\b(?:CGS|SLS)[A-Za-z0-9_]*\s*\('
