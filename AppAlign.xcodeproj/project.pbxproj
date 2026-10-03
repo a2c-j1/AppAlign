@@ -8,12 +8,12 @@
 
 /* Begin PBXBuildFile section */
 			A10000000000000000000001 /* AppAlignApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* AppAlignApp.swift */; };
-			A10000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* ContentView.swift */; };
+			A10000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* ContentView.swift */; };\n			A10000000000000000000003 /* WindowManagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* WindowManagement.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 			A20000000000000000000001 /* AppAlignApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAlignApp.swift; sourceTree = "<group>"; };
-			A20000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+			A20000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };\n			A20000000000000000000005 /* WindowManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowManagement.swift; sourceTree = "<group>"; };
 			A20000000000000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 			A20000000000000000000004 /* AppAlign.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AppAlign.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -128,7 +128,7 @@
 						PRODUCT_NAME = "$(TARGET_NAME)";
 						SDKROOT = macosx;
 						SWIFT_EMIT_LOC_STRINGS = YES;
-						SWIFT_VERSION = 5.0;
+						SWIFT_VERSION = 6.0;
 						TARGETED_DEVICE_FAMILY = 1;
 					};
 					name = Debug;
@@ -150,7 +150,7 @@
 						PRODUCT_NAME = "$(TARGET_NAME)";
 						SDKROOT = macosx;
 						SWIFT_EMIT_LOC_STRINGS = YES;
-						SWIFT_VERSION = 5.0;
+						SWIFT_VERSION = 6.0;
 						TARGETED_DEVICE_FAMILY = 1;
 					};
 					name = Release;
