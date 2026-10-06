@@ -25,16 +25,7 @@ enum LayoutEngine {
     }
 
     static func gridZones(_ grid: GridLayout, in area: CGRect, spacing: CGFloat = 0) throws -> [Zone] {
-        let dimensions = grid.rows.multipliedReportingOverflow(by: grid.columns)
-        guard grid.rows > 0, grid.rows <= maximumDimension,
-              grid.columns > 0, grid.columns <= maximumDimension,
-              !dimensions.overflow, dimensions.partialValue <= maximumCells else {
-            throw LayoutError.invalidDimensions
-        }
-        guard grid.rowPercentages.count == grid.rows, grid.columnPercentages.count == grid.columns,
-              validPercentages(grid.rowPercentages), validPercentages(grid.columnPercentages) else {
-            throw LayoutError.invalidPercentages
-        }
+        try validateGridStructure(grid)
         let boundsByID = try validatedMapBounds(grid.cellChildMap, rows: grid.rows, columns: grid.columns)
         guard spacing.isFinite, spacing >= 0 else { throw LayoutError.invalidSpacing }
         guard DisplayGeometry.isFinite(area), area.width > 0, area.height > 0 else { throw LayoutError.invalidArea }
@@ -57,6 +48,20 @@ enum LayoutEngine {
             zones.append(Zone(id: ZoneID(rawValue: child), frame: CGRect(x: zoneOriginX, y: zoneOriginY, width: right - zoneOriginX, height: bottom - zoneOriginY)))
         }
         return zones
+    }
+
+    static func validateGridStructure(_ grid: GridLayout) throws {
+        let dimensions = grid.rows.multipliedReportingOverflow(by: grid.columns)
+        guard grid.rows > 0, grid.rows <= maximumDimension,
+              grid.columns > 0, grid.columns <= maximumDimension,
+              !dimensions.overflow, dimensions.partialValue <= maximumCells else {
+            throw LayoutError.invalidDimensions
+        }
+        guard grid.rowPercentages.count == grid.rows, grid.columnPercentages.count == grid.columns,
+              validPercentages(grid.rowPercentages), validPercentages(grid.columnPercentages) else {
+            throw LayoutError.invalidPercentages
+        }
+        _ = try validatedMapBounds(grid.cellChildMap, rows: grid.rows, columns: grid.columns)
     }
 
     static func canvasZones(_ canvas: CanvasLayout, in area: CGRect) throws -> [Zone] {
@@ -107,8 +112,7 @@ enum LayoutEngine {
             let next = cumulative.addingReportingOverflow(percentage)
             guard !next.overflow else { throw LayoutError.invalidPercentages }
             cumulative = next.partialValue
-            let fraction = CGFloat(cumulative) / CGFloat(percentageTotal)
-            let edge = start + floor(length * fraction)
+            let edge = start + floor(length * CGFloat(cumulative) / CGFloat(percentageTotal))
             guard edge.isFinite else { throw LayoutError.arithmeticOverflow }
             result.append(edge)
         }

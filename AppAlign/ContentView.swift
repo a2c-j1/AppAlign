@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var placementController: PlacementController
     @EnvironmentObject private var layoutController: LayoutController
+    @State private var isLayoutEditorPresented = false
 
     var body: some View {
         ScrollView {
@@ -27,6 +28,9 @@ struct ContentView: View {
                             }
                         }
                         .disabled(!layoutController.canEdit || layoutController.displayProvider.snapshot.displays.isEmpty)
+
+                        Button("Edit Layout…") { isLayoutEditorPresented = true }
+                            .disabled(!layoutController.canEdit || layoutController.selectedDisplayID == nil)
 
                         Button("Refresh Displays") {
                             layoutController.refreshDisplays()
@@ -159,6 +163,11 @@ struct ContentView: View {
         .frame(minWidth: 760, minHeight: 600)
         .task {
             if !layoutController.persistenceReady { await layoutController.loadPersistentState() }
+        }
+        .sheet(isPresented: $isLayoutEditorPresented) {
+            if let displayID = layoutController.selectedDisplayID {
+                LayoutEditorView(controller: layoutController, initialDisplayID: displayID)
+            }
         }
     }
 }

@@ -39,12 +39,14 @@ struct PersistedLayout: Codable, Equatable, Sendable {
     let spacing: Double
     let template: String
     let zoneCount: Int
+    let name: String?
 
-    init(id: UUID, definition: LayoutDefinition, spacing: Double, template: LayoutTemplate, zoneCount: Int) {
+    init(id: UUID, definition: LayoutDefinition, spacing: Double, template: LayoutTemplate, zoneCount: Int, name: String? = nil) {
         self.id = id
         self.spacing = spacing
         self.template = template.rawValue
         self.zoneCount = zoneCount
+        self.name = name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         switch definition {
         case .grid(let grid):
             kind = .grid
@@ -118,6 +120,10 @@ struct PersistedLayout: Codable, Equatable, Sendable {
     }
 
     func validate() throws {
+        if let name {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, trimmed == name else { throw PersistenceError.invalidData("layout name") }
+        }
         guard spacing.isFinite, spacing >= 0, (1 ... LayoutEngine.maximumDimension).contains(zoneCount),
               LayoutTemplate(rawValue: template) != nil else { throw PersistenceError.invalidData("layout metadata") }
         let decodedDefinition = try definition()
@@ -131,13 +137,17 @@ struct PersistedLayout: Codable, Equatable, Sendable {
         let definition = try definition()
         switch definition {
         case .grid(let grid):
-            _ = try LayoutEngine.gridZones(grid, in: CGRect(x: 0, y: 0, width: 10_000, height: 10_000))
+            try LayoutEngine.validateGridStructure(grid)
         case .canvas(let canvas):
             _ = try LayoutEngine.canvasZones(canvas, in: CGRect(x: 0, y: 0, width: 10_000, height: 10_000))
         case .focus(let canvas):
             _ = try LayoutEngine.canvasZones(canvas, in: CGRect(x: 0, y: 0, width: 10_000, height: 10_000))
         }
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 enum PersistedSetting: Codable, Equatable, Sendable {

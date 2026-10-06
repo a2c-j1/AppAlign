@@ -2,6 +2,22 @@ import Combine
 import CoreGraphics
 import Foundation
 
+struct EditorOperationIdentity: Equatable, Sendable {
+    let token: UUID
+    let targetDisplay: DisplaySelectionID
+    let revision: UInt64
+}
+
+struct EditorCatalogSnapshot: Sendable {
+    let layouts: [PersistedLayout]
+    let appliedLayoutID: UUID
+}
+
+enum EditorOperationResult: Sendable {
+    case success(PersistedLayout?)
+    case failure(String)
+}
+
 @MainActor
 final class LayoutController: ObservableObject {
     let displayProvider: DisplayProvider
@@ -33,6 +49,8 @@ final class LayoutController: ObservableObject {
     private var lastSaveSucceeded = true
     private var lastFailedOperation: (@MainActor (PersistentStoreCoordinator) async throws -> Void)?
     private var isRetryingSave = false
+    private var editorOperationTargets: [UUID: DisplaySelectionID] = [:]
+    private var editorOperationRevisions: [UUID: UInt64] = [:]
 
     init(displayProvider: DisplayProvider = DisplayProvider(), storeCoordinator: PersistentStoreCoordinator? = nil) {
         self.displayProvider = displayProvider
@@ -213,7 +231,264 @@ final class LayoutController: ObservableObject {
 }
 
 @MainActor
+extension LayoutController {
+    func editorCatalog(for displayID: DisplaySelectionID) -> EditorCatalogSnapshot {
+        let display = displayProvider.snapshot.displays.first { $0.id == displayID }
+        let appliedID: UUID
+        if let uuid = display?.persistentID?.uuid {
+            appliedID = assignments[uuid]?.layoutID ?? PersistentStoreCoordinator.defaultLayoutID
+        } else if case .session(let sessionID) = displayID {
+            appliedID = sessionLayouts[sessionID]?.id ?? PersistentStoreCoordinator.defaultLayoutID
+        } else {
+            appliedID = PersistentStoreCoordinator.defaultLayoutID
+        }
+        var catalog = savedLayouts
+        catalog[PersistentStoreCoordinator.defaultLayoutID] = catalog[PersistentStoreCoordinator.defaultLayoutID] ?? PersistentStoreCoordinator.defaultLayout()
+        return EditorCatalogSnapshot(layouts: catalog.values.sorted { $0.id.uuidString < $1.id.uuidString }, appliedLayoutID: appliedID)
+    }
+
+    func saveEditorLayout(_ proposed: PersistedLayout, identity: EditorOperationIdentity, copyOnWrite: Bool = true) async -> EditorOperationResult {
+        guard registerEditorIdentity(identity) else { return .failure("This editor operation is stale.") }
+        guard let storeCoordinator else { return .failure("Persistent storage is unavailable.") }
+        do { try proposed.validate() } catch { return .failure(error.localizedDescription) }
+        let base = saveChain
+        let operation = Task<EditorOperationResult, Never> { @MainActor [weak self] in
+            await base?.value
+            guard let self, self.isCurrent(identity), self.acceptsChanges else { return .failure("This editor operation was superseded.") }
+            do {
+                guard let display = self.displayProvider.snapshot.displays.first(where: { $0.id == identity.targetDisplay }) else {
+                    return .failure("The selected display is no longer connected.")
+                }
+                var candidate = proposed
+                let targetUUID = display.persistentID?.uuid
+                if copyOnWrite && (candidate.id == PersistentStoreCoordinator.defaultLayoutID || self.isApplied(candidate.id) || self.isShared(candidate.id, excluding: targetUUID)) {
+                    candidate = try self.reidentified(candidate, id: UUID())
+                }
+                try candidate.validate()
+                var layouts = self.savedLayouts
+                layouts[candidate.id] = candidate
+                try await storeCoordinator.saveLayouts(Array(layouts.values))
+                self.savedLayouts = layouts
+                self.markEditorPersistenceSucceeded()
+                guard self.isCurrent(identity) else { return .failure("This editor operation was superseded after saving.") }
+                self.errorMessage = nil
+                return .success(candidate)
+            } catch {
+                self.persistenceErrorMessage = error.localizedDescription
+                self.errorMessage = error.localizedDescription
+                if let loaded = try? await storeCoordinator.load() { self.savedLayouts = loaded.layouts }
+                return .failure(error.localizedDescription)
+            }
+        }
+        saveChain = Task { @MainActor in _ = await operation.value }
+        return await operation.value
+    }
+
+    func applyEditorLayout(_ id: UUID, identity: EditorOperationIdentity) async -> EditorOperationResult {
+        guard registerEditorIdentity(identity) else { return .failure("This editor operation is stale.") }
+        guard let storeCoordinator else { return .failure("Persistent storage is unavailable.") }
+        let base = saveChain
+        let operation = Task<EditorOperationResult, Never> { @MainActor [weak self] in
+            await base?.value
+            guard let self, self.isCurrent(identity), self.acceptsChanges else { return .failure("This editor operation was superseded.") }
+            guard let display = self.displayProvider.snapshot.displays.first(where: { $0.id == identity.targetDisplay }),
+                  let layout = self.savedLayouts[id] ?? (id == PersistentStoreCoordinator.defaultLayoutID ? PersistentStoreCoordinator.defaultLayout() : nil) else {
+                return .failure("The display or saved layout is no longer available.")
+            }
+            do {
+                if let uuid = display.persistentID?.uuid {
+                    var nextAssignments = self.assignments
+                    nextAssignments[uuid] = PersistedAssignment(displayUUID: uuid, spaceScope: .common, layoutID: id)
+                    var layouts = self.savedLayouts
+                    layouts[layout.id] = layout
+                    try await storeCoordinator.saveLayoutAndAssignments(Array(layouts.values), Array(nextAssignments.values))
+                    self.savedLayouts = layouts
+                    self.assignments = nextAssignments
+                } else if case .session(let sessionID) = identity.targetDisplay {
+                    self.sessionLayouts[sessionID] = layout
+                } else {
+                    return .failure("This display cannot be assigned for this session.")
+                }
+                if self.selectedDisplayID == identity.targetDisplay { self.showLayoutForSelectedDisplay() }
+                self.markEditorPersistenceSucceeded()
+                guard self.isCurrent(identity) else { return .failure("This editor operation was superseded after saving.") }
+                return .success(layout)
+            } catch {
+                self.persistenceErrorMessage = error.localizedDescription
+                self.errorMessage = error.localizedDescription
+                if let loaded = try? await storeCoordinator.load() {
+                    self.savedLayouts = loaded.layouts
+                    self.assignments = loaded.assignments
+                    if self.selectedDisplayID == identity.targetDisplay { self.showLayoutForSelectedDisplay() }
+                }
+                return .failure(error.localizedDescription)
+            }
+        }
+        saveChain = Task { @MainActor in _ = await operation.value }
+        return await operation.value
+    }
+
+    func renameEditorLayout(_ id: UUID, to name: String, identity: EditorOperationIdentity) async -> EditorOperationResult {
+        guard registerEditorIdentity(identity) else { return .failure("This editor operation is stale.") }
+        guard id != PersistentStoreCoordinator.defaultLayoutID else { return .failure("The default layout cannot be renamed.") }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .failure("Enter a layout name.") }
+        guard let storeCoordinator else { return .failure("Persistent storage is unavailable.") }
+        let base = saveChain
+        let operation = Task<EditorOperationResult, Never> { @MainActor [weak self] in
+            await base?.value
+            guard let self, self.isCurrent(identity), self.acceptsChanges else { return .failure("This editor operation was superseded.") }
+            guard self.displayProvider.snapshot.displays.contains(where: { $0.id == identity.targetDisplay }),
+                  let current = self.savedLayouts[id], let definition = try? current.definition() else {
+                return .failure("The selected layout is no longer available.")
+            }
+            let renamed = PersistedLayout(id: current.id, definition: definition, spacing: current.spacing,
+                                          template: LayoutTemplate(rawValue: current.template) ?? .grid,
+                                          zoneCount: current.zoneCount, name: trimmed)
+            do {
+                try renamed.validate()
+                var layouts = self.savedLayouts
+                layouts[id] = renamed
+                try await storeCoordinator.saveLayouts(Array(layouts.values))
+                self.savedLayouts = layouts
+                self.markEditorPersistenceSucceeded()
+                guard self.isCurrent(identity) else { return .failure("This editor operation was superseded after saving.") }
+                return .success(renamed)
+            } catch {
+                self.persistenceErrorMessage = error.localizedDescription
+                self.errorMessage = error.localizedDescription
+                if let loaded = try? await storeCoordinator.load() { self.savedLayouts = loaded.layouts }
+                return .failure(error.localizedDescription)
+            }
+        }
+        saveChain = Task { @MainActor in _ = await operation.value }
+        return await operation.value
+    }
+
+    func duplicateEditorLayout(_ id: UUID, identity: EditorOperationIdentity) async -> EditorOperationResult {
+        guard registerEditorIdentity(identity) else { return .failure("This editor operation is stale.") }
+        guard let storeCoordinator else { return .failure("Persistent storage is unavailable.") }
+        let base = saveChain
+        let operation = Task<EditorOperationResult, Never> { @MainActor [weak self] in
+            await base?.value
+            guard let self, self.isCurrent(identity), self.acceptsChanges else { return .failure("This editor operation was superseded.") }
+            guard self.displayProvider.snapshot.displays.contains(where: { $0.id == identity.targetDisplay }),
+                  let source = self.savedLayouts[id] ?? (id == PersistentStoreCoordinator.defaultLayoutID ? PersistentStoreCoordinator.defaultLayout() : nil) else {
+                return .failure("The selected layout is no longer available.")
+            }
+            do {
+                let duplicate = try self.reidentified(source, id: UUID(), name: "\(source.name ?? source.template) Copy")
+                try duplicate.validate()
+                var layouts = self.savedLayouts
+                layouts[duplicate.id] = duplicate
+                try await storeCoordinator.saveLayouts(Array(layouts.values))
+                self.savedLayouts = layouts
+                self.markEditorPersistenceSucceeded()
+                guard self.isCurrent(identity) else { return .failure("This editor operation was superseded after saving.") }
+                return .success(duplicate)
+            } catch {
+                self.persistenceErrorMessage = error.localizedDescription
+                self.errorMessage = error.localizedDescription
+                if let loaded = try? await storeCoordinator.load() { self.savedLayouts = loaded.layouts }
+                return .failure(error.localizedDescription)
+            }
+        }
+        saveChain = Task { @MainActor in _ = await operation.value }
+        return await operation.value
+    }
+
+    func deleteEditorLayout(_ id: UUID, identity: EditorOperationIdentity) async -> EditorOperationResult {
+        guard registerEditorIdentity(identity) else { return .failure("This editor operation is stale.") }
+        guard id != PersistentStoreCoordinator.defaultLayoutID, let storeCoordinator else {
+            return .failure("This layout cannot be deleted.")
+        }
+        let base = saveChain
+        let operation = Task<EditorOperationResult, Never> { @MainActor [weak self] in
+            await base?.value
+            guard let self, self.isCurrent(identity), self.acceptsChanges else { return .failure("This editor operation was superseded.") }
+            guard self.savedLayouts[id] != nil else { return .failure("This layout is no longer available.") }
+            let nextAssignments = self.assignments.filter { $0.value.layoutID != id }
+            var nextLayouts = self.savedLayouts
+            nextLayouts.removeValue(forKey: id)
+            do {
+                try await storeCoordinator.saveAssignmentsAndLayouts(Array(nextAssignments.values), Array(nextLayouts.values))
+                self.assignments = nextAssignments
+                self.savedLayouts = nextLayouts
+                for sessionID in Array(self.sessionLayouts.keys) where self.sessionLayouts[sessionID]?.id == id {
+                    self.sessionLayouts.removeValue(forKey: sessionID)
+                }
+                if self.selectedDisplayID == identity.targetDisplay || self.currentLayout.id == id { self.showLayoutForSelectedDisplay() }
+                self.markEditorPersistenceSucceeded()
+                guard self.isCurrent(identity) else { return .failure("This editor operation was superseded after saving.") }
+                return .success(nil)
+            } catch {
+                self.persistenceErrorMessage = error.localizedDescription
+                self.errorMessage = error.localizedDescription
+                if let loaded = try? await storeCoordinator.load() {
+                    self.savedLayouts = loaded.layouts
+                    self.assignments = loaded.assignments
+                    if self.selectedDisplayID == identity.targetDisplay || self.currentLayout.id == id { self.showLayoutForSelectedDisplay() }
+                }
+                return .failure(error.localizedDescription)
+            }
+        }
+        saveChain = Task { @MainActor in _ = await operation.value }
+        return await operation.value
+    }
+
+}
+
+@MainActor
 private extension LayoutController {
+    func registerEditorIdentity(_ identity: EditorOperationIdentity) -> Bool {
+        guard acceptsChanges, persistenceReady, canEdit,
+              displayProvider.snapshot.displays.contains(where: { $0.id == identity.targetDisplay }) else { return false }
+        if let target = editorOperationTargets[identity.token], target != identity.targetDisplay { return false }
+        guard identity.revision > (editorOperationRevisions[identity.token] ?? 0) else { return false }
+        editorOperationTargets[identity.token] = identity.targetDisplay
+        editorOperationRevisions[identity.token] = identity.revision
+        return true
+    }
+
+    func isCurrent(_ identity: EditorOperationIdentity) -> Bool {
+        editorOperationTargets[identity.token] == identity.targetDisplay && editorOperationRevisions[identity.token] == identity.revision
+    }
+
+    func markEditorPersistenceSucceeded() {
+        // A later editor write is the new durable authority; retrying a closure
+        // captured by an older legacy save could restore stale catalog/assignments.
+        lastSaveSucceeded = true
+        lastFailedOperation = nil
+        canRetrySave = false
+        persistenceErrorMessage = nil
+    }
+
+    func isShared(_ id: UUID, excluding displayUUID: UUID?) -> Bool {
+        assignments.values.contains { assignment in assignment.layoutID == id && assignment.displayUUID != displayUUID }
+    }
+
+    func isApplied(_ id: UUID) -> Bool {
+        assignments.values.contains(where: { $0.layoutID == id }) || sessionLayouts.values.contains(where: { $0.id == id })
+    }
+
+    func reidentified(_ layout: PersistedLayout, id: UUID, name: String? = nil) throws -> PersistedLayout {
+        let oldDefinition = try layout.definition()
+        let definition: LayoutDefinition
+        switch oldDefinition {
+        case .grid(let grid):
+            definition = .grid(GridLayout(id: LayoutID(rawValue: id), rows: grid.rows, columns: grid.columns,
+                                          rowPercentages: grid.rowPercentages, columnPercentages: grid.columnPercentages,
+                                          cellChildMap: grid.cellChildMap))
+        case .canvas(let canvas):
+            definition = .canvas(CanvasLayout(id: LayoutID(rawValue: id), referenceSize: canvas.referenceSize, zones: canvas.zones))
+        case .focus(let canvas):
+            definition = .focus(CanvasLayout(id: LayoutID(rawValue: id), referenceSize: canvas.referenceSize, zones: canvas.zones))
+        }
+        return PersistedLayout(id: id, definition: definition, spacing: layout.spacing,
+                               template: LayoutTemplate(rawValue: layout.template) ?? .grid,
+                               zoneCount: layout.zoneCount, name: name ?? layout.name)
+    }
+
     private func userChangedDefinition() {
         guard canEdit, !isApplyingStoredValues, selectedDisplay != nil else { return }
         do {
@@ -221,7 +496,7 @@ private extension LayoutController {
                 for: template, zoneCount: zoneCount, area: selectedDisplay?.workArea ?? .zero, spacing: spacing
             )
             let id = writableLayoutID()
-            currentLayout = PersistedLayout(id: id, definition: definition, spacing: spacing, template: template, zoneCount: zoneCount)
+            currentLayout = PersistedLayout(id: id, definition: definition, spacing: spacing, template: template, zoneCount: zoneCount, name: currentLayout.name)
             if case .session(let sessionID)? = selectedDisplayID {
                 sessionLayouts[sessionID] = currentLayout
             } else {

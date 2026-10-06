@@ -29,6 +29,14 @@ Open `AppAlign.xcodeproj` in Xcode, select the `AppAlign` scheme, and run. The p
 
 Layouts, display assignments, and settings are stored as separate versioned JSON files under `~/Library/Application Support/jp.a2c.AppAlign/`. Assignments contain persistent display UUIDs and the common Space scope; session-only display identities stay in memory. Invalid or unsupported saved files are copied to uniquely named backups before defaults replace them. If backup or recovery fails, AppAlign protects the original file and reports the save error. On normal quit, pending saves finish before the app exits. A forced process kill can interrupt a write.
 
+Custom layouts may include an optional display name in the existing layout schema. Older AppAlign versions can read files containing this extra field, but if an older version saves the layout again it will omit the name.
+
+## Edit layouts
+
+Open **Display layout → Edit Layout…**, choose a display, then select a saved layout or a template. **Save** stores the definition without changing what the display currently uses; **Apply** assigns the saved definition to that display. **Cancel** discards the current draft. Changing displays, layouts, or templates with unsaved changes prompts to save or discard the draft, or keep editing. Duplicate makes a separately editable copy. The default layout cannot be renamed or deleted; deleting a custom layout clears its display assignments and returns those displays to the default. Use **Reset to Template** to replace a grid with a chosen zone count; this edit can be undone.
+
+Grid ratios are positive integer values that sum to 10000 (for example `2500, 5000, 2500`). Drag a grid boundary to adjust two adjacent ratios. Merge only accepts a rectangular union. Canvas layouts support overlapping rectangles, dragging, resizing, and selecting a covered zone from the zone list.
+
 ```sh
 xcodebuild -project AppAlign.xcodeproj -scheme AppAlign -destination 'platform=macOS' build
 ```

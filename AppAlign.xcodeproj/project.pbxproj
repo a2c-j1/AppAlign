@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 			A10000000000000000000001 /* AppAlignApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* AppAlignApp.swift */; };
 			A10000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* ContentView.swift */; };
+			A10000000000000000000006 /* LayoutEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* LayoutEditorView.swift */; };
+			A10000000000000000000007 /* LayoutEditorPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* LayoutEditorPreview.swift */; };
 			A10000000000000000000003 /* WindowManagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* WindowManagement.swift */; };
 			B10000000000000000000001 /* DisplayModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* DisplayModels.swift */; };
 			B10000000000000000000002 /* DisplayGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* DisplayGeometry.swift */; };
@@ -31,12 +33,20 @@
 			B10000000000000000000013 /* LayoutController.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000007 /* LayoutController.swift */; };
 			B10000000000000000000014 /* WindowManagement.swift in Tests */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* WindowManagement.swift */; };
 			B10000000000000000000015 /* PersistenceTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000D /* PersistenceTests.swift */; };
+			B10000000000000000000016 /* LayoutEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000010 /* LayoutEditing.swift */; };
+			B10000000000000000000017 /* LayoutEditorModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000011 /* LayoutEditorModel.swift */; };
+			B10000000000000000000018 /* LayoutEditing.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000010 /* LayoutEditing.swift */; };
+			B10000000000000000000019 /* LayoutEditorTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000012 /* LayoutEditorTests.swift */; };
+			B1000000000000000000001A /* LayoutEditorModel.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000011 /* LayoutEditorModel.swift */; };
+			B1000000000000000000001B /* LayoutEditorConcurrencyTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 			A20000000000000000000001 /* AppAlignApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAlignApp.swift; sourceTree = "<group>"; };
 			A20000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 			A20000000000000000000005 /* WindowManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowManagement.swift; sourceTree = "<group>"; };
+			A20000000000000000000006 /* LayoutEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEditorView.swift; sourceTree = "<group>"; };
+			A20000000000000000000007 /* LayoutEditorPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEditorPreview.swift; sourceTree = "<group>"; };
 			A20000000000000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 			A20000000000000000000004 /* AppAlign.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AppAlign.app; sourceTree = BUILT_PRODUCTS_DIR; };
 			B20000000000000000000001 /* DisplayModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayModels.swift; sourceTree = "<group>"; };
@@ -52,6 +62,10 @@
 			B2000000000000000000000B /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
 			B2000000000000000000000C /* Persistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Persistence.swift; sourceTree = "<group>"; };
 			B2000000000000000000000D /* PersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceTests.swift; sourceTree = "<group>"; };
+			B20000000000000000000010 /* LayoutEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEditing.swift; sourceTree = "<group>"; };
+			B20000000000000000000011 /* LayoutEditorModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEditorModel.swift; sourceTree = "<group>"; };
+			B20000000000000000000012 /* LayoutEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEditorTests.swift; sourceTree = "<group>"; };
+			B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEditorConcurrencyTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,6 +89,8 @@
 				children = (
 					A20000000000000000000001 /* AppAlignApp.swift */,
 					A20000000000000000000002 /* ContentView.swift */,
+					A20000000000000000000006 /* LayoutEditorView.swift */,
+					A20000000000000000000007 /* LayoutEditorPreview.swift */,
 					A20000000000000000000005 /* WindowManagement.swift */,
 					B20000000000000000000001 /* DisplayModels.swift */,
 					B20000000000000000000002 /* DisplayGeometry.swift */,
@@ -85,6 +101,8 @@
 					B20000000000000000000007 /* LayoutController.swift */,
 					B20000000000000000000008 /* LayoutPreview.swift */,
 					B2000000000000000000000C /* Persistence.swift */,
+					B20000000000000000000010 /* LayoutEditing.swift */,
+					B20000000000000000000011 /* LayoutEditorModel.swift */,
 					A20000000000000000000003 /* Assets.xcassets */,
 				);
 				path = AppAlign;
@@ -98,7 +116,7 @@
 			};
 			B40000000000000000000001 /* AppAlignTests */ = {
 				isa = PBXGroup;
-				children = (B20000000000000000000009 /* LayoutEngineTests.swift */, B2000000000000000000000D /* PersistenceTests.swift */,);
+				children = (B20000000000000000000009 /* LayoutEngineTests.swift */, B2000000000000000000000D /* PersistenceTests.swift */, B20000000000000000000012 /* LayoutEditorTests.swift */, B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */,);
 				path = AppAlignTests;
 				sourceTree = "<group>";
 			};
@@ -111,6 +129,8 @@
 				files = (
 					A10000000000000000000001 /* AppAlignApp.swift in Sources */,
 					A10000000000000000000002 /* ContentView.swift in Sources */,
+					A10000000000000000000006 /* LayoutEditorView.swift in Sources */,
+					A10000000000000000000007 /* LayoutEditorPreview.swift in Sources */,
 					A10000000000000000000003 /* WindowManagement.swift in Sources */,
 					B10000000000000000000001 /* DisplayModels.swift in Sources */,
 					B10000000000000000000002 /* DisplayGeometry.swift in Sources */,
@@ -121,6 +141,8 @@
 					B10000000000000000000007 /* LayoutController.swift in Sources */,
 					B10000000000000000000008 /* LayoutPreview.swift in Sources */,
 					B10000000000000000000010 /* Persistence.swift in Sources */,
+					B10000000000000000000016 /* LayoutEditing.swift in Sources */,
+					B10000000000000000000017 /* LayoutEditorModel.swift in Sources */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};
@@ -142,6 +164,10 @@
 					B10000000000000000000013 /* LayoutController.swift in Tests */,
 					B10000000000000000000014 /* WindowManagement.swift in Tests */,
 					B10000000000000000000015 /* PersistenceTests.swift in Tests */,
+					B10000000000000000000018 /* LayoutEditing.swift in Tests */,
+					B10000000000000000000019 /* LayoutEditorTests.swift in Tests */,
+					B1000000000000000000001A /* LayoutEditorModel.swift in Tests */,
+					B1000000000000000000001B /* LayoutEditorConcurrencyTests.swift in Tests */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};
