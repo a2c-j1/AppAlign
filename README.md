@@ -27,6 +27,8 @@ Requirements: macOS 15 or later, Xcode 26 or later.
 
 Open `AppAlign.xcodeproj` in Xcode, select the `AppAlign` scheme, and run. The project uses SwiftUI and has no third-party package dependencies.
 
+Layouts, display assignments, and settings are stored as separate versioned JSON files under `~/Library/Application Support/jp.a2c.AppAlign/`. Assignments contain persistent display UUIDs and the common Space scope; session-only display identities stay in memory. Invalid or unsupported saved files are copied to uniquely named backups before defaults replace them. If backup or recovery fails, AppAlign protects the original file and reports the save error. On normal quit, pending saves finish before the app exits. A forced process kill can interrupt a write.
+
 ```sh
 xcodebuild -project AppAlign.xcodeproj -scheme AppAlign -destination 'platform=macOS' build
 ```
