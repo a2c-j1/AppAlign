@@ -43,4 +43,4 @@ rules:
         - AppAlign/**/*.swift
       exclude:
         - AppAlign/SpaceProvider.swift
-    pattern-regex: '\b(?:CGS|SLS)[A-Za-z0-9_]*\s*\('
+    pattern-regex: '\b(?:CGS(?!ize\b)|SLS)[A-Za-z0-9_]*\s*\('

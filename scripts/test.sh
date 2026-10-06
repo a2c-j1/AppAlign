@@ -3,6 +3,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT/scripts/build.sh"
+mkdir -p "$ROOT/build/issue-3-evidence"
+
+xcodebuild \
+  -project "$ROOT/AppAlign.xcodeproj" \
+  -scheme AppAlign \
+  -destination 'platform=macOS' \
+  -derivedDataPath "$ROOT/build/DerivedData" \
+  -resultBundlePath "$ROOT/build/issue-3-evidence/AppAlignTests-$(date -u +%Y%m%dT%H%M%SZ)-$$.xcresult" \
+  test
 
 APP="$ROOT/build/DerivedData/Build/Products/Debug/AppAlign.app"
 [[ -d "$APP" ]] || { echo "App bundle is missing: $APP" >&2; exit 1; }
@@ -15,4 +24,4 @@ EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO
   exit 1
 }
 
-echo "AppAlign build smoke checks passed."
+echo "AppAlign XCTest and build smoke checks passed."

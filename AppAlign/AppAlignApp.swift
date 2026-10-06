@@ -4,11 +4,13 @@ import SwiftUI
 @main
 struct AppAlignApp: App {
     @StateObject private var placementController = PlacementController()
+    @StateObject private var layoutController = LayoutController()
 
     var body: some Scene {
         MenuBarExtra("AppAlign", systemImage: "rectangle.split.3x1") {
             MenuBarView()
                 .environmentObject(placementController)
+                .environmentObject(layoutController)
                 .onAppear {
                     placementController.menuDidOpen()
                 }
@@ -17,12 +19,14 @@ struct AppAlignApp: App {
         Settings {
             ContentView()
                 .environmentObject(placementController)
+                .environmentObject(layoutController)
         }
     }
 }
 
 private struct MenuBarView: View {
     @EnvironmentObject private var placementController: PlacementController
+    @EnvironmentObject private var layoutController: LayoutController
 
     var body: some View {
         Group {
@@ -41,10 +45,10 @@ private struct MenuBarView: View {
             }
             .disabled(!placementController.accessibilityGranted)
 
-            Button("Move Captured Window +32 pt") {
-                placementController.moveCapturedWindow()
+            Button("Place Captured Window in Selected Zone") {
+                layoutController.placeSelectedZone(using: placementController)
             }
-            .disabled(!placementController.hasCapturedWindow)
+            .disabled(!placementController.hasCapturedWindow || layoutController.selectedZoneID == nil)
 
             Button("Restore Captured Window") {
                 placementController.restoreCapturedWindow()

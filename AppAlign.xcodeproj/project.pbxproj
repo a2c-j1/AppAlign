@@ -10,6 +10,21 @@
 			A10000000000000000000001 /* AppAlignApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* AppAlignApp.swift */; };
 			A10000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* ContentView.swift */; };
 			A10000000000000000000003 /* WindowManagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* WindowManagement.swift */; };
+			B10000000000000000000001 /* DisplayModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* DisplayModels.swift */; };
+			B10000000000000000000002 /* DisplayGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* DisplayGeometry.swift */; };
+			B10000000000000000000003 /* DisplayProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* DisplayProvider.swift */; };
+			B10000000000000000000004 /* LayoutModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* LayoutModels.swift */; };
+			B10000000000000000000005 /* LayoutEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000005 /* LayoutEngine.swift */; };
+			B10000000000000000000006 /* LayoutTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000006 /* LayoutTemplates.swift */; };
+			B10000000000000000000007 /* LayoutController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000007 /* LayoutController.swift */; };
+			B10000000000000000000008 /* LayoutPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000008 /* LayoutPreview.swift */; };
+			B10000000000000000000009 /* DisplayModels.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* DisplayModels.swift */; };
+			B1000000000000000000000A /* DisplayGeometry.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* DisplayGeometry.swift */; };
+			B1000000000000000000000B /* LayoutModels.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* LayoutModels.swift */; };
+			B1000000000000000000000C /* LayoutEngine.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000005 /* LayoutEngine.swift */; };
+			B1000000000000000000000D /* LayoutTemplates.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000006 /* LayoutTemplates.swift */; };
+			B1000000000000000000000E /* LayoutEngineTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000009 /* LayoutEngineTests.swift */; };
+			B1000000000000000000000F /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000B /* THIRD_PARTY_NOTICES.md */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -18,10 +33,22 @@
 			A20000000000000000000005 /* WindowManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowManagement.swift; sourceTree = "<group>"; };
 			A20000000000000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 			A20000000000000000000004 /* AppAlign.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AppAlign.app; sourceTree = BUILT_PRODUCTS_DIR; };
+			B20000000000000000000001 /* DisplayModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayModels.swift; sourceTree = "<group>"; };
+			B20000000000000000000002 /* DisplayGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayGeometry.swift; sourceTree = "<group>"; };
+			B20000000000000000000003 /* DisplayProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayProvider.swift; sourceTree = "<group>"; };
+			B20000000000000000000004 /* LayoutModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutModels.swift; sourceTree = "<group>"; };
+			B20000000000000000000005 /* LayoutEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEngine.swift; sourceTree = "<group>"; };
+			B20000000000000000000006 /* LayoutTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutTemplates.swift; sourceTree = "<group>"; };
+			B20000000000000000000007 /* LayoutController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutController.swift; sourceTree = "<group>"; };
+			B20000000000000000000008 /* LayoutPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutPreview.swift; sourceTree = "<group>"; };
+			B20000000000000000000009 /* LayoutEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEngineTests.swift; sourceTree = "<group>"; };
+			B2000000000000000000000A /* AppAlignTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppAlignTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+			B2000000000000000000000B /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 			A30000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+			A30000000000000000000002 /* AppAlignTests Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -29,6 +56,8 @@
 				isa = PBXGroup;
 				children = (
 					A40000000000000000000002 /* AppAlign */,
+					B40000000000000000000001 /* AppAlignTests */,
+					B2000000000000000000000B /* THIRD_PARTY_NOTICES.md */,
 					A40000000000000000000003 /* Products */,
 				);
 				sourceTree = "<group>";
@@ -39,6 +68,14 @@
 					A20000000000000000000001 /* AppAlignApp.swift */,
 					A20000000000000000000002 /* ContentView.swift */,
 					A20000000000000000000005 /* WindowManagement.swift */,
+					B20000000000000000000001 /* DisplayModels.swift */,
+					B20000000000000000000002 /* DisplayGeometry.swift */,
+					B20000000000000000000003 /* DisplayProvider.swift */,
+					B20000000000000000000004 /* LayoutModels.swift */,
+					B20000000000000000000005 /* LayoutEngine.swift */,
+					B20000000000000000000006 /* LayoutTemplates.swift */,
+					B20000000000000000000007 /* LayoutController.swift */,
+					B20000000000000000000008 /* LayoutPreview.swift */,
 					A20000000000000000000003 /* Assets.xcassets */,
 				);
 				path = AppAlign;
@@ -46,8 +83,14 @@
 			};
 			A40000000000000000000003 /* Products */ = {
 				isa = PBXGroup;
-				children = (A20000000000000000000004 /* AppAlign.app */,);
+				children = (A20000000000000000000004 /* AppAlign.app */, B2000000000000000000000A /* AppAlignTests.xctest */,);
 				name = Products;
+				sourceTree = "<group>";
+			};
+			B40000000000000000000001 /* AppAlignTests */ = {
+				isa = PBXGroup;
+				children = (B20000000000000000000009 /* LayoutEngineTests.swift */,);
+				path = AppAlignTests;
 				sourceTree = "<group>";
 			};
 /* End PBXGroup section */
@@ -60,10 +103,34 @@
 					A10000000000000000000001 /* AppAlignApp.swift in Sources */,
 					A10000000000000000000002 /* ContentView.swift in Sources */,
 					A10000000000000000000003 /* WindowManagement.swift in Sources */,
+					B10000000000000000000001 /* DisplayModels.swift in Sources */,
+					B10000000000000000000002 /* DisplayGeometry.swift in Sources */,
+					B10000000000000000000003 /* DisplayProvider.swift in Sources */,
+					B10000000000000000000004 /* LayoutModels.swift in Sources */,
+					B10000000000000000000005 /* LayoutEngine.swift in Sources */,
+					B10000000000000000000006 /* LayoutTemplates.swift in Sources */,
+					B10000000000000000000007 /* LayoutController.swift in Sources */,
+					B10000000000000000000008 /* LayoutPreview.swift in Sources */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXBuildFile section for test sources */
+			B50000000000000000000001 /* AppAlignTests Sources */ = {
+				isa = PBXSourcesBuildPhase;
+				buildActionMask = 2147483647;
+				files = (
+					B10000000000000000000009 /* DisplayModels.swift in Tests */,
+					B1000000000000000000000A /* DisplayGeometry.swift in Tests */,
+					B1000000000000000000000B /* LayoutModels.swift in Tests */,
+					B1000000000000000000000C /* LayoutEngine.swift in Tests */,
+					B1000000000000000000000D /* LayoutTemplates.swift in Tests */,
+					B1000000000000000000000E /* LayoutEngineTests.swift in Tests */,
+				);
+				runOnlyForDeploymentPostprocessing = 0;
+			};
+/* End test sources build phase */
 
 /* Begin PBXNativeTarget section */
 				A60000000000000000000001 /* AppAlign */ = {
@@ -79,8 +146,23 @@
 					name = AppAlign;
 					productName = AppAlign;
 					productReference = A20000000000000000000004 /* AppAlign.app */;
-					productType = "com.apple.product-type.application";
-				};
+				productType = "com.apple.product-type.application";
+			};
+			B60000000000000000000001 /* AppAlignTests */ = {
+				isa = PBXNativeTarget;
+				buildConfigurationList = B70000000000000000000001 /* AppAlignTests configuration list */;
+				buildPhases = (
+					B50000000000000000000001 /* AppAlignTests Sources */,
+					A30000000000000000000002 /* AppAlignTests Frameworks */,
+					A80000000000000000000002 /* AppAlignTests Resources */,
+				);
+				buildRules = ();
+				dependencies = ();
+				name = AppAlignTests;
+				productName = AppAlignTests;
+				productReference = B2000000000000000000000A /* AppAlignTests.xctest */;
+				productType = "com.apple.product-type.bundle.unit-test";
+			};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -90,7 +172,7 @@
 						BuildIndependentTargetsInParallel = 1;
 						LastSwiftUpdateCheck = 2650;
 						LastUpgradeCheck = 2650;
-						TargetAttributes = {A60000000000000000000001 = {CreatedOnToolsVersion = 26.5; };};
+						TargetAttributes = {A60000000000000000000001 = {CreatedOnToolsVersion = 26.5; }; B60000000000000000000001 = {CreatedOnToolsVersion = 26.5; };};
 					};
 					buildConfigurationList = A70000000000000000000003 /* Build configuration list for PBXProject */;
 					compatibilityVersion = "Xcode 16.0";
@@ -101,17 +183,23 @@
 					productRefGroup = A40000000000000000000003 /* Products */;
 					projectDirPath = "";
 					projectRoot = "";
-					targets = (A60000000000000000000001 /* AppAlign */,);
+				targets = (A60000000000000000000001 /* AppAlign */, B60000000000000000000001 /* AppAlignTests */,);
 				};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-				A80000000000000000000001 /* Resources */ = {
-					isa = PBXResourcesBuildPhase;
-					buildActionMask = 2147483647;
-					files = ();
+			A80000000000000000000001 /* Resources */ = {
+				isa = PBXResourcesBuildPhase;
+				buildActionMask = 2147483647;
+				files = (B1000000000000000000000F /* THIRD_PARTY_NOTICES.md in Resources */,);
 					runOnlyForDeploymentPostprocessing = 0;
-				};
+			};
+			A80000000000000000000002 /* AppAlignTests Resources */ = {
+				isa = PBXResourcesBuildPhase;
+				buildActionMask = 2147483647;
+				files = ();
+				runOnlyForDeploymentPostprocessing = 0;
+			};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -165,11 +253,14 @@
 				};
 				AB0000000000000000000003 /* Project Debug */ = {isa = XCBuildConfiguration; buildSettings = {}; name = Debug; };
 				AB0000000000000000000004 /* Project Release */ = {isa = XCBuildConfiguration; buildSettings = {}; name = Release; };
+				B80000000000000000000001 /* AppAlignTests Debug */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = jp.a2c.AppAlignTests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_VERSION = 6.0; }; name = Debug; };
+				B80000000000000000000002 /* AppAlignTests Release */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = jp.a2c.AppAlignTests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_VERSION = 6.0; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
 				A70000000000000000000003 /* Project configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (AB0000000000000000000003 /* Project Debug */, AB0000000000000000000004 /* Project Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
-				A70000000000000000000002 /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (AB0000000000000000000001 /* Debug */, AB0000000000000000000002 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+			A70000000000000000000002 /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (AB0000000000000000000001 /* Debug */, AB0000000000000000000002 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+			B70000000000000000000001 /* AppAlignTests configuration list */ = {isa = XCConfigurationList; buildConfigurations = (B80000000000000000000001 /* Debug */, B80000000000000000000002 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
 /* End XCConfigurationList section */
 	};
 	rootObject = A90000000000000000000001 /* Project object */;
