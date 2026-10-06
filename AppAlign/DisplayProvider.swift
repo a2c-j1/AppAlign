@@ -14,14 +14,24 @@ private struct ScreenInput {
 final class DisplayProvider: ObservableObject {
     @Published private(set) var snapshot: DisplaySnapshot
     private var identityResolver = DisplayIdentityResolver()
+    private let injectedSnapshots: [DisplaySnapshot]?
+    private var injectedSnapshotIndex = 0
 
-    init() {
-        snapshot = DisplaySnapshot(displays: [], primaryFrame: .zero)
-        refresh()
+    init(snapshot: DisplaySnapshot? = nil, snapshots: [DisplaySnapshot]? = nil) {
+        let normalizedSnapshots = snapshots?.isEmpty == false ? snapshots : snapshot.map { [$0] }
+        injectedSnapshots = normalizedSnapshots
+        self.snapshot = normalizedSnapshots?.first ?? DisplaySnapshot(displays: [], primaryFrame: .zero)
+        injectedSnapshotIndex = min(1, (normalizedSnapshots?.count ?? 1) - 1)
+        if injectedSnapshots == nil { refresh() }
     }
 
     @discardableResult
     func refresh() -> DisplaySnapshot {
+        if let injectedSnapshots {
+            snapshot = injectedSnapshots[injectedSnapshotIndex]
+            injectedSnapshotIndex = min(injectedSnapshotIndex + 1, injectedSnapshots.count - 1)
+            return snapshot
+        }
         let screens = NSScreen.screens
         guard let primary = screens.first else {
             snapshot = DisplaySnapshot(displays: [], primaryFrame: .zero)

@@ -26,11 +26,12 @@ struct ContentView: View {
                                     .tag(Optional(display.id))
                             }
                         }
-                        .disabled(layoutController.displayProvider.snapshot.displays.isEmpty)
+                        .disabled(!layoutController.canEdit || layoutController.displayProvider.snapshot.displays.isEmpty)
 
                         Button("Refresh Displays") {
                             layoutController.refreshDisplays()
                         }
+                        .disabled(!layoutController.canEdit)
                     }
 
                     HStack {
@@ -41,12 +42,14 @@ struct ContentView: View {
                         }
                         Stepper("Zones: \(layoutController.zoneCount)", value: $layoutController.zoneCount, in: 1 ... 128)
                     }
+                    .disabled(!layoutController.canEdit)
 
                     HStack {
-                        Text("Spacing: \(Int(layoutController.spacing)) pt")
+                        Text("Spacing: \(layoutController.spacing.formatted(.number.precision(.fractionLength(0)))) pt")
                             .frame(width: 130, alignment: .leading)
                         Slider(value: $layoutController.spacing, in: 0 ... 80, step: 2)
                     }
+                    .disabled(!layoutController.canEdit)
 
                     LayoutPreview(
                         display: layoutController.selectedDisplay,
@@ -54,15 +57,22 @@ struct ContentView: View {
                         selectedZoneID: layoutController.selectedZoneID,
                         select: { layoutController.selectedZoneID = $0 }
                     )
+                    .disabled(!layoutController.canEdit)
 
                     HStack {
                         Button("Place Captured Window in Selected Zone") {
                             layoutController.placeSelectedZone(using: placementController)
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(!placementController.hasCapturedWindow || layoutController.selectedZoneID == nil)
-                        if let error = layoutController.errorMessage {
+                        .disabled(!layoutController.canEdit || !placementController.hasCapturedWindow || layoutController.selectedZoneID == nil)
+                        if let error = layoutController.persistenceErrorMessage ?? layoutController.errorMessage {
                             Text(error).font(.caption).foregroundStyle(.red)
+                        }
+                        if layoutController.canRetrySave {
+                            Button("Retry Save") {
+                                Task { await layoutController.retryFailedSave() }
+                            }
+                            .disabled(!layoutController.canEdit)
                         }
                     }
                 }
@@ -147,5 +157,8 @@ struct ContentView: View {
             .frame(minWidth: 760, alignment: .topLeading)
         }
         .frame(minWidth: 760, minHeight: 600)
+        .task {
+            if !layoutController.persistenceReady { await layoutController.loadPersistentState() }
+        }
     }
 }

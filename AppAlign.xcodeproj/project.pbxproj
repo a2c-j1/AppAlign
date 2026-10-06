@@ -25,6 +25,12 @@
 			B1000000000000000000000D /* LayoutTemplates.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000006 /* LayoutTemplates.swift */; };
 			B1000000000000000000000E /* LayoutEngineTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000009 /* LayoutEngineTests.swift */; };
 			B1000000000000000000000F /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000B /* THIRD_PARTY_NOTICES.md */; };
+			B10000000000000000000010 /* Persistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000C /* Persistence.swift */; };
+			B10000000000000000000011 /* Persistence.swift in Tests */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000C /* Persistence.swift */; };
+			B10000000000000000000012 /* DisplayProvider.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* DisplayProvider.swift */; };
+			B10000000000000000000013 /* LayoutController.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000007 /* LayoutController.swift */; };
+			B10000000000000000000014 /* WindowManagement.swift in Tests */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* WindowManagement.swift */; };
+			B10000000000000000000015 /* PersistenceTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000D /* PersistenceTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -44,6 +50,8 @@
 			B20000000000000000000009 /* LayoutEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEngineTests.swift; sourceTree = "<group>"; };
 			B2000000000000000000000A /* AppAlignTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppAlignTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 			B2000000000000000000000B /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
+			B2000000000000000000000C /* Persistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Persistence.swift; sourceTree = "<group>"; };
+			B2000000000000000000000D /* PersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -76,6 +84,7 @@
 					B20000000000000000000006 /* LayoutTemplates.swift */,
 					B20000000000000000000007 /* LayoutController.swift */,
 					B20000000000000000000008 /* LayoutPreview.swift */,
+					B2000000000000000000000C /* Persistence.swift */,
 					A20000000000000000000003 /* Assets.xcassets */,
 				);
 				path = AppAlign;
@@ -89,7 +98,7 @@
 			};
 			B40000000000000000000001 /* AppAlignTests */ = {
 				isa = PBXGroup;
-				children = (B20000000000000000000009 /* LayoutEngineTests.swift */,);
+				children = (B20000000000000000000009 /* LayoutEngineTests.swift */, B2000000000000000000000D /* PersistenceTests.swift */,);
 				path = AppAlignTests;
 				sourceTree = "<group>";
 			};
@@ -111,6 +120,7 @@
 					B10000000000000000000006 /* LayoutTemplates.swift in Sources */,
 					B10000000000000000000007 /* LayoutController.swift in Sources */,
 					B10000000000000000000008 /* LayoutPreview.swift in Sources */,
+					B10000000000000000000010 /* Persistence.swift in Sources */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};
@@ -127,6 +137,11 @@
 					B1000000000000000000000C /* LayoutEngine.swift in Tests */,
 					B1000000000000000000000D /* LayoutTemplates.swift in Tests */,
 					B1000000000000000000000E /* LayoutEngineTests.swift in Tests */,
+					B10000000000000000000011 /* Persistence.swift in Tests */,
+					B10000000000000000000012 /* DisplayProvider.swift in Tests */,
+					B10000000000000000000013 /* LayoutController.swift in Tests */,
+					B10000000000000000000014 /* WindowManagement.swift in Tests */,
+					B10000000000000000000015 /* PersistenceTests.swift in Tests */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};
@@ -251,7 +266,7 @@
 					};
 					name = Release;
 				};
-				AB0000000000000000000003 /* Project Debug */ = {isa = XCBuildConfiguration; buildSettings = {}; name = Debug; };
+				AB0000000000000000000003 /* Project Debug */ = {isa = XCBuildConfiguration; buildSettings = { SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG"; }; name = Debug; };
 				AB0000000000000000000004 /* Project Release */ = {isa = XCBuildConfiguration; buildSettings = {}; name = Release; };
 				B80000000000000000000001 /* AppAlignTests Debug */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = jp.a2c.AppAlignTests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_VERSION = 6.0; }; name = Debug; };
 				B80000000000000000000002 /* AppAlignTests Release */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = jp.a2c.AppAlignTests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_VERSION = 6.0; }; name = Release; };
