@@ -59,7 +59,7 @@ The repository keeps build tasks in `scripts/` and calls them from Codex environ
 
 - `scripts/setup.sh` checks macOS/Xcode and resolves Swift packages.
 - `scripts/build.sh` builds the app into `build/DerivedData`.
-- `scripts/test.sh` runs build smoke checks for the app bundle and executable. XCTest coverage can be added when a test target is introduced.
+- `scripts/test.sh` runs the unhosted `AppAlignTests` XCTest suite, stores its result bundle under `build/issue-3-evidence/`, and checks the built app bundle and executable.
 - `scripts/release.sh [version]` archives an unsigned macOS app and creates a ZIP plus SHA-256 file under `build/release`.
 - `scripts/cleanup.sh` removes generated files under `build/`.
 

@@ -19,12 +19,13 @@ Install the local quality tools with Homebrew:
 brew install swiftformat swiftlint semgrep
 ```
 
-Run the same checks used by pull requests:
+Run the same checks used by pull requests. XCTest sources are included in both SwiftFormat and SwiftLint:
 
 ```sh
-swiftformat --lint AppAlign --config .swiftformat
+swiftformat AppAlign AppAlignTests --lint --config .swiftformat
 swiftlint lint --config .swiftlint.yml
 semgrep scan --config .semgrep.yml --error AppAlign
+scripts/test.sh
 ```
 
 SwiftFormat intentionally starts with whitespace-only rules. SwiftLint is strict. Semgrep carries AppAlign-specific architectural boundaries for Accessibility, event taps, and private Space APIs.

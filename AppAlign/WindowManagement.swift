@@ -8,6 +8,7 @@ enum WindowManagementError: LocalizedError {
     case noTargetApplication
     case noFocusedWindow(code: Int32)
     case invalidFocusedWindow
+    case noCapturedWindow
     case readFailed(attribute: String, code: Int32)
     case invalidAttribute(attribute: String)
     case excludedWindow(reason: String)
@@ -15,6 +16,7 @@ enum WindowManagementError: LocalizedError {
     case writeFailed(attribute: String, code: Int32)
     case invalidRequestedFrame
     case frameMismatch(requested: CGRect, actual: CGRect)
+    case displayConfigurationChanged
     case operationFailed
 
     var errorDescription: String? {
@@ -27,6 +29,8 @@ enum WindowManagementError: LocalizedError {
             return "The target app did not expose a focused window (AX error \(code))."
         case .invalidFocusedWindow:
             return "The focused accessibility object is not a valid window."
+        case .noCapturedWindow:
+            return "Capture an eligible window before placing it."
         case .readFailed(let attribute, let code):
             return "Could not read \(attribute) (AX error \(code))."
         case .invalidAttribute(let attribute):
@@ -41,6 +45,8 @@ enum WindowManagementError: LocalizedError {
             return "The requested window frame is invalid."
         case .frameMismatch(let requested, let actual):
             return "The app constrained the requested frame. Requested \(Self.describe(requested)); actual \(Self.describe(actual))."
+        case .displayConfigurationChanged:
+            return "The display configuration changed. Capture the window again before placing or restoring it."
         case .operationFailed:
             return "The window operation failed."
         }
@@ -56,7 +62,7 @@ enum WindowManagementError: LocalizedError {
     }
 
     private static func describe(_ frame: CGRect) -> String {
-        "x=\(Int(frame.origin.x)), y=\(Int(frame.origin.y)), w=\(Int(frame.width)), h=\(Int(frame.height))"
+        "x=\(frame.origin.x), y=\(frame.origin.y), w=\(frame.width), h=\(frame.height)"
     }
 }
 
@@ -372,8 +378,10 @@ final class PlacementController: ObservableObject {
     @Published private(set) var statusMessage = "Open the menu while another app is active, then capture its focused window."
     @Published private(set) var requestedFrame: CGRect?
     @Published private(set) var actualFrame: CGRect?
+    @Published private(set) var capturedDisplayFingerprint: String?
 
     private let ownPID = ProcessInfo.processInfo.processIdentifier
+    private let displayProvider = DisplayProvider()
     private let repository = WindowRepository()
     private let mover = WindowMover()
     private var rememberedApplicationPID: pid_t?
@@ -386,6 +394,7 @@ final class PlacementController: ObservableObject {
 
     func menuDidOpen() {
         refreshAccessibility()
+        displayProvider.refresh()
         rememberFrontmostApplication()
     }
 
@@ -406,6 +415,7 @@ final class PlacementController: ObservableObject {
 
     func captureFocusedWindow() {
         refreshAccessibility()
+        let displaySnapshot = displayProvider.refresh()
         guard accessibilityGranted else {
             statusMessage = WindowManagementError.accessibilityPermissionRequired.localizedDescription
             return
@@ -426,31 +436,12 @@ final class PlacementController: ObservableObject {
             originalFrame = frame
             hasCapturedWindow = true
             canRestore = true
+            capturedDisplayFingerprint = displaySnapshot.fingerprint
             requestedFrame = nil
             actualFrame = frame
             statusMessage = "Captured the focused external window at \(Self.describe(frame))."
         } catch {
             clearCapture()
-            statusMessage = error.localizedDescription
-        }
-    }
-
-    func moveCapturedWindow() {
-        guard let window = capturedWindow else {
-            statusMessage = "Capture an eligible window first."
-            return
-        }
-
-        do {
-            let currentFrame = try window.frame()
-            let targetFrame = currentFrame.offsetBy(dx: 32, dy: 32)
-            requestedFrame = targetFrame
-
-            let result = try mover.move(window, to: targetFrame)
-            actualFrame = result.actualFrame
-            statusMessage = "Moved the captured window and verified \(Self.describe(result.actualFrame))."
-        } catch {
-            actualFrame = try? window.frame()
             statusMessage = error.localizedDescription
         }
     }
@@ -465,6 +456,10 @@ final class PlacementController: ObservableObject {
         }
 
         do {
+            refreshAccessibility()
+            guard accessibilityGranted else { throw WindowManagementError.accessibilityPermissionRequired }
+            try WindowFilter(ownPID: ownPID).validate(window)
+            try validateDisplayConfiguration(expectedFingerprint: capturedDisplayFingerprint)
             requestedFrame = originalFrame
             let result = try mover.move(window, to: originalFrame)
             actualFrame = result.actualFrame
@@ -482,6 +477,28 @@ final class PlacementController: ObservableObject {
         canRestore = false
         requestedFrame = nil
         actualFrame = nil
+        capturedDisplayFingerprint = nil
+    }
+
+    func placeCapturedWindow(in frame: CGRect, displayFingerprint: String) throws {
+        guard let window = capturedWindow else {
+            throw WindowManagementError.noCapturedWindow
+        }
+        do {
+            refreshAccessibility()
+            guard accessibilityGranted else { throw WindowManagementError.accessibilityPermissionRequired }
+            try WindowFilter(ownPID: ownPID).validate(window)
+            try validateDisplayConfiguration(expectedFingerprint: displayFingerprint)
+            try validateDisplayConfiguration(expectedFingerprint: capturedDisplayFingerprint)
+            requestedFrame = frame
+            let result = try mover.move(window, to: frame)
+            actualFrame = result.actualFrame
+            statusMessage = "Placed and verified the captured window at \(Self.describe(result.actualFrame))."
+        } catch {
+            actualFrame = try? window.frame()
+            statusMessage = error.localizedDescription
+            throw error
+        }
     }
 
     private func rememberFrontmostApplication() {
@@ -494,7 +511,15 @@ final class PlacementController: ObservableObject {
         rememberedApplicationPID = application.processIdentifier
     }
 
+    private func validateDisplayConfiguration(expectedFingerprint: String?) throws {
+        let current = displayProvider.refresh().fingerprint
+        guard let expectedFingerprint, expectedFingerprint == current else {
+            canRestore = false
+            throw WindowManagementError.displayConfigurationChanged
+        }
+    }
+
     static func describe(_ frame: CGRect) -> String {
-        "x=\(Int(frame.origin.x)), y=\(Int(frame.origin.y)), w=\(Int(frame.width)), h=\(Int(frame.height))"
+        "x=\(frame.origin.x), y=\(frame.origin.y), w=\(frame.width), h=\(frame.height)"
     }
 }
