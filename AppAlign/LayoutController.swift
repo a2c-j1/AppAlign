@@ -32,25 +32,29 @@ final class LayoutController: ObservableObject {
     @Published private(set) var canRetrySave = false
     @Published private(set) var persistenceReady = false
     @Published private(set) var canEdit = false
+    @Published var keyboardSettings = KeyboardSettings()
+    @Published var keyboardSettingsErrorMessage: String?
 
-    private let storeCoordinator: PersistentStoreCoordinator?
-    private var savedLayouts: [UUID: PersistedLayout] = [:]
-    private var assignments: [UUID: PersistedAssignment] = [:]
-    private var sessionLayouts: [UUID: PersistedLayout] = [:]
-    private var settings: [String: PersistedSetting] = [:]
+    let storeCoordinator: PersistentStoreCoordinator?
+    var savedLayouts: [UUID: PersistedLayout] = [:]
+    var assignments: [UUID: PersistedAssignment] = [:]
+    var sessionLayouts: [UUID: PersistedLayout] = [:]
+    var settings: [String: PersistedSetting] = [:]
     private var currentLayout: PersistedLayout
     private var isApplyingStoredValues = false
     private var requestedLoadRevision: UInt64 = 0
     private var requestedSaveRevision: UInt64 = 0
-    private var saveChain: Task<Void, Never>?
+    var saveChain: Task<Void, Never>?
     private var loadInProgress = false
-    private var acceptsChanges = true
+    var acceptsChanges = true
     private var zonesDisplayFingerprint: String?
     private var lastSaveSucceeded = true
     private var lastFailedOperation: (@MainActor (PersistentStoreCoordinator) async throws -> Void)?
     private var isRetryingSave = false
     private var editorOperationTargets: [UUID: DisplaySelectionID] = [:]
     private var editorOperationRevisions: [UUID: UInt64] = [:]
+    var keyboardSettingsRevision: UInt64 = 0
+    var keyboardSettingsRetrySnapshot: [String: PersistedSetting]?
 
     init(displayProvider: DisplayProvider = DisplayProvider(), storeCoordinator: PersistentStoreCoordinator? = nil) {
         self.displayProvider = displayProvider
@@ -84,7 +88,7 @@ final class LayoutController: ObservableObject {
             guard revision == requestedLoadRevision else { return }
             savedLayouts = state.layouts
             assignments = state.assignments
-            settings = state.settings
+            adoptSettings(state.settings)
             persistenceReady = true
             canEdit = acceptsChanges
             persistenceErrorMessage = nil
@@ -159,6 +163,7 @@ final class LayoutController: ObservableObject {
         guard persistenceReady else { return true }
         do {
             if !lastSaveSucceeded, !(await retryFailedSave()) { return false }
+            if keyboardSettingsRetrySnapshot != nil, !(await retryKeyboardSettingsSave()) { return false }
             try await storeCoordinator?.flush()
             return persistenceReady && lastSaveSucceeded
         } catch {
@@ -185,7 +190,7 @@ final class LayoutController: ObservableObject {
             let state = try await storeCoordinator.load()
             savedLayouts = state.layouts
             assignments = state.assignments
-            settings = state.settings
+            adoptSettings(state.settings)
             lastFailedOperation = nil
             lastSaveSucceeded = true
             persistenceErrorMessage = nil
@@ -439,7 +444,7 @@ extension LayoutController {
 }
 
 @MainActor
-private extension LayoutController {
+extension LayoutController {
     func registerEditorIdentity(_ identity: EditorOperationIdentity) -> Bool {
         guard acceptsChanges, persistenceReady, canEdit,
               displayProvider.snapshot.displays.contains(where: { $0.id == identity.targetDisplay }) else { return false }
@@ -581,19 +586,11 @@ private extension LayoutController {
                 if let recovered = try? await storeCoordinator.load(), revision == self.requestedSaveRevision {
                     self.savedLayouts = recovered.layouts
                     self.assignments = recovered.assignments
-                    self.settings = recovered.settings
+                    self.adoptSettings(recovered.settings)
                     self.showLayoutForSelectedDisplay()
                 }
             }
         }
     }
 
-    private static func applicationStoreDirectory() -> URL? {
-        #if DEBUG
-            if let path = ProcessInfo.processInfo.environment["APPALIGN_STORAGE_DIRECTORY"], !path.isEmpty {
-                return URL(fileURLWithPath: path, isDirectory: true)
-            }
-        #endif
-        return try? PersistentStoreCoordinator.applicationSupportDirectory()
-    }
 }

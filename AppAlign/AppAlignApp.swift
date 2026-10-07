@@ -4,17 +4,45 @@ import SwiftUI
 @main
 struct AppAlignApp: App {
     @NSApplicationDelegateAdaptor(AppLifecycleDelegate.self) private var appDelegate
-    @StateObject private var placementController = PlacementController()
-    @StateObject private var layoutController = LayoutController()
+    @StateObject private var placementController: PlacementController
+    @StateObject private var layoutController: LayoutController
+    @StateObject private var keyboardSnapController: KeyboardSnapController
+    @StateObject private var globalHotkeys: GlobalHotkeys
+
+    @MainActor
+    init() {
+        let layout = LayoutController()
+        let placement = PlacementController()
+        let keyboard = KeyboardSnapController(layoutController: layout)
+        let hotkeys = GlobalHotkeys(layoutController: layout, snapController: keyboard)
+        _layoutController = StateObject(wrappedValue: layout)
+        _placementController = StateObject(wrappedValue: placement)
+        _keyboardSnapController = StateObject(wrappedValue: keyboard)
+        _globalHotkeys = StateObject(wrappedValue: hotkeys)
+        let delegate = appDelegate
+        delegate.layoutController = layout
+        delegate.globalHotkeys = hotkeys
+        delegate.keyboardSnapController = keyboard
+        Task { @MainActor in
+            await layout.loadPersistentState()
+            guard !delegate.isTerminating else { return }
+            hotkeys.start()
+        }
+    }
 
     var body: some Scene {
         MenuBarExtra("AppAlign", systemImage: "rectangle.split.3x1") {
             MenuBarView()
                 .environmentObject(placementController)
                 .environmentObject(layoutController)
+                .environmentObject(keyboardSnapController)
+                .environmentObject(globalHotkeys)
                 .task {
                     appDelegate.layoutController = layoutController
+                    appDelegate.globalHotkeys = globalHotkeys
+                    appDelegate.keyboardSnapController = keyboardSnapController
                     if !layoutController.persistenceReady { await layoutController.loadPersistentState() }
+                    if !appDelegate.isTerminating { globalHotkeys.settingsDidChange() }
                 }
                 .onAppear {
                     placementController.menuDidOpen()
@@ -25,9 +53,14 @@ struct AppAlignApp: App {
             ContentView()
                 .environmentObject(placementController)
                 .environmentObject(layoutController)
+                .environmentObject(keyboardSnapController)
+                .environmentObject(globalHotkeys)
                 .task {
                     appDelegate.layoutController = layoutController
+                    appDelegate.globalHotkeys = globalHotkeys
+                    appDelegate.keyboardSnapController = keyboardSnapController
                     if !layoutController.persistenceReady { await layoutController.loadPersistentState() }
+                    if !appDelegate.isTerminating { globalHotkeys.settingsDidChange() }
                 }
         }
     }
@@ -35,16 +68,24 @@ struct AppAlignApp: App {
 
 @MainActor
 final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
+    private(set) var isTerminating = false
     weak var layoutController: LayoutController?
+    weak var globalHotkeys: GlobalHotkeys?
+    weak var keyboardSnapController: KeyboardSnapController?
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        isTerminating = true
+        globalHotkeys?.shutdown()
+        keyboardSnapController?.suspend()
         Task { @MainActor [weak self] in
             guard let self, let layoutController = self.layoutController else {
+                await self?.keyboardSnapController?.shutdown()
                 sender.reply(toApplicationShouldTerminate: true)
                 return
             }
             let ready = await layoutController.prepareForTermination()
             guard !ready else {
+                await keyboardSnapController?.shutdown()
                 sender.reply(toApplicationShouldTerminate: true)
                 return
             }
@@ -56,9 +97,16 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
             let response = alert.runModal()
             let retrySucceeded: Bool
             if response == .alertFirstButtonReturn {
-                retrySucceeded = await layoutController.retryFailedSave()
+                retrySucceeded = await layoutController.flush()
             } else {
                 retrySucceeded = false
+            }
+            if !retrySucceeded {
+                isTerminating = false
+                keyboardSnapController?.resume()
+                globalHotkeys?.start()
+            } else {
+                await keyboardSnapController?.shutdown()
             }
             sender.reply(toApplicationShouldTerminate: retrySucceeded)
         }
