@@ -248,6 +248,59 @@ final class KeyboardLifecycleTests: XCTestCase {
     }
 }
 
+extension KeyboardLifecycleTests {
+    @MainActor
+    func testDragGateCancelsPendingKeyboardWriteAndPreservesRestoreFrame() async throws {
+        let fixture = try await LifecycleFixture.make()
+        defer { fixture.remove() }
+        await fixture.backend.arm(.beforeWrite)
+        fixture.controller.handle(.zone(ZoneID(rawValue: 0)))
+        try await fixture.waitForBarrier()
+        fixture.controller.setDragGateClosed(true)
+        await fixture.backend.release()
+        try await fixture.waitUntilIdle()
+        let cancelledWrites = await fixture.backend.writeCount()
+        XCTAssertEqual(cancelledWrites, 0)
+
+        fixture.controller.setDragGateClosed(false)
+        fixture.controller.handle(.zone(ZoneID(rawValue: 0)))
+        try await fixture.waitUntilIdle()
+        fixture.controller.handle(.restore)
+        try await fixture.waitUntilIdle()
+        let restored = await fixture.backend.currentFrame()
+        XCTAssertEqual(restored, fixture.originalFrame)
+        let writes = await fixture.backend.writeCount()
+        XCTAssertEqual(writes, 2)
+        _ = await fixture.layout.flush()
+    }
+
+    @MainActor
+    func testDragGateReleaseDuringQuitSuspendCannotRestoreUntilResume() async throws {
+        let fixture = try await LifecycleFixture.make()
+        defer { fixture.remove() }
+        fixture.controller.handle(.zone(ZoneID(rawValue: 0)))
+        try await fixture.waitUntilIdle()
+        let placedWrites = await fixture.backend.writeCount()
+        XCTAssertEqual(placedWrites, 1)
+
+        fixture.controller.suspend()
+        fixture.controller.setDragGateClosed(false)
+        fixture.controller.handle(.restore)
+        let writesWhileSuspended = await fixture.backend.writeCount()
+        XCTAssertEqual(writesWhileSuspended, 1)
+        XCTAssertTrue(fixture.controller.hasRestoreTarget)
+
+        fixture.controller.resume()
+        fixture.controller.handle(.restore)
+        try await fixture.waitUntilIdle()
+        let restored = await fixture.backend.currentFrame()
+        XCTAssertEqual(restored, fixture.originalFrame)
+        let writesAfterResume = await fixture.backend.writeCount()
+        XCTAssertEqual(writesAfterResume, 2)
+        _ = await fixture.layout.flush()
+    }
+}
+
 private enum LifecycleTestError: Error { case timeout }
 
 @MainActor

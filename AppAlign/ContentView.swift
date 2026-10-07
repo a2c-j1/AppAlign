@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var placementController: PlacementController
     @EnvironmentObject private var layoutController: LayoutController
+    @EnvironmentObject private var dragDetectionController: DragDetectionController
     @State private var isLayoutEditorPresented = false
 
     var body: some View {
@@ -114,6 +115,29 @@ struct ContentView: View {
             }
 
             KeyboardSettingsView()
+
+            GroupBox("Pointer window dragging") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Detect title-bar window drags", isOn: Binding(
+                        get: { dragDetectionController.isEnabled },
+                        set: { dragDetectionController.setEnabled($0) }
+                    ))
+                    HStack {
+                        Text(dragDetectionController.statusMessage)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        if !dragDetectionController.isRunning {
+                            Button("Retry") { dragDetectionController.retry() }
+                        }
+                    }
+                    Text("Input Monitoring observes pointer events. Accessibility identifies the window under the pointer. Both permissions are requested only when this feature is enabled. AppAlign never changes or injects input.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }
 
             GroupBox("Focused-window placement") {
                 VStack(alignment: .leading, spacing: 12) {
