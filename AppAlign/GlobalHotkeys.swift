@@ -136,6 +136,7 @@ final class GlobalHotkeys: ObservableObject {
     private var lifecycleGeneration: UInt64 = 0
     private var runGeneration: UInt64 = 0
     private var started = false
+    private var dragGateClosed = false
     private var acceptsDispatch = false
     private var isReconciling = false
     private var reconcileAgain = false
@@ -257,6 +258,7 @@ final class GlobalHotkeys: ObservableObject {
 
     private func reconcileNow(generation requestedGeneration: UInt64) async {
         guard started, lifecycleGeneration == requestedGeneration else { return }
+        guard !dragGateClosed else { unregisterAll(); return }
         let settings = settingsController.keyboardSettings
         guard settings.isEnabled else { pause("Keyboard shortcuts are disabled."); return }
         guard environment.isAccessibilityTrusted() else { pause("Grant Accessibility access before enabling window placement shortcuts."); return }
@@ -271,7 +273,7 @@ final class GlobalHotkeys: ObservableObject {
             guard started, lifecycleGeneration == requestedGeneration else { return }
             unregisterAll(); statusMessage = "Shortcuts pause because the focused window is not eligible: \(error.localizedDescription)"; return
         }
-        guard started, lifecycleGeneration == requestedGeneration else {
+        guard started, lifecycleGeneration == requestedGeneration, !dragGateClosed else {
             await snapController.discardProbeIfUnowned(token.token)
             return
         }
@@ -300,7 +302,7 @@ final class GlobalHotkeys: ObservableObject {
             if action == .restore { return snapController.isEligible(action, for: token, layout: appliedSnapshot) }
             return appliedSnapshot != nil && snapController.isEligible(action, for: token, layout: appliedSnapshot)
         }
-        guard settingsController.keyboardSettings == settings,
+        guard !dragGateClosed, settingsController.keyboardSettings == settings,
               environment.frontmostPID() == pid else {
             await snapController.discardProbeIfUnowned(token.token)
             reconcileAgain = true
@@ -379,6 +381,22 @@ final class GlobalHotkeys: ObservableObject {
 
 }
 
+extension GlobalHotkeys {
+    func setDragGateClosed(_ closed: Bool) {
+        guard dragGateClosed != closed else { return }
+        dragGateClosed = closed
+        lifecycleGeneration &+= 1
+        snapController.invalidatePendingOperations()
+        if closed {
+            acceptsDispatch = false
+            unregisterAll()
+        } else {
+            rememberEnvironment()
+            reconcile()
+        }
+    }
+}
+
 private extension GlobalHotkeys {
     func rememberEnvironment() {
         lastObservedPID = environment.frontmostPID()
@@ -417,6 +435,7 @@ private extension GlobalHotkeys {
               registrations[registration.id]?.action == registration.action,
               settingsController.keyboardSettings.isEnabled,
               !snapController.isBusy,
+              !snapController.dragGateClosed,
               environment.isAccessibilityTrusted(),
               let pid = environment.frontmostPID(), pid != ownPID else { return false }
         return settingsController.keyboardSettings.validShortcuts[registration.action] == registration.shortcut

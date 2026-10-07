@@ -13,6 +13,33 @@ struct RuntimeWindowSnapshot: Sendable {
     let frame: CGRect
 }
 
+struct DragLeaseID: Hashable, Sendable {
+    let rawValue: UUID
+}
+
+struct DragWindowSnapshot: Sendable {
+    let token: RuntimeWindowToken
+    let lease: DragLeaseID
+    let frame: CGRect
+    let hitRole: String?
+    let ancestorRoles: [String]
+    let hitInTitleBar: Bool
+    let capturedAt: UInt64
+    let hitRegion: CGRect
+    let revision: UInt64
+    let lastChangedAt: UInt64
+    let changeWasResize: Bool
+    let notificationsVerified: Bool
+    let revisionChanges: [WindowRevisionChange]
+}
+
+protocol DragWindowReading: Sendable {
+    func window(at point: CGPoint, ownPID: pid_t, downTimestamp: UInt64) async throws -> DragWindowSnapshot
+    func releaseDragLease(_ lease: DragLeaseID) async
+    func isWriteInProgress() async -> Bool
+    func frame(for token: RuntimeWindowToken, lease: DragLeaseID) async throws -> CGRect
+}
+
 protocol KeyboardWindowOperating: Sendable {
     func focusedWindow(applicationPID: pid_t, ownPID: pid_t) async throws -> RuntimeWindowSnapshot
     func retain(_ token: RuntimeWindowToken) async
@@ -20,6 +47,11 @@ protocol KeyboardWindowOperating: Sendable {
     func restore(_ token: RuntimeWindowToken, to frame: CGRect, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect
     func discard(_ token: RuntimeWindowToken) async
     func shutdown() async
+    func discardProcess(_ pid: pid_t) async
+}
+
+extension KeyboardWindowOperating {
+    func discardProcess(_ pid: pid_t) async {}
 }
 
 private enum KeyboardSnapError: LocalizedError {
@@ -65,6 +97,7 @@ final class KeyboardSnapController: ObservableObject {
     private let maximumSessions = 64
     private var lifecycleGeneration: UInt64 = 0
     private var isRunning = true
+    private(set) var dragGateClosed = false
 
     init(
         layoutController: LayoutController,
@@ -77,7 +110,7 @@ final class KeyboardSnapController: ObservableObject {
     }
 
     func handle(_ action: KeyboardSnapAction) {
-        guard isRunning, !isBusy else { return }
+        guard isRunning, !isBusy, !dragGateClosed else { return }
         isBusy = true
         let generation = lifecycleGeneration
         Task { @MainActor [weak self] in
@@ -112,6 +145,12 @@ final class KeyboardSnapController: ObservableObject {
         lifecycleGeneration &+= 1
     }
 
+    func setDragGateClosed(_ closed: Bool) {
+        guard dragGateClosed != closed else { return }
+        dragGateClosed = closed
+        if closed { invalidatePendingOperations() }
+    }
+
     func isEligible(_ action: KeyboardSnapAction, for focused: RuntimeWindowSnapshot, layout snapshot: KeyboardLayoutSnapshot?) -> Bool {
         if action == .restore { return sessions[focused.token.id] != nil }
         guard let snapshot else { return false }
@@ -137,7 +176,7 @@ final class KeyboardSnapController: ObservableObject {
     var processID: pid_t { environment.ownPID }
 
     private func perform(_ action: KeyboardSnapAction, generation: UInt64) async {
-        guard isRunning, lifecycleGeneration == generation else { return }
+        guard isRunning, !dragGateClosed, lifecycleGeneration == generation else { return }
         guard layoutController.keyboardSettings.isEnabled else {
             statusMessage = "Keyboard placement is disabled."
             return
@@ -223,7 +262,7 @@ final class KeyboardSnapController: ObservableObject {
         do {
             let savedSettings = layoutController.keyboardSettings
             let preflight: @MainActor @Sendable () -> Bool = { [weak self] in
-                guard let self, self.isRunning, self.lifecycleGeneration == generation,
+                guard let self, self.isRunning, !self.dragGateClosed, self.lifecycleGeneration == generation,
                       self.layoutController.keyboardSettings.isEnabled,
                       self.frontmostPID == focused.token.pid,
                       self.accessibilityIsTrusted,
@@ -256,7 +295,7 @@ final class KeyboardSnapController: ObservableObject {
         }
         do {
             let preflight: @MainActor @Sendable () -> Bool = { [weak self] in
-                guard let self, self.isRunning, self.lifecycleGeneration == generation,
+                guard let self, self.isRunning, !self.dragGateClosed, self.lifecycleGeneration == generation,
                       self.layoutController.keyboardSettings.isEnabled else { return false }
                 return self.frontmostPID == focused.token.pid && self.accessibilityIsTrusted
             }
@@ -290,6 +329,7 @@ final class KeyboardSnapController: ObservableObject {
         sessions = sessions.filter { $0.value.token.pid != pid }
         hasRestoreTarget = !sessions.isEmpty
         for token in removed { await backend.discard(token) }
+        await backend.discardProcess(pid)
     }
 
     func discardProbeIfUnowned(_ token: RuntimeWindowToken) async {

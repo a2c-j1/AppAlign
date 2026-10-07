@@ -76,6 +76,44 @@ final class GlobalHotkeysTests: XCTestCase {
     }
 
     @MainActor
+    func testDragGateUnregistersIgnoresOldCallbacksAndReconcilesOnlyWhenEligible() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.remove() }
+        fixture.hotkeys.start()
+        let initiallyRegistered = await fixture.waitForActiveRegistrations()
+        XCTAssertTrue(initiallyRegistered)
+        let oldCallback = try XCTUnwrap(fixture.currentCallback())
+
+        fixture.hotkeys.setDragGateClosed(true)
+        let unregistered = await fixture.waitForNoActiveRegistrations()
+        XCTAssertTrue(unregistered)
+        oldCallback()
+        try await Task.sleep(for: .milliseconds(50))
+        let staleCallbackWrites = await fixture.backend.writeCount()
+        XCTAssertEqual(staleCallbackWrites, 0)
+
+        fixture.environment.isTrusted = false
+        fixture.hotkeys.setDragGateClosed(false)
+        XCTAssertTrue(fixture.registrar.activeIDs.isEmpty)
+        fixture.environment.isTrusted = true
+        fixture.hotkeys.settingsDidChange()
+        let reRegistered = await fixture.waitForActiveRegistrations()
+        XCTAssertTrue(reRegistered)
+        try XCTUnwrap(fixture.currentCallback())()
+        let reRegisteredAction = await fixture.waitForWindowAction()
+        XCTAssertTrue(reRegisteredAction)
+        let freshCallbackWrites = await fixture.backend.writeCount()
+        XCTAssertEqual(freshCallbackWrites, 1)
+        let registrationsBeforeShutdown = fixture.registrar.totalRegistrations
+
+        fixture.hotkeys.shutdown()
+        fixture.hotkeys.setDragGateClosed(false)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(fixture.registrar.activeIDs.isEmpty)
+        XCTAssertEqual(fixture.registrar.totalRegistrations, registrationsBeforeShutdown)
+    }
+
+    @MainActor
     func testSystemConflictAndCarbonRegistrationFailureAreReported() async throws {
         let systemConflict = try await Fixture.make(systemConflict: true)
         defer { systemConflict.remove() }
