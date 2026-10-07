@@ -113,6 +113,8 @@ struct ContentView: View {
                 .padding(.vertical, 4)
             }
 
+            KeyboardSettingsView()
+
             GroupBox("Focused-window placement") {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(

@@ -20,6 +20,15 @@
 			B10000000000000000000006 /* LayoutTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000006 /* LayoutTemplates.swift */; };
 			B10000000000000000000007 /* LayoutController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000007 /* LayoutController.swift */; };
 			B10000000000000000000008 /* LayoutPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000008 /* LayoutPreview.swift */; };
+			B1000000000000000000001C /* ZoneNavigator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000014 /* ZoneNavigator.swift */; };
+			B1000000000000000000001D /* ZoneNavigator.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000014 /* ZoneNavigator.swift */; };
+			B1000000000000000000001E /* ZoneNavigatorTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000015 /* ZoneNavigatorTests.swift */; };
+			B1000000000000000000001F /* KeyboardSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000016 /* KeyboardSettings.swift */; };
+			B10000000000000000000020 /* KeyboardSnapController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000017 /* KeyboardSnapController.swift */; };
+			B10000000000000000000021 /* GlobalHotkeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000018 /* GlobalHotkeys.swift */; };
+			B10000000000000000000022 /* KeyboardSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000019 /* KeyboardSettingsView.swift */; };
+			B10000000000000000000023 /* KeyboardSettings.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000016 /* KeyboardSettings.swift */; };
+			B10000000000000000000024 /* KeyboardSettingsTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B2000000000000000000001A /* KeyboardSettingsTests.swift */; };
 			B10000000000000000000009 /* DisplayModels.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* DisplayModels.swift */; };
 			B1000000000000000000000A /* DisplayGeometry.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* DisplayGeometry.swift */; };
 			B1000000000000000000000B /* LayoutModels.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* LayoutModels.swift */; };
@@ -39,6 +48,18 @@
 			B10000000000000000000019 /* LayoutEditorTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000012 /* LayoutEditorTests.swift */; };
 			B1000000000000000000001A /* LayoutEditorModel.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000011 /* LayoutEditorModel.swift */; };
 			B1000000000000000000001B /* LayoutEditorConcurrencyTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */; };
+			B10000000000000000000025 /* KeyboardSnapController.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000017 /* KeyboardSnapController.swift */; };
+			B10000000000000000000026 /* GlobalHotkeys.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000018 /* GlobalHotkeys.swift */; };
+			B10000000000000000000027 /* KeyboardSnapControllerTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B2000000000000000000001B /* KeyboardSnapControllerTests.swift */; };
+			B1000000000000000000002A /* KeyboardLayoutSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000001C /* KeyboardLayoutSnapshot.swift */; };
+			B1000000000000000000002B /* KeyboardLayoutSnapshot.swift in Tests */ = {isa = PBXBuildFile; fileRef = B2000000000000000000001C /* KeyboardLayoutSnapshot.swift */; };
+			B1000000000000000000002C /* PlacementController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000001D /* PlacementController.swift */; };
+			B1000000000000000000002D /* PlacementController.swift in Tests */ = {isa = PBXBuildFile; fileRef = B2000000000000000000001D /* PlacementController.swift */; };
+			B1000000000000000000002E /* KeyboardSettingsPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000001E /* KeyboardSettingsPersistence.swift */; };
+			B1000000000000000000002F /* KeyboardSettingsPersistence.swift in Tests */ = {isa = PBXBuildFile; fileRef = B2000000000000000000001E /* KeyboardSettingsPersistence.swift */; };
+			B10000000000000000000030 /* GlobalHotkeysTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B2000000000000000000001F /* GlobalHotkeysTests.swift */; };
+			B10000000000000000000031 /* KeyboardIntegrationTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000020 /* KeyboardIntegrationTests.swift */; };
+			B10000000000000000000032 /* KeyboardLifecycleTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = B20000000000000000000021 /* KeyboardLifecycleTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -66,6 +87,20 @@
 			B20000000000000000000011 /* LayoutEditorModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEditorModel.swift; sourceTree = "<group>"; };
 			B20000000000000000000012 /* LayoutEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEditorTests.swift; sourceTree = "<group>"; };
 			B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEditorConcurrencyTests.swift; sourceTree = "<group>"; };
+			B20000000000000000000014 /* ZoneNavigator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneNavigator.swift; sourceTree = "<group>"; };
+			B20000000000000000000015 /* ZoneNavigatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneNavigatorTests.swift; sourceTree = "<group>"; };
+			B20000000000000000000016 /* KeyboardSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardSettings.swift; sourceTree = "<group>"; };
+			B20000000000000000000017 /* KeyboardSnapController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardSnapController.swift; sourceTree = "<group>"; };
+			B20000000000000000000018 /* GlobalHotkeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotkeys.swift; sourceTree = "<group>"; };
+			B20000000000000000000019 /* KeyboardSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardSettingsView.swift; sourceTree = "<group>"; };
+			B2000000000000000000001A /* KeyboardSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardSettingsTests.swift; sourceTree = "<group>"; };
+			B2000000000000000000001B /* KeyboardSnapControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardSnapControllerTests.swift; sourceTree = "<group>"; };
+			B2000000000000000000001C /* KeyboardLayoutSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardLayoutSnapshot.swift; sourceTree = "<group>"; };
+			B2000000000000000000001D /* PlacementController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacementController.swift; sourceTree = "<group>"; };
+			B2000000000000000000001E /* KeyboardSettingsPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardSettingsPersistence.swift; sourceTree = "<group>"; };
+			B2000000000000000000001F /* GlobalHotkeysTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotkeysTests.swift; sourceTree = "<group>"; };
+			B20000000000000000000020 /* KeyboardIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardIntegrationTests.swift; sourceTree = "<group>"; };
+			B20000000000000000000021 /* KeyboardLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardLifecycleTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -103,6 +138,14 @@
 					B2000000000000000000000C /* Persistence.swift */,
 					B20000000000000000000010 /* LayoutEditing.swift */,
 					B20000000000000000000011 /* LayoutEditorModel.swift */,
+					B20000000000000000000014 /* ZoneNavigator.swift */,
+					B20000000000000000000016 /* KeyboardSettings.swift */,
+					B20000000000000000000017 /* KeyboardSnapController.swift */,
+					B20000000000000000000018 /* GlobalHotkeys.swift */,
+					B20000000000000000000019 /* KeyboardSettingsView.swift */,
+					B2000000000000000000001C /* KeyboardLayoutSnapshot.swift */,
+					B2000000000000000000001D /* PlacementController.swift */,
+					B2000000000000000000001E /* KeyboardSettingsPersistence.swift */,
 					A20000000000000000000003 /* Assets.xcassets */,
 				);
 				path = AppAlign;
@@ -116,7 +159,7 @@
 			};
 			B40000000000000000000001 /* AppAlignTests */ = {
 				isa = PBXGroup;
-				children = (B20000000000000000000009 /* LayoutEngineTests.swift */, B2000000000000000000000D /* PersistenceTests.swift */, B20000000000000000000012 /* LayoutEditorTests.swift */, B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */,);
+				children = (B20000000000000000000009 /* LayoutEngineTests.swift */, B2000000000000000000000D /* PersistenceTests.swift */, B20000000000000000000012 /* LayoutEditorTests.swift */, B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */, B20000000000000000000015 /* ZoneNavigatorTests.swift */, B2000000000000000000001A /* KeyboardSettingsTests.swift */, B2000000000000000000001B /* KeyboardSnapControllerTests.swift */, B2000000000000000000001F /* GlobalHotkeysTests.swift */, B20000000000000000000020 /* KeyboardIntegrationTests.swift */, B20000000000000000000021 /* KeyboardLifecycleTests.swift */,);
 				path = AppAlignTests;
 				sourceTree = "<group>";
 			};
@@ -143,6 +186,14 @@
 					B10000000000000000000010 /* Persistence.swift in Sources */,
 					B10000000000000000000016 /* LayoutEditing.swift in Sources */,
 					B10000000000000000000017 /* LayoutEditorModel.swift in Sources */,
+					B1000000000000000000001C /* ZoneNavigator.swift in Sources */,
+					B1000000000000000000001F /* KeyboardSettings.swift in Sources */,
+					B10000000000000000000020 /* KeyboardSnapController.swift in Sources */,
+					B10000000000000000000021 /* GlobalHotkeys.swift in Sources */,
+					B10000000000000000000022 /* KeyboardSettingsView.swift in Sources */,
+					B1000000000000000000002A /* KeyboardLayoutSnapshot.swift in Sources */,
+					B1000000000000000000002C /* PlacementController.swift in Sources */,
+					B1000000000000000000002E /* KeyboardSettingsPersistence.swift in Sources */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};
@@ -168,6 +219,19 @@
 					B10000000000000000000019 /* LayoutEditorTests.swift in Tests */,
 					B1000000000000000000001A /* LayoutEditorModel.swift in Tests */,
 					B1000000000000000000001B /* LayoutEditorConcurrencyTests.swift in Tests */,
+					B1000000000000000000001D /* ZoneNavigator.swift in Tests */,
+					B1000000000000000000001E /* ZoneNavigatorTests.swift in Tests */,
+					B10000000000000000000023 /* KeyboardSettings.swift in Tests */,
+					B10000000000000000000024 /* KeyboardSettingsTests.swift in Tests */,
+					B10000000000000000000025 /* KeyboardSnapController.swift in Tests */,
+					B10000000000000000000026 /* GlobalHotkeys.swift in Tests */,
+					B10000000000000000000027 /* KeyboardSnapControllerTests.swift in Tests */,
+					B1000000000000000000002B /* KeyboardLayoutSnapshot.swift in Tests */,
+					B1000000000000000000002D /* PlacementController.swift in Tests */,
+					B1000000000000000000002F /* KeyboardSettingsPersistence.swift in Tests */,
+					B10000000000000000000030 /* GlobalHotkeysTests.swift in Tests */,
+					B10000000000000000000031 /* KeyboardIntegrationTests.swift in Tests */,
+					B10000000000000000000032 /* KeyboardLifecycleTests.swift in Tests */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};
