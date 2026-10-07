@@ -269,7 +269,10 @@ final class InputMonitorCore: @unchecked Sendable {
         }
 
         let button = event.getIntegerValueField(.mouseEventButtonNumber)
-        enqueue(InputMonitorPayload(kind: kind, location: event.location, flags: event.flags.rawValue,
+        let flags = type == .leftMouseDown
+            ? CGEventSource.flagsState(.combinedSessionState).rawValue
+            : event.flags.rawValue
+        enqueue(InputMonitorPayload(kind: kind, location: event.location, flags: flags,
                                      button: button, timestamp: event.timestamp,
                                      generation: requestedGeneration, eventType: type))
     }
@@ -293,7 +296,8 @@ final class InputMonitorCore: @unchecked Sendable {
             flags: payload.flags,
             button: payload.button,
             timestamp: payload.timestamp,
-            buttonMask: buttonMask
+            buttonMask: buttonMask,
+            buttonEdge: Self.edge(for: payload.eventType)
         )
         let shouldScheduleDrain = !drainScheduled
         drainScheduled = true
@@ -301,6 +305,14 @@ final class InputMonitorCore: @unchecked Sendable {
         lock.unlock()
         if shouldScheduleDrain {
             DispatchQueue.main.async { [weak self] in self?.drainMailbox(generation: requestedGeneration) }
+        }
+    }
+
+    private static func edge(for type: CGEventType) -> MouseButtonEdge? {
+        switch type {
+        case .rightMouseDown, .otherMouseDown: .down
+        case .rightMouseUp, .otherMouseUp: .released
+        default: nil
         }
     }
 

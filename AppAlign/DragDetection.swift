@@ -34,6 +34,9 @@ final class DragDetectionController: ObservableObject {
     var dragGateChanged: (@MainActor (Bool) -> Void)?
     var invalidateKeyboard: (@MainActor () -> Void)?
     var onLifecycle: (@MainActor (DragLifecycleEvent) -> Void)?
+    var onWillEnd: (@MainActor (DragCommitContext) -> Bool)?
+    var onAcceptedInput: (@MainActor (DragInputEvent) -> Void)?
+    var onCommitCancelled: (@MainActor (String) -> Void)?
 
     private struct Gesture {
         let session: UInt64
@@ -44,6 +47,7 @@ final class DragDetectionController: ObservableObject {
         var latest: DragInputEvent
         var hit: DragWindowSnapshot?
         var frame: CGRect?
+        var originalFrame: CGRect?
         var baseline: DragWindowSnapshot?
         var validationRetries = 0
     }
@@ -139,7 +143,6 @@ final class DragDetectionController: ObservableObject {
         }
         // The app owner alone shuts down the shared runtime, after drag leases drain.
     }
-
     private func startMonitoring() {
         guard isEnabled, !quitPaused, !isRunning, !starting else { return }
         guard environment.inputGranted(), environment.accessibilityGranted() else {
@@ -163,7 +166,6 @@ final class DragDetectionController: ObservableObject {
             self.monitorStatus(status)
         })
     }
-
     private func monitorStatus(_ status: DragMonitorStatus) {
         switch status {
         case .ready:
@@ -180,7 +182,6 @@ final class DragDetectionController: ObservableObject {
             }
         }
     }
-
     private func stopMonitoring(reason: String) {
         runGeneration &+= 1
         starting = false; isRunning = false
@@ -278,7 +279,7 @@ extension DragDetectionController {
         guard event.sequence > lastSequence else { return }
         lastSequence = event.sequence
         if event.kind == .tapDisabled { monitorStatus(.interrupted("The event tap was disabled")); return }
-        if event.kind == .escape { cancel(reason: "Escape cancelled the gesture."); return }
+        if event.kind == .escape { onAcceptedInput?(event); cancel(reason: "Escape cancelled the gesture."); return }
         if event.kind == .mouseMoved {
             guard gesture == nil, event.buttonMask == 0 else { return }
             lastHover = event
@@ -290,6 +291,8 @@ extension DragDetectionController {
         guard var current = gesture, event.gesture == current.inputID else { return }
         current.latest = event
         gesture = current
+        onAcceptedInput?(event)
+        guard let live = gesture, live.session == current.session, live.inputID == current.inputID else { return }
         switch event.kind {
         case .leftUp:
             lastHover = event
@@ -302,7 +305,6 @@ extension DragDetectionController {
         default: break
         }
     }
-
     private func begin(_ event: DragInputEvent) {
         cancel(reason: "A new mouse-down replaced the prior gesture.")
         sessionGeneration &+= 1
@@ -319,10 +321,11 @@ extension DragDetectionController {
             } else { discardPrewarm() }
         }
         gesture = current
+        onAcceptedInput?(event)
+        guard gesture?.session == current.session, gesture?.inputID == current.inputID else { return }
         dragGateChanged?(true)
         pumpCapture()
     }
-
     private func canRetryValidation(_ value: Gesture) -> Bool {
         value.baseline != nil && value.validationRetries == 0 && value.latest.location != value.down.location
     }
@@ -380,7 +383,7 @@ extension DragDetectionController {
                 let originalFrame = live.baseline?.frame ?? hit.frame
                 let oldBaselineLease = live.baseline?.lease
                 live.baseline = nil
-                live.hit = hit; live.frame = hit.frame
+                live.hit = hit; live.frame = hit.frame; live.originalFrame = originalFrame
                 self.gesture = live
                 if let oldBaselineLease { self.queueRelease(oldBaselineLease) }
                 self.append(self.machine.down(session: session, point: current.down.location, frame: originalFrame,
@@ -445,8 +448,18 @@ extension DragDetectionController {
     }
 
     private func finish() {
-        let terminal = decorate(machine.finish(), using: gesture)
-        detachGesture()
+        let events = machine.finish()
+        let terminal = decorate(events, using: gesture)
+        var transferredLease: DragLeaseID?
+        if events.last?.kind == .ended, let current = gesture,
+           let hit = current.hit, let original = current.originalFrame {
+            let context = DragCommitContext(run: runGeneration, session: current.session,
+                                            event: current.latest, token: hit.token,
+                                            sourceLease: hit.lease, originalFrame: original,
+                                            displayFingerprint: current.fingerprint)
+            if onWillEnd?(context) == true { transferredLease = hit.lease }
+        }
+        detachGesture(transferring: transferredLease)
         publish(terminal)
     }
 
@@ -456,11 +469,12 @@ extension DragDetectionController {
             emitted = [DragLifecycleEvent(kind: .cancelled, session: current.session, frame: nil, reason: reason)]
         }
         let terminal = decorate(emitted, using: gesture)
+        onCommitCancelled?(reason)
         detachGesture()
         publish(terminal)
     }
 
-    private func detachGesture() {
+    private func detachGesture(transferring: DragLeaseID? = nil) {
         let oldLease = gesture?.hit?.lease
         let baselineLease = gesture?.baseline?.lease
         gesture = nil
@@ -469,7 +483,7 @@ extension DragDetectionController {
         // The old AX task retains its in-flight slot until it returns. A new
         // gesture cannot enqueue unbounded reads behind that task.
         dragGateChanged?(false)
-        if let oldLease { queueRelease(oldLease) }
+        if let oldLease, oldLease != transferring { queueRelease(oldLease) }
         if let baselineLease { queueRelease(baselineLease) }
     }
 
@@ -575,7 +589,11 @@ extension DragDetectionController {
     private func publish(_ decorated: [DragLifecycleEvent]) {
         lifecycleEvents.append(contentsOf: decorated)
         if lifecycleEvents.count > 256 { lifecycleEvents.removeFirst(lifecycleEvents.count - 256) }
-        for event in decorated { onLifecycle?(event) }
+        for event in decorated {
+            if event.kind == .began || event.kind == .updated,
+               gesture?.session != event.session { continue }
+            onLifecycle?(event)
+        }
         if let reason = decorated.last?.reason { statusMessage = reason }
     }
 }

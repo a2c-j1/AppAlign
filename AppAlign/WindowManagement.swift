@@ -13,12 +13,15 @@ struct AXWindow {
     let element: AXUIElement
     let pid: pid_t
     let messagingTimeout: Float
+    let operationDeadline: UInt64?
 
-    init(applicationElement: AXUIElement, element: AXUIElement, pid: pid_t, messagingTimeout: Float = 0.5) {
+    init(applicationElement: AXUIElement, element: AXUIElement, pid: pid_t, messagingTimeout: Float = 0.5,
+         operationDeadline: UInt64? = nil) {
         self.applicationElement = applicationElement
         self.element = element
         self.pid = pid
         self.messagingTimeout = max(0.01, messagingTimeout)
+        self.operationDeadline = operationDeadline
     }
 
     func configureMessagingTimeout(_ timeout: Float) throws {
@@ -29,7 +32,14 @@ struct AXWindow {
     }
 
     private func setElementTimeout() throws {
-        let result = AXUIElementSetMessagingTimeout(element, messagingTimeout)
+        let timeout: Float
+        if let operationDeadline {
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < operationDeadline else { throw WindowManagementError.operationFailed }
+            timeout = min(messagingTimeout, Float(operationDeadline - now) / 1_000_000_000)
+            guard timeout > 0.01 else { throw WindowManagementError.operationFailed }
+        } else { timeout = messagingTimeout }
+        let result = AXUIElementSetMessagingTimeout(element, timeout)
         guard result == .success else {
             throw WindowManagementError.readFailed(attribute: "messaging timeout", code: result.rawValue)
         }
@@ -131,6 +141,7 @@ struct AXWindow {
     }
 
     private func pointAttribute(_ attribute: CFString) throws -> CGPoint {
+        try setElementTimeout()
         var value: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(element, attribute, &value)
         guard result == .success else {
@@ -156,6 +167,7 @@ struct AXWindow {
     }
 
     private func sizeAttribute(_ attribute: CFString) throws -> CGSize {
+        try setElementTimeout()
         var value: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(element, attribute, &value)
         guard result == .success else {
@@ -249,18 +261,18 @@ private struct AXHitResult {
 actor AccessibilityWindowRuntime: KeyboardWindowOperating {
     nonisolated let executor = AccessibilitySerialExecutor()
     nonisolated var unownedExecutor: UnownedSerialExecutor { executor.asUnownedSerialExecutor() }
-    private struct Record {
+    struct Record {
         let window: AXWindow
         var ownership = RuntimeWindowOwnership()
         var revisionTracker = AXRevisionTracker()
         var observerRegistration: AXObserverRegistration?
     }
 
-    private var records: [UUID: Record] = [:]
-    private var writeInProgress = false
-    private var lastWriteEndNanoseconds: UInt64 = 0
-    private let repository = WindowRepository(messagingTimeout: 0.5)
-    private let mover = WindowMover(messagingTimeout: 0.5, retryLimit: 1)
+    var records: [UUID: Record] = [:]
+    var writeInProgress = false
+    var lastWriteEndNanoseconds: UInt64 = 0
+    let repository = WindowRepository(messagingTimeout: 0.5)
+    let mover = WindowMover(messagingTimeout: 0.5, retryLimit: 1)
 }
 
 extension AccessibilityWindowRuntime {
@@ -443,16 +455,8 @@ extension AccessibilityWindowRuntime {
     }
 
     func releaseDragLease(_ lease: DragLeaseID) async {
-        guard let id = records.first(where: { $0.value.ownership.dragLeases.contains(lease) })?.key,
-              var record = records[id] else { return }
-        record.ownership.releaseDrag(lease)
-        if record.ownership.dragLeases.isEmpty, let registration = record.observerRegistration {
-            record.observerRegistration = nil
-            records[id] = record
-            registration.invalidate()
-            guard let refreshed = records[id] else { return }
-            if !Self.isOwned(refreshed) { records.removeValue(forKey: id) }
-        } else if !Self.isOwned(record) { records.removeValue(forKey: id) } else { records[id] = record }
+        guard let id = records.first(where: { $0.value.ownership.dragLeases.contains(lease) })?.key else { return }
+        releaseOwnership(id: id) { $0.releaseDrag(lease) }
     }
 
     func frame(for token: RuntimeWindowToken, lease: DragLeaseID) async throws -> CGRect {
@@ -478,68 +482,61 @@ extension AccessibilityWindowRuntime {
         }
     }
 
-    private func withCurrentFocusedWindow<T>(
-        _ token: RuntimeWindowToken,
-        preflight: @MainActor @Sendable () -> Bool,
-        operation: (AXWindow) throws -> T
-    ) async throws -> T {
-        guard let record = records[token.id], record.window.pid == token.pid else { throw WindowManagementError.noCapturedWindow }
-        if record.revisionTracker.snapshot(since: 0).destroyed {
-            record.observerRegistration?.invalidate()
-            records.removeValue(forKey: token.id)
+    func handoffDragLease(token: RuntimeWindowToken, sourceLease: DragLeaseID, commitID: DragCommitID,
+                          ticket: DragCommitTicket) async -> Bool {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard ticket.state == .pending, now < ticket.startDeadline, now < ticket.totalDeadline,
+              var record = records[token.id], record.window.pid == token.pid,
+              !record.revisionTracker.snapshot(since: 0).destroyed,
+              record.ownership.handoffDrag(sourceLease, to: commitID) else { return false }
+        records[token.id] = record
+        return true
+    }
+
+    func commitDrag(_ offer: DragCommitOffer,
+                    preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
+        guard offer.ticket.state == .pending,
+              DispatchTime.now().uptimeNanoseconds < offer.ticket.startDeadline,
+              let before = records[offer.token.id], before.window.pid == offer.token.pid,
+              before.ownership.dragCommits.contains(offer.id) else {
             throw WindowManagementError.noCapturedWindow
         }
-        do {
-            let focusedBeforePreflight = try repository.focusedWindow(applicationPID: token.pid)
-            guard CFEqual(record.window.element, focusedBeforePreflight.element) else {
-                throw WindowManagementError.noFocusedWindow(code: -1)
-            }
-            try WindowFilter(ownPID: ProcessInfo.processInfo.processIdentifier).validate(focusedBeforePreflight)
-            guard await preflight() else { throw WindowManagementError.displayConfigurationChanged }
-            let focused = try repository.focusedWindow(applicationPID: token.pid)
-            guard CFEqual(record.window.element, focused.element) else {
-                throw WindowManagementError.noFocusedWindow(code: -1)
-            }
-            try WindowFilter(ownPID: ProcessInfo.processInfo.processIdentifier).validate(focused)
-            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == token.pid,
-                  AXIsProcessTrusted() else {
-                throw WindowManagementError.displayConfigurationChanged
-            }
-            writeInProgress = true
-            defer { writeInProgress = false }
-            defer {
-                let timestamp = DispatchTime.now().uptimeNanoseconds
-                record.revisionTracker.recordWrite(at: timestamp)
-                lastWriteEndNanoseconds = timestamp
-            }
-            return try operation(focused)
-        } catch {
-            if error is WindowManagementError { throw error }
-            records.removeValue(forKey: token.id)
-            throw error
+        guard await preflight() else { throw WindowManagementError.displayConfigurationChanged }
+
+        // Actor reentrancy is possible at the preflight await. Re-fetch and
+        // validate the exact retained AX window before it can become a write.
+        guard let record = records[offer.token.id], record.window.pid == offer.token.pid,
+              record.ownership.dragCommits.contains(offer.id),
+              !record.revisionTracker.snapshot(since: 0).destroyed,
+              AXIsProcessTrusted() else { throw WindowManagementError.noCapturedWindow }
+        let deadline = offer.ticket.totalDeadline
+        let frame = try Self.dragWindow(record.window, before: deadline).stableFrame()
+        try WindowFilter(ownPID: ProcessInfo.processInfo.processIdentifier)
+            .validate(Self.dragWindow(record.window, before: deadline))
+        guard Self.isFinite(frame), frame.width > 0, frame.height > 0,
+              abs(frame.width - offer.originalFrame.width) <= 2,
+              abs(frame.height - offer.originalFrame.height) <= 2,
+              offer.ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else {
+            throw WindowManagementError.displayConfigurationChanged
         }
+
+        writeInProgress = true
+        defer {
+            writeInProgress = false
+            let timestamp = DispatchTime.now().uptimeNanoseconds
+            record.revisionTracker.recordWrite(at: timestamp)
+            lastWriteEndNanoseconds = timestamp
+        }
+        let result = try mover.moveDrag(Self.dragWindow(record.window, before: deadline),
+                                        to: offer.targetFrame, ticket: offer.ticket)
+        guard let latest = records[offer.token.id], latest.window.pid == offer.token.pid,
+              latest.ownership.dragCommits.contains(offer.id) else { throw WindowManagementError.noCapturedWindow }
+        return result.actualFrame
     }
 
-    private static func isFinite(_ frame: CGRect) -> Bool {
-        frame.origin.x.isFinite && frame.origin.y.isFinite && frame.width.isFinite && frame.height.isFinite
-    }
-
-    private func token(for window: AXWindow) throws -> RuntimeWindowToken {
-        if let match = records.first(where: { $0.value.window.pid == window.pid && CFEqual($0.value.window.element, window.element) }) {
-            return RuntimeWindowToken(id: match.key, pid: window.pid)
-        }
-        if records.count >= 128,
-           let oldest = records.keys.first(where: { !Self.isOwned(records[$0]) }) {
-            records.removeValue(forKey: oldest)
-        }
-        guard records.count < 128 else { throw WindowManagementError.invalidFocusedWindow }
-        let id = UUID()
-        records[id] = Record(window: window)
-        return RuntimeWindowToken(id: id, pid: window.pid)
-    }
-
-    private static func isOwned(_ record: Record?) -> Bool {
-        record?.ownership.isOwned ?? false
+    func releaseDragCommit(token: RuntimeWindowToken, commitID: DragCommitID) async {
+        guard let record = records[token.id], record.window.pid == token.pid else { return }
+        releaseOwnership(id: token.id) { $0.releaseDragCommit(commitID) }
     }
 
     private static func stringAttribute(_ attribute: CFString, from element: AXUIElement, timeout: Float = 0.5) throws -> String? {
@@ -586,3 +583,4 @@ extension AccessibilityWindowRuntime {
 }
 
 extension AccessibilityWindowRuntime: DragWindowReading {}
+extension AccessibilityWindowRuntime: DragCommitOperating {}

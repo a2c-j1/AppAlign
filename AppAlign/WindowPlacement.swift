@@ -168,6 +168,34 @@ struct WindowMover {
         throw lastError
     }
 
+    func moveDrag(_ window: AXWindow, to requestedFrame: CGRect, ticket: DragCommitTicket) throws -> PlacementResult {
+        guard requestedFrame.width.isFinite, requestedFrame.height.isFinite,
+              requestedFrame.origin.x.isFinite, requestedFrame.origin.y.isFinite,
+              requestedFrame.width > 0, requestedFrame.height > 0 else {
+            throw WindowManagementError.invalidRequestedFrame
+        }
+        func permitted() throws -> AXWindow {
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard ticket.mayContinueWrite(now: now), now < ticket.totalDeadline else {
+                throw WindowManagementError.operationFailed
+            }
+            let timeout = Float(min(0.5, Double(ticket.totalDeadline - now) / 1_000_000_000))
+            guard timeout > 0.01 else { throw WindowManagementError.operationFailed }
+            return AXWindow(applicationElement: window.applicationElement, element: window.element,
+                            pid: window.pid, messagingTimeout: timeout,
+                            operationDeadline: ticket.totalDeadline)
+        }
+
+        try permitted().setPosition(requestedFrame.origin)
+        try permitted().setSize(requestedFrame.size)
+        try permitted().setPosition(requestedFrame.origin)
+        let actualFrame = try permitted().stableFrame()
+        guard framesMatch(requestedFrame, actualFrame) else {
+            throw WindowManagementError.frameMismatch(requested: requestedFrame, actual: actualFrame)
+        }
+        return PlacementResult(requestedFrame: requestedFrame, actualFrame: actualFrame)
+    }
+
     private func framesMatch(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
         abs(lhs.origin.x - rhs.origin.x) <= frameTolerance
             && abs(lhs.origin.y - rhs.origin.y) <= frameTolerance
