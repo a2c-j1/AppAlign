@@ -401,7 +401,7 @@ final class DragSnapSettingsAndOverlayTests: XCTestCase {
 }
 
 @MainActor
-private final class FakeZoneOverlay: ZoneOverlayPresenting {
+final class FakeZoneOverlay: ZoneOverlayPresenting {
     private(set) var showCount = 0
     private(set) var isVisible = false
     private(set) var selected: ZoneID?
@@ -432,7 +432,7 @@ private final class FakeOverlayPanel: ZoneOverlayPanelPresenting {
 }
 
 @MainActor
-private final class TestDragGate {
+final class TestDragGate {
     private(set) var commitActive = false
     func setDrag(_ value: Bool) { _ = value }
     func recordCommit(_ value: Bool) { commitActive = value }
