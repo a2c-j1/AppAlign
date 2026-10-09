@@ -84,20 +84,6 @@ final class LayoutEditorConcurrencyTests: XCTestCase {
     }
 
     @MainActor
-    func testApplyImplicitDefaultDoesNotCreateDanglingAssignment() async throws {
-        let fixture = try await makeFixture(includeDefault: false)
-        defer { fixture.remove() }
-        _ = try success(await fixture.controller.applyEditorLayout(PersistentStoreCoordinator.defaultLayoutID, identity: fixture.identity()))
-        let state = try await fixture.coordinator.load()
-        if let assignment = state.assignments[fixture.firstUUID] {
-            XCTAssertNotNil(state.layouts[assignment.layoutID])
-            XCTAssertEqual(assignment.layoutID, PersistentStoreCoordinator.defaultLayoutID)
-        }
-        XCTAssertEqual(fixture.controller.editorCatalog(for: fixture.first.id).appliedLayoutID, PersistentStoreCoordinator.defaultLayoutID)
-        XCTAssertEqual(fixture.controller.zones, try LayoutEngine.zones(for: PersistentStoreCoordinator.defaultLayout().definition(), in: fixture.first.workArea, spacing: 10))
-    }
-
-    @MainActor
     func testSaveFailureKeepsDraftUndoAndCancelLeavesStoreAndAppliedZonesUnchanged() async throws {
         let fixture = try await makeFixture()
         defer { fixture.remove() }
@@ -286,6 +272,40 @@ extension LayoutEditorConcurrencyTests {
         XCTAssertEqual(try restored.definition(), try changed.definition())
         XCTAssertEqual(restored.spacing, changed.spacing)
         XCTAssertEqual(restored.name, "Renamed")
+    }
+
+    @MainActor
+    func testApplyImplicitDefaultDoesNotCreateDanglingAssignment() async throws {
+        let fixture = try await makeFixture(includeDefault: false)
+        defer { fixture.remove() }
+        _ = try success(await fixture.controller.applyEditorLayout(PersistentStoreCoordinator.defaultLayoutID, identity: fixture.identity()))
+        let state = try await fixture.coordinator.load()
+        if let assignment = state.assignments[fixture.firstUUID] {
+            XCTAssertNotNil(state.layouts[assignment.layoutID])
+            XCTAssertEqual(assignment.layoutID, PersistentStoreCoordinator.defaultLayoutID)
+        }
+        XCTAssertEqual(fixture.controller.editorCatalog(for: fixture.first.id).appliedLayoutID, PersistentStoreCoordinator.defaultLayoutID)
+        XCTAssertEqual(fixture.controller.zones, try LayoutEngine.zones(for: PersistentStoreCoordinator.defaultLayout().definition(), in: fixture.first.workArea, spacing: 10))
+    }
+
+    @MainActor
+    func testApplyingLayoutsToNonselectedDisplayAtoBtoAAdvancesDragRevision() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.remove() }
+        XCTAssertNotEqual(fixture.controller.selectedDisplayID, fixture.second.id)
+
+        let initialRevision = fixture.controller.dragLayoutRevision
+        _ = try success(await fixture.controller.applyEditorLayout(fixture.custom.id, identity: fixture.identity(display: fixture.second.id)))
+        let revisionB = fixture.controller.dragLayoutRevision
+        XCTAssertGreaterThan(revisionB, initialRevision)
+
+        _ = try success(await fixture.controller.applyEditorLayout(fixture.other.id, identity: fixture.identity(display: fixture.second.id)))
+        let revisionA = fixture.controller.dragLayoutRevision
+        XCTAssertGreaterThan(revisionA, revisionB)
+
+        _ = try success(await fixture.controller.applyEditorLayout(fixture.custom.id, identity: fixture.identity(display: fixture.second.id)))
+        XCTAssertGreaterThan(fixture.controller.dragLayoutRevision, revisionA)
+        XCTAssertNotEqual(fixture.controller.selectedDisplayID, fixture.second.id)
     }
 }
 

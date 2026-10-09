@@ -4,6 +4,7 @@ struct ContentView: View {
     @EnvironmentObject private var placementController: PlacementController
     @EnvironmentObject private var layoutController: LayoutController
     @EnvironmentObject private var dragDetectionController: DragDetectionController
+    @EnvironmentObject private var dragSnapController: DragSnapController
     @State private var isLayoutEditorPresented = false
 
     var body: some View {
@@ -122,6 +123,29 @@ struct ContentView: View {
                         get: { dragDetectionController.isEnabled },
                         set: { dragDetectionController.setEnabled($0) }
                     ))
+                    Toggle("Require Shift", isOn: Binding(
+                        get: { dragSnapController.settings.requireShift },
+                        set: { value in var updated = dragSnapController.settings; updated.requireShift = value; dragSnapController.updateSettings(updated) }
+                    ))
+                    Picker("Toggle with button", selection: Binding<Int?>(
+                        get: { dragSnapController.settings.toggleButton },
+                        set: { value in var updated = dragSnapController.settings; updated.toggleButton = value; dragSnapController.updateSettings(updated) }
+                    )) {
+                        Text("Disabled").tag(Optional<Int>.none)
+                        Text("Right").tag(Optional(1))
+                        Text("Middle").tag(Optional(2))
+                        Text("Button 4").tag(Optional(3))
+                        Text("Button 5").tag(Optional(4))
+                    }
+                    .disabled(!layoutController.canEdit)
+                    HStack {
+                        Text("Selection radius: \(Int(dragSnapController.settings.selectionRadius)) pt")
+                        Slider(value: Binding(
+                            get: { dragSnapController.settings.selectionRadius },
+                            set: { value in var updated = dragSnapController.settings; updated.selectionRadius = value; dragSnapController.updateSettings(updated) }
+                        ), in: 0 ... 80, step: 2)
+                    }
+                    .disabled(!layoutController.canEdit)
                     HStack {
                         Text(dragDetectionController.statusMessage)
                             .font(.callout)
@@ -131,6 +155,7 @@ struct ContentView: View {
                             Button("Retry") { dragDetectionController.retry() }
                         }
                     }
+                    Text(dragSnapController.statusMessage).font(.caption).foregroundStyle(.secondary)
                     Text("Input Monitoring observes pointer events. Accessibility identifies the window under the pointer. Both permissions are requested only when this feature is enabled. AppAlign never changes or injects input.")
                         .font(.caption)
                         .foregroundStyle(.secondary)

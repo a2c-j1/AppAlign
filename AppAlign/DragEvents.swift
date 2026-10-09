@@ -1,6 +1,8 @@
 import CoreGraphics
 import Foundation
 
+enum MouseButtonEdge: Sendable, Equatable { case down, released }
+
 enum DragInputKind: Sendable, Equatable {
     case mouseMoved, leftDown, leftDragged, leftUp, flagsChanged, buttonChanged, escape, tapDisabled, overflow
 }
@@ -16,12 +18,14 @@ struct DragInputEvent: Sendable, Equatable {
     let gesture: UInt64
     let buttonMask: UInt64
     let firstDraggedTimestamp: UInt64?
+    let buttonEdge: MouseButtonEdge?
 
     init(kind: DragInputKind, location: CGPoint = .zero, flags: UInt64 = 0, button: Int64 = 0,
-         timestamp: UInt64 = 0, sequence: UInt64 = 0, epoch: UInt64 = 0, gesture: UInt64 = 0, buttonMask: UInt64 = 0, firstDraggedTimestamp: UInt64? = nil) {
+         timestamp: UInt64 = 0, sequence: UInt64 = 0, epoch: UInt64 = 0, gesture: UInt64 = 0, buttonMask: UInt64 = 0, firstDraggedTimestamp: UInt64? = nil, buttonEdge: MouseButtonEdge? = nil) {
         self.kind = kind; self.location = location; self.flags = flags; self.button = button
         self.timestamp = timestamp; self.sequence = sequence; self.epoch = epoch
         self.gesture = gesture; self.buttonMask = buttonMask; self.firstDraggedTimestamp = firstDraggedTimestamp
+        self.buttonEdge = buttonEdge
     }
 }
 
@@ -50,13 +54,15 @@ struct DragMailbox: Sendable {
     init(capacity: Int = 256) { self.capacity = max(1, capacity) }
 
     mutating func enqueue(kind: DragInputKind, location: CGPoint = .zero, flags: UInt64 = 0,
-                          button: Int64 = 0, timestamp: UInt64 = 0, buttonMask: UInt64 = 0) {
+                          button: Int64 = 0, timestamp: UInt64 = 0, buttonMask: UInt64 = 0,
+                          buttonEdge: MouseButtonEdge? = nil) {
         guard !overflowed else { return }
         nextSequence &+= 1
         if kind == .leftDown { gesture &+= 1; firstDraggedTimestamp = nil }
         if kind == .leftDragged, firstDraggedTimestamp == nil { firstDraggedTimestamp = timestamp }
         let event = DragInputEvent(kind: kind, location: location, flags: flags, button: button,
-                                   timestamp: timestamp, sequence: nextSequence, epoch: epoch, gesture: gesture, buttonMask: buttonMask, firstDraggedTimestamp: firstDraggedTimestamp)
+                                   timestamp: timestamp, sequence: nextSequence, epoch: epoch, gesture: gesture, buttonMask: buttonMask, firstDraggedTimestamp: firstDraggedTimestamp,
+                                   buttonEdge: buttonEdge)
         if kind == .leftDragged || kind == .mouseMoved, events.last?.kind == kind, events.last?.gesture == gesture {
             events[events.count - 1] = event
         } else if events.count < capacity {

@@ -32,6 +32,12 @@ extension LayoutController {
         }.first
         guard let display, display.workArea.width > 0, display.workArea.height > 0 else { return nil }
 
+        return appliedLayoutSnapshot(for: display)
+    }
+
+    func appliedLayoutSnapshot(for display: Display) -> KeyboardLayoutSnapshot? {
+        guard display.workArea.width > 0, display.workArea.height > 0 else { return nil }
+
         let layout: PersistedLayout
         if let persistentID = display.persistentID,
            let layoutID = assignments[persistentID.uuid]?.layoutID,

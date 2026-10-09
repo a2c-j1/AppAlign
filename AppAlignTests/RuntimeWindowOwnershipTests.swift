@@ -44,6 +44,26 @@ final class RuntimeWindowOwnershipTests: XCTestCase {
         XCTAssertTrue(ownership.isOwned)
     }
 
+    func testCommitHandoffKeepsOwnershipContinuousAndReleasesAreIdempotent() {
+        var ownership = RuntimeWindowOwnership()
+        let drag = DragLeaseID(rawValue: UUID())
+        let commit = DragCommitID()
+        ownership.retainKeyboard()
+        ownership.retainDrag(drag)
+        XCTAssertTrue(ownership.handoffDrag(drag, to: commit))
+        XCTAssertTrue(ownership.isOwned)
+        XCTAssertTrue(ownership.keyboardRetained)
+        XCTAssertFalse(ownership.dragLeases.contains(drag))
+        XCTAssertTrue(ownership.dragCommits.contains(commit))
+        ownership.releaseDrag(drag)
+        ownership.releaseDragCommit(commit)
+        ownership.releaseDragCommit(commit)
+        XCTAssertTrue(ownership.isOwned, "Keyboard Restore ownership must outlive drag cleanup.")
+        XCTAssertTrue(ownership.keyboardRetained)
+        ownership.discardKeyboard()
+        XCTAssertFalse(ownership.isOwned)
+    }
+
     func testTextTabContentAndResizeHitFixturesAreRejectedWithoutTitleBarEvidence() {
         let frame = CGRect(x: 0, y: 0, width: 800, height: 600)
         XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 40, y: 12), hitRole: "AXTextField", ancestorRoles: ["AXTextField", "AXWebArea", "AXWindow"]))

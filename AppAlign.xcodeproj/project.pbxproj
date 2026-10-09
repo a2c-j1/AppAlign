@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+			D10000000000000000000001 /* DragCommit.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000001 /* DragCommit.swift */; };
+			D10000000000000000000002 /* DragLayoutSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* DragLayoutSnapshot.swift */; };
+			D10000000000000000000003 /* DragSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000003 /* DragSettings.swift */; };
+			D10000000000000000000004 /* ZoneOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000004 /* ZoneOverlay.swift */; };
+			D10000000000000000000005 /* WindowRuntimeOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000005 /* WindowRuntimeOperations.swift */; };
 			C10000000000000000000007 /* RuntimeWindowOwnershipTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = C40000000000000000000002 /* RuntimeWindowOwnershipTests.swift */; };
 			C10000000000000000000008 /* DragRuntimeSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = C30000000000000000000004 /* DragRuntimeSupport.swift */; };
 			C10000000000000000000009 /* DragRuntimeSupport.swift in Tests */ = {isa = PBXBuildFile; fileRef = C30000000000000000000004 /* DragRuntimeSupport.swift */; };
@@ -14,6 +19,13 @@
 			C1000000000000000000000E /* WindowPlacement.swift in Tests */ = {isa = PBXBuildFile; fileRef = C30000000000000000000006 /* WindowPlacement.swift */; };
 			C1000000000000000000000C /* DragTestSupport.swift in Tests */ = {isa = PBXBuildFile; fileRef = C40000000000000000000003 /* DragTestSupport.swift */; };
 			C1000000000000000000000F /* InputMonitorLifecycleTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = C40000000000000000000004 /* InputMonitorLifecycleTests.swift */; };
+			C20000000000000000000002 /* DragSnapTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = C40000000000000000000005 /* DragSnapTests.swift */; };
+			C10000000000000000000015 /* DragDetectorSnapAcceptanceTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = C40000000000000000000006 /* DragDetectorSnapAcceptanceTests.swift */; };
+			C10000000000000000000010 /* DragCommit.swift in Tests */ = {isa = PBXBuildFile; fileRef = D20000000000000000000001 /* DragCommit.swift */; };
+			C10000000000000000000011 /* DragLayoutSnapshot.swift in Tests */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* DragLayoutSnapshot.swift */; };
+			C10000000000000000000012 /* DragSettings.swift in Tests */ = {isa = PBXBuildFile; fileRef = D20000000000000000000003 /* DragSettings.swift */; };
+			C10000000000000000000013 /* ZoneOverlay.swift in Tests */ = {isa = PBXBuildFile; fileRef = D20000000000000000000004 /* ZoneOverlay.swift */; };
+			C10000000000000000000014 /* WindowRuntimeOperations.swift in Tests */ = {isa = PBXBuildFile; fileRef = D20000000000000000000005 /* WindowRuntimeOperations.swift */; };
 			C10000000000000000000005 /* DragEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = C30000000000000000000003 /* DragEvents.swift */; };
 			C10000000000000000000006 /* DragEvents.swift in Tests */ = {isa = PBXBuildFile; fileRef = C30000000000000000000003 /* DragEvents.swift */; };
 			C10000000000000000000003 /* InputMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C30000000000000000000002 /* InputMonitor.swift */; };
@@ -77,9 +89,16 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+			D20000000000000000000001 /* DragCommit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragCommit.swift; sourceTree = "<group>"; };
+			D20000000000000000000002 /* DragLayoutSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragLayoutSnapshot.swift; sourceTree = "<group>"; };
+			D20000000000000000000003 /* DragSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragSettings.swift; sourceTree = "<group>"; };
+			D20000000000000000000004 /* ZoneOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneOverlay.swift; sourceTree = "<group>"; };
+			D20000000000000000000005 /* WindowRuntimeOperations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowRuntimeOperations.swift; sourceTree = "<group>"; };
 			C40000000000000000000002 /* RuntimeWindowOwnershipTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeWindowOwnershipTests.swift; sourceTree = "<group>"; };
 			C40000000000000000000003 /* DragTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragTestSupport.swift; sourceTree = "<group>"; };
 			C40000000000000000000004 /* InputMonitorLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputMonitorLifecycleTests.swift; sourceTree = "<group>"; };
+			C40000000000000000000005 /* DragSnapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragSnapTests.swift; sourceTree = "<group>"; };
+			C40000000000000000000006 /* DragDetectorSnapAcceptanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragDetectorSnapAcceptanceTests.swift; sourceTree = "<group>"; };
 			C30000000000000000000003 /* DragEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragEvents.swift; sourceTree = "<group>"; };
 			C30000000000000000000004 /* DragRuntimeSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragRuntimeSupport.swift; sourceTree = "<group>"; };
 			C30000000000000000000006 /* WindowPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowPlacement.swift; sourceTree = "<group>"; };
@@ -174,6 +193,11 @@
 					C30000000000000000000003 /* DragEvents.swift */,
 					C30000000000000000000004 /* DragRuntimeSupport.swift */,
 					C30000000000000000000006 /* WindowPlacement.swift */,
+					D20000000000000000000001 /* DragCommit.swift */,
+					D20000000000000000000002 /* DragLayoutSnapshot.swift */,
+					D20000000000000000000003 /* DragSettings.swift */,
+					D20000000000000000000004 /* ZoneOverlay.swift */,
+					D20000000000000000000005 /* WindowRuntimeOperations.swift */,
 					A20000000000000000000003 /* Assets.xcassets */,
 				);
 				path = AppAlign;
@@ -187,7 +211,7 @@
 			};
 			B40000000000000000000001 /* AppAlignTests */ = {
 				isa = PBXGroup;
-				children = (B20000000000000000000009 /* LayoutEngineTests.swift */, B2000000000000000000000D /* PersistenceTests.swift */, B20000000000000000000012 /* LayoutEditorTests.swift */, B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */, B20000000000000000000015 /* ZoneNavigatorTests.swift */, B2000000000000000000001A /* KeyboardSettingsTests.swift */, B2000000000000000000001B /* KeyboardSnapControllerTests.swift */, B2000000000000000000001F /* GlobalHotkeysTests.swift */, B20000000000000000000020 /* KeyboardIntegrationTests.swift */, B20000000000000000000021 /* KeyboardLifecycleTests.swift */, C40000000000000000000001 /* DragDetectionTests.swift */, C40000000000000000000002 /* RuntimeWindowOwnershipTests.swift */, C40000000000000000000003 /* DragTestSupport.swift */, C40000000000000000000004 /* InputMonitorLifecycleTests.swift */,);
+				children = (B20000000000000000000009 /* LayoutEngineTests.swift */, B2000000000000000000000D /* PersistenceTests.swift */, B20000000000000000000012 /* LayoutEditorTests.swift */, B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */, B20000000000000000000015 /* ZoneNavigatorTests.swift */, B2000000000000000000001A /* KeyboardSettingsTests.swift */, B2000000000000000000001B /* KeyboardSnapControllerTests.swift */, B2000000000000000000001F /* GlobalHotkeysTests.swift */, B20000000000000000000020 /* KeyboardIntegrationTests.swift */, B20000000000000000000021 /* KeyboardLifecycleTests.swift */, C40000000000000000000001 /* DragDetectionTests.swift */, C40000000000000000000002 /* RuntimeWindowOwnershipTests.swift */, C40000000000000000000003 /* DragTestSupport.swift */, C40000000000000000000004 /* InputMonitorLifecycleTests.swift */, C40000000000000000000005 /* DragSnapTests.swift */, C40000000000000000000006 /* DragDetectorSnapAcceptanceTests.swift */,);
 				path = AppAlignTests;
 				sourceTree = "<group>";
 			};
@@ -227,6 +251,11 @@
 					B1000000000000000000002A /* KeyboardLayoutSnapshot.swift in Sources */,
 					B1000000000000000000002C /* PlacementController.swift in Sources */,
 					B1000000000000000000002E /* KeyboardSettingsPersistence.swift in Sources */,
+					D10000000000000000000001 /* DragCommit.swift in Sources */,
+					D10000000000000000000002 /* DragLayoutSnapshot.swift in Sources */,
+					D10000000000000000000003 /* DragSettings.swift in Sources */,
+					D10000000000000000000004 /* ZoneOverlay.swift in Sources */,
+					D10000000000000000000005 /* WindowRuntimeOperations.swift in Sources */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};
@@ -274,6 +303,13 @@
 					C10000000000000000000007 /* RuntimeWindowOwnershipTests.swift in Tests */,
 					C1000000000000000000000C /* DragTestSupport.swift in Tests */,
 					C1000000000000000000000F /* InputMonitorLifecycleTests.swift in Tests */,
+					C20000000000000000000002 /* DragSnapTests.swift in Tests */,
+					C10000000000000000000015 /* DragDetectorSnapAcceptanceTests.swift in Tests */,
+					C10000000000000000000010 /* DragCommit.swift in Tests */,
+					C10000000000000000000011 /* DragLayoutSnapshot.swift in Tests */,
+					C10000000000000000000012 /* DragSettings.swift in Tests */,
+					C10000000000000000000013 /* ZoneOverlay.swift in Tests */,
+					C10000000000000000000014 /* WindowRuntimeOperations.swift in Tests */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};

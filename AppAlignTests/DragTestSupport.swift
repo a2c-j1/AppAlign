@@ -72,8 +72,9 @@ final class DragFixture {
     }
 }
 
-actor FakeDragReader: DragWindowReading {
+actor FakeDragReader: DragWindowReading, DragCommitOperating, KeyboardWindowOperating {
     private var token = RuntimeWindowToken(id: UUID(), pid: 2)
+    private var focusedToken: RuntimeWindowToken?
     private var leases = Set<DragLeaseID>()
     private var currentFrame = CGRect(x: 0, y: 0, width: 400, height: 300)
     private var capturedAt: UInt64 = 1
@@ -83,6 +84,10 @@ actor FakeDragReader: DragWindowReading {
     private var changedAt: UInt64 = 0
     private var resized = false
     private var revisionChanges: [WindowRevisionChange] = []
+    private var ownership = RuntimeWindowOwnership()
+    private var pauseCommit = false
+    private var commitBarrier: CheckedContinuation<Void, Never>?
+    private(set) var commitCount = 0
     private var hitFails = false
     private var hitResponses: [Bool] = []
     private var frameFails = false
@@ -97,6 +102,7 @@ actor FakeDragReader: DragWindowReading {
     var captureBlocked: Bool { captureBarrier != nil }
     var frameBlocked: Bool { frameBarrier != nil }
     var releaseBlocked: Bool { releaseBarrier != nil }
+    var commitBlocked: Bool { commitBarrier != nil }
     var leaseCount: Int { leases.count }
     func blockCapture() { pauseCapture = true }
     func blockFrame() { pauseFrame = true }
@@ -104,8 +110,12 @@ actor FakeDragReader: DragWindowReading {
     func resumeCapture() { captureBarrier?.resume(); captureBarrier = nil }
     func resumeFrame() { frameBarrier?.resume(); frameBarrier = nil }
     func resumeRelease() { releaseBarrier?.resume(); releaseBarrier = nil }
+    func blockCommit() { pauseCommit = true }
+    func resumeCommit() { commitBarrier?.resume(); commitBarrier = nil }
+    var ownerSnapshot: RuntimeWindowOwnership { ownership }
     func setFrame(_ frame: CGRect) { currentFrame = frame }
     func switchToken() { token = RuntimeWindowToken(id: UUID(), pid: 2) }
+    func focusDifferentWindow() { focusedToken = RuntimeWindowToken(id: UUID(), pid: 3) }
     func setRevision(_ revision: UInt64, changedAt: UInt64, resized: Bool = false) {
         self.revision = revision; self.changedAt = changedAt; self.resized = resized
         revisionChanges.append(WindowRevisionChange(revision: revision, timestamp: changedAt, kind: resized ? .resized : .moved))
@@ -116,12 +126,34 @@ actor FakeDragReader: DragWindowReading {
     func setHit(verified: Bool, fail: Bool) { self.verified = verified; hitFails = fail }
     func failFrame() { frameFails = true; resumeFrame() }
     func isWriteInProgress() async -> Bool { false }
+    func tokenValue() -> RuntimeWindowToken { token }
+    func currentFrameValue() -> CGRect { currentFrame }
+    func retainFakeLease(_ lease: DragLeaseID) { leases.insert(lease); ownership.retainDrag(lease) }
+    func focusedWindow(applicationPID: pid_t, ownPID: pid_t) -> RuntimeWindowSnapshot {
+        RuntimeWindowSnapshot(token: focusedToken ?? token, frame: currentFrame)
+    }
+    func retain(_ token: RuntimeWindowToken) { guard self.token == token else { return }; ownership.retainKeyboard() }
+    func move(_ token: RuntimeWindowToken, to frame: CGRect, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
+        guard self.token == token, await preflight() else { throw DragTestError.unavailable }
+        currentFrame = frame
+        ownership.retainKeyboard()
+        return frame
+    }
+    func restore(_ token: RuntimeWindowToken, to frame: CGRect, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
+        guard self.token == token, await preflight() else { throw DragTestError.unavailable }
+        currentFrame = frame
+        ownership.retainKeyboard()
+        return frame
+    }
+    func discard(_ token: RuntimeWindowToken) { if self.token == token { ownership.discardKeyboard() } }
+    func shutdown() {}
+    func discardProcess(_ pid: pid_t) { if token.pid == pid { ownership.discardKeyboard() } }
     func window(at point: CGPoint, ownPID: pid_t, downTimestamp: UInt64) async throws -> DragWindowSnapshot {
         captureCount += 1
         if pauseCapture { pauseCapture = false; await withCheckedContinuation { captureBarrier = $0 } }
         if hitFails { throw DragTestError.unavailable }
         let verifiedHit = hitResponses.isEmpty ? verified : hitResponses.removeFirst()
-        let lease = DragLeaseID(rawValue: UUID()); leases.insert(lease)
+        let lease = DragLeaseID(rawValue: UUID()); leases.insert(lease); ownership.retainDrag(lease)
         return DragWindowSnapshot(token: token, lease: lease, frame: currentFrame, hitRole: "AXTitleBar",
                                   ancestorRoles: ["AXTitleBar", "AXWindow"], hitInTitleBar: verifiedHit, capturedAt: capturedAt,
                                   hitRegion: CGRect(x: -6, y: -6, width: 12, height: 12), revision: revision, lastChangedAt: changedAt,
@@ -136,5 +168,32 @@ actor FakeDragReader: DragWindowReading {
     func releaseDragLease(_ lease: DragLeaseID) async {
         if pauseRelease { pauseRelease = false; await withCheckedContinuation { releaseBarrier = $0 } }
         leases.remove(lease)
+        ownership.releaseDrag(lease)
+    }
+
+    func handoffDragLease(token: RuntimeWindowToken, sourceLease: DragLeaseID, commitID: DragCommitID,
+                          ticket: DragCommitTicket) async -> Bool {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard self.token == token, leases.contains(sourceLease), ticket.state == .pending,
+              now < ticket.startDeadline, now < ticket.totalDeadline,
+              ownership.handoffDrag(sourceLease, to: commitID) else { return false }
+        leases.remove(sourceLease)
+        return true
+    }
+
+    func commitDrag(_ offer: DragCommitOffer,
+                    preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
+        guard await preflight(), ownership.dragCommits.contains(offer.id) else { throw DragTestError.unavailable }
+        if pauseCommit { pauseCommit = false; await withCheckedContinuation { commitBarrier = $0 } }
+        guard ownership.dragCommits.contains(offer.id),
+              offer.ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else { throw DragTestError.unavailable }
+        currentFrame = offer.targetFrame
+        commitCount += 1
+        return currentFrame
+    }
+
+    func releaseDragCommit(token: RuntimeWindowToken, commitID: DragCommitID) async {
+        guard self.token == token else { return }
+        ownership.releaseDragCommit(commitID)
     }
 }

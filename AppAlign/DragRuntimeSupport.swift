@@ -6,13 +6,22 @@ import Foundation
 struct RuntimeWindowOwnership: Sendable {
     private(set) var keyboardRetained = false
     private(set) var dragLeases = Set<DragLeaseID>()
+    private(set) var dragCommits = Set<DragCommitID>()
 
-    var isOwned: Bool { keyboardRetained || !dragLeases.isEmpty }
+    var isOwned: Bool { keyboardRetained || !dragLeases.isEmpty || !dragCommits.isEmpty }
 
     mutating func retainKeyboard() { keyboardRetained = true }
     mutating func discardKeyboard() { keyboardRetained = false }
     mutating func retainDrag(_ lease: DragLeaseID) { dragLeases.insert(lease) }
     mutating func releaseDrag(_ lease: DragLeaseID) { dragLeases.remove(lease) }
+    mutating func retainDragCommit(_ commit: DragCommitID) { dragCommits.insert(commit) }
+    mutating func releaseDragCommit(_ commit: DragCommitID) { dragCommits.remove(commit) }
+    mutating func handoffDrag(_ lease: DragLeaseID, to commit: DragCommitID) -> Bool {
+        guard dragLeases.contains(lease) else { return false }
+        dragCommits.insert(commit)
+        dragLeases.remove(lease)
+        return true
+    }
 }
 
 enum TitleBarHitClassifier {

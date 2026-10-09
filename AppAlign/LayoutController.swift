@@ -36,9 +36,15 @@ final class LayoutController: ObservableObject {
     @Published var keyboardSettingsErrorMessage: String?
 
     let storeCoordinator: PersistentStoreCoordinator?
-    var savedLayouts: [UUID: PersistedLayout] = [:]
-    var assignments: [UUID: PersistedAssignment] = [:]
-    var sessionLayouts: [UUID: PersistedLayout] = [:]
+    var savedLayouts: [UUID: PersistedLayout] = [:] {
+        didSet { if oldValue != savedLayouts { invalidateAppliedDragLayout() } }
+    }
+    var assignments: [UUID: PersistedAssignment] = [:] {
+        didSet { if oldValue != assignments { invalidateAppliedDragLayout() } }
+    }
+    var sessionLayouts: [UUID: PersistedLayout] = [:] {
+        didSet { if oldValue != sessionLayouts { invalidateAppliedDragLayout() } }
+    }
     var settings: [String: PersistedSetting] = [:]
     private var currentLayout: PersistedLayout
     private var isApplyingStoredValues = false
@@ -55,6 +61,12 @@ final class LayoutController: ObservableObject {
     private var editorOperationRevisions: [UUID: UInt64] = [:]
     var keyboardSettingsRevision: UInt64 = 0
     var keyboardSettingsRetrySnapshot: [String: PersistedSetting]?
+    var dragLayoutRevision: UInt64 = 0
+    var dragSettings = DragSettings()
+    var dragSettingsRetrySnapshot: [String: PersistedSetting]?
+    var dragSettingsRevision: UInt64 = 0
+    var invalidateDragCommit: (@MainActor () -> Void)?
+    var lastDragDisplaySnapshot: DisplaySnapshot?
 
     init(displayProvider: DisplayProvider = DisplayProvider(), storeCoordinator: PersistentStoreCoordinator? = nil) {
         self.displayProvider = displayProvider
@@ -66,6 +78,7 @@ final class LayoutController: ObservableObject {
             self.storeCoordinator = nil
         }
         currentLayout = PersistentStoreCoordinator.defaultLayout()
+        lastDragDisplaySnapshot = displayProvider.snapshot
         selectedDisplayID = displayProvider.snapshot.displays.first(where: \.isPrimary)?.id
         recalculate()
     }
@@ -73,7 +86,6 @@ final class LayoutController: ObservableObject {
     var selectedDisplay: Display? {
         displayProvider.snapshot.displays.first { $0.id == selectedDisplayID }
     }
-
     func loadPersistentState() async {
         guard !persistenceReady, !loadInProgress else { return }
         guard let storeCoordinator else {
@@ -103,7 +115,6 @@ final class LayoutController: ObservableObject {
         }
         loadInProgress = false
     }
-
     func selectDisplay(_ id: DisplaySelectionID) {
         guard canEdit, id != selectedDisplayID else { return }
         selectedDisplayID = id
@@ -120,8 +131,8 @@ final class LayoutController: ObservableObject {
         if selectedDisplayID != previous { showLayoutForSelectedDisplay() } else { recalculate() }
         return result
     }
-
     func recalculate() {
+        invalidateAppliedDragLayout()
         guard let display = selectedDisplay else {
             zones = []
             selectedZoneID = nil
@@ -140,7 +151,6 @@ final class LayoutController: ObservableObject {
             errorMessage = error.localizedDescription
         }
     }
-
     func deleteLayout(_ id: UUID) {
         guard acceptsChanges, id != PersistentStoreCoordinator.defaultLayoutID else { return }
         guard savedLayouts[id] != nil else { return }
@@ -157,13 +167,13 @@ final class LayoutController: ObservableObject {
             try await coordinator.saveAssignmentsAndLayouts(remainingAssignments, layoutSnapshot)
         }
     }
-
     func flush() async -> Bool {
         if let saveChain { await saveChain.value }
         guard persistenceReady else { return true }
         do {
             if !lastSaveSucceeded, !(await retryFailedSave()) { return false }
             if keyboardSettingsRetrySnapshot != nil, !(await retryKeyboardSettingsSave()) { return false }
+            if dragSettingsRetrySnapshot != nil, !(await retryDragSettingsSave()) { return false }
             try await storeCoordinator?.flush()
             return persistenceReady && lastSaveSucceeded
         } catch {
@@ -440,7 +450,6 @@ extension LayoutController {
         saveChain = Task { @MainActor in _ = await operation.value }
         return await operation.value
     }
-
 }
 
 @MainActor
@@ -493,7 +502,6 @@ extension LayoutController {
                                template: LayoutTemplate(rawValue: layout.template) ?? .grid,
                                zoneCount: layout.zoneCount, name: name ?? layout.name)
     }
-
     private func userChangedDefinition() {
         guard canEdit, !isApplyingStoredValues, selectedDisplay != nil else { return }
         do {
@@ -525,7 +533,6 @@ extension LayoutController {
             errorMessage = error.localizedDescription
         }
     }
-
     private func writableLayoutID() -> UUID {
         guard let selectedDisplay else { return currentLayout.id }
         if case .session(let sessionID) = selectedDisplay.id {
@@ -538,7 +545,6 @@ extension LayoutController {
         }
         return currentLayout.id
     }
-
     private func showLayoutForSelectedDisplay() {
         guard let selectedDisplay else { recalculate(); return }
         let stored: PersistedLayout?
@@ -558,7 +564,6 @@ extension LayoutController {
         isApplyingStoredValues = false
         recalculate()
     }
-
     private func enqueueSave(_ operation: @escaping @MainActor (PersistentStoreCoordinator) async throws -> Void) {
         guard acceptsChanges, let storeCoordinator else { return }
         requestedSaveRevision &+= 1
@@ -592,5 +597,4 @@ extension LayoutController {
             }
         }
     }
-
 }

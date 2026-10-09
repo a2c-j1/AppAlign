@@ -16,46 +16,84 @@ extension LayoutController {
         keyboardSettings = updated
         settings = updated.applying(to: settings)
         keyboardSettingsRevision &+= 1
-        let revision = keyboardSettingsRevision
-        let snapshot = settings
-        keyboardSettingsRetrySnapshot = snapshot
+        keyboardSettingsRetrySnapshot = settings
+        enqueueSettingsSave(category: .keyboard, revision: keyboardSettingsRevision)
+    }
+
+    func updateDragSettings(_ updated: DragSettings) {
+        guard acceptsChanges, persistenceReady else { return }
+        invalidateDragCommit?()
+        dragSettings = updated
+        settings = updated.applying(to: settings)
+        dragSettingsRevision &+= 1
+        dragSettingsRetrySnapshot = settings
+        enqueueSettingsSave(category: .drag, revision: dragSettingsRevision)
+    }
+
+    func retryKeyboardSettingsSave() async -> Bool {
+        await retrySettingsSave(category: .keyboard)
+    }
+
+    func retryDragSettingsSave() async -> Bool {
+        await retrySettingsSave(category: .drag)
+    }
+
+    func adoptSettings(_ loaded: [String: PersistedSetting]) {
+        var merged = loaded
+        if let snapshot = keyboardSettingsRetrySnapshot {
+            let keys = KeyboardSettings.managedKeys(in: merged).union(KeyboardSettings.managedKeys(in: snapshot))
+            for key in keys { merged.removeValue(forKey: key) }
+            merged.merge(snapshot.filter { keys.contains($0.key) }) { _, pending in pending }
+        }
+        if let snapshot = dragSettingsRetrySnapshot {
+            for key in DragSettings.managedKeys { merged.removeValue(forKey: key) }
+            merged.merge(snapshot.filter { DragSettings.managedKeys.contains($0.key) }) { _, pending in pending }
+        }
+        settings = merged
+        keyboardSettings = KeyboardSettings.decode(from: merged)
+        dragSettings = DragSettings.decode(from: merged)
+    }
+
+    private enum SettingsCategory: Equatable { case keyboard, drag }
+
+    private func enqueueSettingsSave(category: SettingsCategory, revision: UInt64) {
         guard let storeCoordinator else {
-            keyboardSettingsErrorMessage = "Keyboard settings could not be saved because storage is unavailable."
+            keyboardSettingsErrorMessage = "Settings could not be saved because storage is unavailable."
             return
         }
         let previous = saveChain
         saveChain = Task { @MainActor [weak self] in
             await previous?.value
+            guard let self, self.isCurrentSettingsRevision(category, revision) else { return }
             do {
-                try await storeCoordinator.saveSettings(snapshot)
-                guard let self, revision == self.keyboardSettingsRevision else { return }
-                self.keyboardSettingsRetrySnapshot = nil
+                try await storeCoordinator.saveSettings(self.settingsForPersistence())
+                guard self.isCurrentSettingsRevision(category, revision) else { return }
+                self.clearSettingsRetry(category)
                 self.keyboardSettingsErrorMessage = nil
             } catch {
-                guard let self, revision == self.keyboardSettingsRevision else { return }
-                self.keyboardSettingsRetrySnapshot = snapshot
+                guard self.isCurrentSettingsRevision(category, revision) else { return }
+                self.markSettingsRetry(category)
                 self.keyboardSettingsErrorMessage = error.localizedDescription
             }
         }
     }
 
-    func retryKeyboardSettingsSave() async -> Bool {
-        guard let snapshot = keyboardSettingsRetrySnapshot, let storeCoordinator else { return true }
-        let revision = keyboardSettingsRevision
+    private func retrySettingsSave(category: SettingsCategory) async -> Bool {
+        guard let storeCoordinator, hasSettingsRetry(category) else { return true }
+        let revision = settingsRevision(category)
         let previous = saveChain
         let attempt = Task { @MainActor [weak self] () -> Bool in
             await previous?.value
-            guard let self, revision == self.keyboardSettingsRevision,
-                  self.keyboardSettingsRetrySnapshot == snapshot else { return false }
+            guard let self, self.isCurrentSettingsRevision(category, revision), self.hasSettingsRetry(category) else { return false }
             do {
-                try await storeCoordinator.saveSettings(snapshot)
-                guard revision == self.keyboardSettingsRevision else { return false }
-                self.keyboardSettingsRetrySnapshot = nil
+                try await storeCoordinator.saveSettings(self.settingsForPersistence())
+                guard self.isCurrentSettingsRevision(category, revision) else { return false }
+                self.clearSettingsRetry(category)
                 self.keyboardSettingsErrorMessage = nil
                 return true
             } catch {
-                guard revision == self.keyboardSettingsRevision else { return false }
-                self.keyboardSettingsRetrySnapshot = snapshot
+                guard self.isCurrentSettingsRevision(category, revision) else { return false }
+                self.markSettingsRetry(category)
                 self.keyboardSettingsErrorMessage = error.localizedDescription
                 return false
             }
@@ -64,18 +102,36 @@ extension LayoutController {
         return await attempt.value
     }
 
-    func adoptSettings(_ loaded: [String: PersistedSetting]) {
-        if let keyboardSettingsRetrySnapshot {
-            var merged = loaded
-            let managedKeys = KeyboardSettings.managedKeys(in: loaded).union(KeyboardSettings.managedKeys(in: keyboardSettingsRetrySnapshot))
-            for key in managedKeys { merged.removeValue(forKey: key) }
-            merged.merge(keyboardSettingsRetrySnapshot.filter { managedKeys.contains($0.key) }) { _, pending in pending }
-            settings = merged
-            self.keyboardSettingsRetrySnapshot = merged
-            keyboardSettings = KeyboardSettings.decode(from: merged)
-        } else {
-            settings = loaded
-            keyboardSettings = KeyboardSettings.decode(from: loaded)
-        }
+    private func settingsForPersistence() -> [String: PersistedSetting] {
+        var result = settings
+        mergePending(keyboardSettingsRetrySnapshot, keys: KeyboardSettings.managedKeys(in: settings), into: &result)
+        mergePending(dragSettingsRetrySnapshot, keys: DragSettings.managedKeys, into: &result)
+        return result
+    }
+
+    private func mergePending(_ snapshot: [String: PersistedSetting]?, keys: Set<String>, into result: inout [String: PersistedSetting]) {
+        guard let snapshot else { return }
+        for key in keys { result.removeValue(forKey: key) }
+        result.merge(snapshot.filter { keys.contains($0.key) }) { _, pending in pending }
+    }
+
+    private func settingsRevision(_ category: SettingsCategory) -> UInt64 {
+        category == .keyboard ? keyboardSettingsRevision : dragSettingsRevision
+    }
+
+    private func isCurrentSettingsRevision(_ category: SettingsCategory, _ revision: UInt64) -> Bool {
+        settingsRevision(category) == revision
+    }
+
+    private func hasSettingsRetry(_ category: SettingsCategory) -> Bool {
+        category == .keyboard ? keyboardSettingsRetrySnapshot != nil : dragSettingsRetrySnapshot != nil
+    }
+
+    private func markSettingsRetry(_ category: SettingsCategory) {
+        if category == .keyboard { keyboardSettingsRetrySnapshot = settings } else { dragSettingsRetrySnapshot = settings }
+    }
+
+    private func clearSettingsRetry(_ category: SettingsCategory) {
+        if category == .keyboard { keyboardSettingsRetrySnapshot = nil } else { dragSettingsRetrySnapshot = nil }
     }
 }

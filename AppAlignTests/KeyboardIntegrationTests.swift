@@ -25,6 +25,64 @@ final class KeyboardIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testInterleavedKeyboardAndDragSettingsFailureRetryKeepsBothManagedGroups() async throws {
+        let fixture = try await IntegrationFixture.make()
+        defer { fixture.remove() }
+        fixture.access.failNextSettingsWrite()
+        var keyboard = fixture.controller.keyboardSettings
+        keyboard.isEnabled = true
+        fixture.controller.updateKeyboardSettings(keyboard)
+        await fixture.controller.saveChain?.value
+        XCTAssertNotNil(fixture.controller.keyboardSettingsRetrySnapshot)
+
+        var drag = fixture.controller.dragSettings
+        drag.toggleButton = 2
+        drag.requireShift = false
+        fixture.controller.updateDragSettings(drag)
+        await fixture.controller.saveChain?.value
+
+        let flushed = await fixture.controller.flush()
+        XCTAssertTrue(flushed)
+        let loaded = try await fixture.coordinator.load()
+        XCTAssertEqual(loaded.settings["keyboard.enabled"], .bool(true))
+        XCTAssertEqual(loaded.settings["drag.toggleButton"], .integer(2))
+        XCTAssertEqual(loaded.settings["drag.requireShift"], .bool(false))
+        XCTAssertEqual(loaded.settings["unrelated"], .string("keep"))
+    }
+
+    @MainActor
+    func testDragRetrySurvivesLaterKeyboardFailureAndAdoptingStaleDiskSettings() async throws {
+        let fixture = try await IntegrationFixture.make()
+        defer { fixture.remove() }
+        fixture.access.failNextSettingsWrite()
+        var drag = fixture.controller.dragSettings
+        drag.toggleButton = 3
+        drag.selectionRadius = 34
+        fixture.controller.updateDragSettings(drag)
+        await fixture.controller.saveChain?.value
+        XCTAssertNotNil(fixture.controller.dragSettingsRetrySnapshot)
+
+        fixture.access.failNextSettingsWrite()
+        var keyboard = fixture.controller.keyboardSettings
+        keyboard.isEnabled = true
+        fixture.controller.updateKeyboardSettings(keyboard)
+        await fixture.controller.saveChain?.value
+        XCTAssertNotNil(fixture.controller.keyboardSettingsRetrySnapshot)
+        let staleDisk = try await fixture.coordinator.load()
+        fixture.controller.adoptSettings(staleDisk.settings)
+        XCTAssertEqual(fixture.controller.dragSettings.toggleButton, 3)
+        XCTAssertEqual(fixture.controller.dragSettings.selectionRadius, 34)
+        XCTAssertTrue(fixture.controller.keyboardSettings.isEnabled)
+
+        let flushed = await fixture.controller.flush()
+        XCTAssertTrue(flushed)
+        let persisted = try await fixture.coordinator.load()
+        XCTAssertEqual(persisted.settings["drag.toggleButton"], .integer(3))
+        XCTAssertEqual(persisted.settings["drag.selectionRadius"], .number(34))
+        XCTAssertEqual(persisted.settings["keyboard.enabled"], .bool(true))
+    }
+
+    @MainActor
     func testQueuedOldRetryCannotOverwriteNewerSettingsOrAppliedAssignment() async throws {
         let fixture = try await IntegrationFixture.make()
         defer { fixture.access.releaseWrite(); fixture.remove() }
