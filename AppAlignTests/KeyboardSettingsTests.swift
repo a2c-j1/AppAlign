@@ -2,6 +2,32 @@ import Carbon.HIToolbox
 import XCTest
 
 final class KeyboardSettingsTests: XCTestCase {
+    func testKeyboardExtensionDefaultsUseShiftIndependentlyAndPersist() {
+        let settings = KeyboardSettings()
+        for direction in NavigationDirection.allCases {
+            XCTAssertEqual(settings.shortcuts[.extend(direction)]?.modifiers,
+                           KeyboardShortcut.defaultModifiers | KeyboardShortcut.shift)
+            XCTAssertEqual(settings.shortcuts[.direction(direction)]?.modifiers, KeyboardShortcut.defaultModifiers)
+        }
+        let values = settings.applying(to: ["unrecognized.setting": .string("keep")])
+        let decoded = KeyboardSettings.decode(from: values)
+        XCTAssertEqual(decoded, settings)
+        XCTAssertEqual(values["unrecognized.setting"], .string("keep"))
+    }
+
+    func testLayoutHotkeySettingsRoundTripAndPreserveUnknownKeys() {
+        let id = UUID()
+        let shortcut = KeyboardShortcut(keyCode: 37, modifiers: KeyboardShortcut.defaultModifiers | KeyboardShortcut.shift)
+        var settings = LayoutHotkeySettings()
+        settings.isEnabled = true
+        settings.bindings[id] = shortcut
+        let values = settings.applying(to: ["future.layout.setting": .bool(true)])
+        XCTAssertEqual(LayoutHotkeySettings.decode(from: values), settings)
+        XCTAssertEqual(values["future.layout.setting"], .bool(true))
+        XCTAssertEqual(LayoutHotkeySettings.decode(from: ["layout.hotkey.enabled": .bool(true),
+                                                          "layout.hotkey.invalid.key": .integer(1)]).bindings, [:])
+    }
+
     func testDefaultBindingsUseDistinctPhysicalKeysAndModifierBits() {
         let settings = KeyboardSettings()
         let numberCodes: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25]

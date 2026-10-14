@@ -5,6 +5,7 @@ struct KeyboardSettingsView: View {
     @EnvironmentObject private var placementController: PlacementController
     @EnvironmentObject private var keyboardSnapController: KeyboardSnapController
     @EnvironmentObject private var globalHotkeys: GlobalHotkeys
+    @EnvironmentObject private var layoutHotkeys: LayoutHotkeys
     @State private var zoneToAdd: ZoneID?
 
     private var settings: KeyboardSettings { layoutController.keyboardSettings }
@@ -80,6 +81,28 @@ struct KeyboardSettingsView: View {
                 Text("Carbon consumes a registered shortcut. If Accessibility fails after macOS delivers a registered key, AppAlign cannot guarantee that the original app receives it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Divider()
+                GroupBox("Quick layout switching") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Enable layout shortcuts", isOn: Binding(
+                            get: { layoutController.layoutHotkeySettings.isEnabled },
+                            set: { enabled in
+                                var updated = layoutController.layoutHotkeySettings
+                                updated.isEnabled = enabled
+                                saveLayoutHotkeys(updated)
+                            }
+                        ))
+                        .disabled(!layoutController.canEdit)
+                        ForEach(layoutHotkeyLayouts, id: \.id) { layout in
+                            layoutShortcutRow(layout)
+                        }
+                        Text(layoutHotkeys.statusMessage).font(.caption).foregroundStyle(.secondary)
+                        Text("Each shortcut applies its saved layout to the display under the pointer. Drag detection keeps its existing Input Monitoring permission and input is never suppressed.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -146,8 +169,67 @@ struct KeyboardSettingsView: View {
         case .next: "Next zone"
         case .previous: "Previous zone"
         case .direction(let direction): "Move \(direction.rawValue.capitalized)"
+        case .extend(let direction): "Extend \(direction.rawValue.capitalized)"
         case .restore: "Restore original"
         }
+    }
+
+    private var layoutHotkeyLayouts: [PersistedLayout] {
+        var values = Array(layoutController.savedLayouts.values)
+        if !values.contains(where: { $0.id == PersistentStoreCoordinator.defaultLayoutID }) {
+            values.append(PersistentStoreCoordinator.defaultLayout())
+        }
+        return values.sorted {
+            let left = ($0.name ?? "Default").localizedStandardCompare($1.name ?? "Default")
+            return left == .orderedSame ? $0.id.uuidString < $1.id.uuidString : left == .orderedAscending
+        }
+    }
+
+    @ViewBuilder
+    private func layoutShortcutRow(_ layout: PersistedLayout) -> some View {
+        let current = layoutController.layoutHotkeySettings.bindings[layout.id]
+            ?? KeyboardShortcut(keyCode: 37, modifiers: KeyboardShortcut.defaultModifiers | KeyboardShortcut.shift)
+        HStack {
+            Text(layout.name ?? (layout.id == PersistentStoreCoordinator.defaultLayoutID ? "Default" : "Layout"))
+                .frame(width: 130, alignment: .leading)
+            Picker("Key", selection: Binding(
+                get: { current.keyCode },
+                set: { key in updateLayoutBinding(layout.id) { $0.keyCode = key } }
+            )) {
+                ForEach(Self.keyChoices, id: \.code) { key in Text(key.label).tag(key.code) }
+            }
+            .frame(width: 120)
+            modifierToggle(title: "⇧", bit: KeyboardShortcut.shift, layoutID: layout.id, shortcut: current)
+            modifierToggle(title: "⌃", bit: KeyboardShortcut.control, layoutID: layout.id, shortcut: current)
+            modifierToggle(title: "⌥", bit: KeyboardShortcut.option, layoutID: layout.id, shortcut: current)
+            modifierToggle(title: "⌘", bit: KeyboardShortcut.command, layoutID: layout.id, shortcut: current)
+        }
+        .disabled(!layoutController.canEdit)
+    }
+
+    private func modifierToggle(title: String, bit: UInt32, layoutID: UUID, shortcut: KeyboardShortcut) -> some View {
+        Toggle(title, isOn: Binding(
+            get: { shortcut.modifiers & bit != 0 },
+            set: { enabled in updateLayoutBinding(layoutID) { value in
+                if enabled { value.modifiers |= bit } else { value.modifiers &= ~bit }
+            } }
+        ))
+        .toggleStyle(.button)
+        .labelsHidden()
+    }
+
+    private func updateLayoutBinding(_ id: UUID, mutation: (inout KeyboardShortcut) -> Void) {
+        var updated = layoutController.layoutHotkeySettings
+        var shortcut = updated.bindings[id]
+            ?? KeyboardShortcut(keyCode: 37, modifiers: KeyboardShortcut.defaultModifiers | KeyboardShortcut.shift)
+        mutation(&shortcut)
+        updated.bindings[id] = shortcut
+        saveLayoutHotkeys(updated)
+    }
+
+    private func saveLayoutHotkeys(_ updated: LayoutHotkeySettings) {
+        layoutController.updateLayoutHotkeySettings(updated)
+        layoutHotkeys.settingsDidChange()
     }
 
     private func zoneLabel(_ id: ZoneID) -> String {

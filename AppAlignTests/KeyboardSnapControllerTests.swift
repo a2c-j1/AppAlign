@@ -257,6 +257,88 @@ final class KeyboardSnapControllerTests: XCTestCase {
     }
 }
 
+@MainActor
+extension KeyboardSnapControllerTests {
+    @MainActor
+    func testKeyboardExtensionExpandsShrinksAndUsesConfiguredModifierRelease() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.remove() }
+        var settings = fixture.layout.keyboardSettings
+        settings.isEnabled = true
+        fixture.layout.updateKeyboardSettings(settings)
+        fixture.controller.flagsMonitorStatus(.ready)
+
+        let snapshot = try XCTUnwrap(fixture.layout.appliedLayoutSnapshot(for: fixture.originalFrame))
+        let firstZone = try XCTUnwrap(snapshot.zones.first)
+        fixture.controller.handle(.zone(firstZone.id))
+        let firstIdle = await fixture.waitUntilIdle()
+        XCTAssertTrue(firstIdle)
+        let placed = await fixture.backend.currentFrame()
+        XCTAssertEqual(placed, firstZone.frame)
+
+        let adjacent = try XCTUnwrap(ZoneNavigator.directionalZone(from: firstZone.frame, zones: snapshot.zones,
+                                                                     direction: .right, workArea: snapshot.display.workArea,
+                                                                     cycle: false, excludingID: firstZone.id))
+        fixture.controller.handle(.extend(.right))
+        let expandedIdle = await fixture.waitUntilIdle()
+        XCTAssertTrue(expandedIdle)
+        let expanded = await fixture.backend.currentFrame()
+        XCTAssertEqual(expanded, ZoneSelectionEngine.union(of: [firstZone.frame, adjacent.frame]))
+
+        fixture.controller.handle(.direction(.left))
+        let normalMoveIdle = await fixture.waitUntilIdle()
+        XCTAssertTrue(normalMoveIdle)
+        let movedToEndpoint = await fixture.backend.currentFrame()
+        XCTAssertEqual(movedToEndpoint, firstZone.frame)
+        fixture.controller.handle(.extend(.right))
+        let reextendedIdle = await fixture.waitUntilIdle()
+        XCTAssertTrue(reextendedIdle)
+        let reextended = await fixture.backend.currentFrame()
+        XCTAssertEqual(reextended, ZoneSelectionEngine.union(of: [firstZone.frame, adjacent.frame]))
+
+        fixture.controller.handle(.extend(.left))
+        let shrunkIdle = await fixture.waitUntilIdle()
+        XCTAssertTrue(shrunkIdle)
+        let shrunk = await fixture.backend.currentFrame()
+        XCTAssertEqual(shrunk, firstZone.frame)
+
+        let requiredFlags = CGEventFlags.maskControl.rawValue | CGEventFlags.maskAlternate.rawValue
+            | CGEventFlags.maskCommand.rawValue | CGEventFlags.maskShift.rawValue
+        fixture.controller.extensionModifierFlagsChanged(requiredFlags)
+        fixture.controller.extensionModifierFlagsChanged(requiredFlags & ~CGEventFlags.maskShift.rawValue)
+        fixture.controller.handle(.extend(.right))
+        let reanchoredIdle = await fixture.waitUntilIdle()
+        XCTAssertTrue(reanchoredIdle)
+        let reanchored = await fixture.backend.currentFrame()
+        XCTAssertEqual(reanchored, ZoneSelectionEngine.union(of: [firstZone.frame, adjacent.frame]))
+        let writes = await fixture.backend.writeCount()
+        XCTAssertEqual(writes, 6)
+    }
+
+    @MainActor
+    func testKeyboardExtensionUnavailableUntilModifierMonitorReady() async throws {
+        let fixture = try await Fixture.make(originalFrame: CGRect(x: 100, y: 100, width: 300, height: 200))
+        defer { fixture.remove() }
+        var settings = fixture.layout.keyboardSettings
+        settings.isEnabled = true
+        fixture.layout.updateKeyboardSettings(settings)
+        fixture.controller.handle(.extend(.right))
+        let unavailableIdle = await fixture.waitUntilIdle()
+        XCTAssertTrue(unavailableIdle)
+        var writes = await fixture.backend.writeCount()
+        XCTAssertEqual(writes, 0)
+        XCTAssertTrue(fixture.controller.statusMessage.contains("modifier monitoring is not ready"))
+
+        fixture.controller.flagsMonitorStatus(.ready)
+        fixture.controller.handle(.extend(.right))
+        let readyIdle = await fixture.waitUntilIdle()
+        XCTAssertTrue(readyIdle)
+        writes = await fixture.backend.writeCount()
+        XCTAssertEqual(writes, 1)
+    }
+
+}
+
 private actor FakeKeyboardWindowBackend: KeyboardWindowOperating {
     private let token = RuntimeWindowToken(id: UUID(), pid: 200)
     private var frame: CGRect

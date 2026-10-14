@@ -3,13 +3,13 @@ import CoreGraphics
 
 @MainActor
 protocol ZoneOverlayPresenting: AnyObject {
-    func show(_ snapshot: DragLayoutSnapshot, selected: ZoneID?)
+    func show(_ snapshot: DragLayoutSnapshot, selected: Set<ZoneID>)
     func hideAll()
 }
 
 @MainActor
 protocol ZoneOverlayPanelPresenting: AnyObject {
-    func show(display: Display, snapshot: DragLayoutSnapshot, selected: ZoneID?)
+    func show(display: Display, snapshot: DragLayoutSnapshot, selected: Set<ZoneID>)
     func hide()
 }
 
@@ -22,7 +22,7 @@ final class ZoneOverlayManager: ZoneOverlayPresenting {
         self.makePanel = makePanel
     }
 
-    func show(_ snapshot: DragLayoutSnapshot, selected: ZoneID?) {
+    func show(_ snapshot: DragLayoutSnapshot, selected: Set<ZoneID>) {
         let liveIDs = Set(snapshot.displays.map(\.id))
         let removedIDs = panels.keys.filter { !liveIDs.contains($0) }
         for id in removedIDs { panels[id]?.hide(); panels.removeValue(forKey: id) }
@@ -58,7 +58,7 @@ private final class AppKitZoneOverlayPanel: ZoneOverlayPanelPresenting {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
     }
 
-    func show(display: Display, snapshot: DragLayoutSnapshot, selected: ZoneID?) {
+    func show(display: Display, snapshot: DragLayoutSnapshot, selected: Set<ZoneID>) {
         guard let cocoaFrame = try? DisplayGeometry.cocoaFrame(from: display.frame, primaryFrame: snapshot.primaryFrame) else { return }
         panel.setFrame(cocoaFrame, display: true)
         let content = view ?? ZoneOverlayView(frame: NSRect(origin: .zero, size: cocoaFrame.size))
@@ -82,11 +82,11 @@ private final class ZoneOverlayWindow: NSPanel {
 private final class ZoneOverlayView: NSView {
     private var display: Display?
     private var zones: [Zone] = []
-    private var selected: ZoneID?
+    private var selected: Set<ZoneID> = []
 
     override var isOpaque: Bool { false }
 
-    func update(display: Display, zones: [Zone], selected: ZoneID?) {
+    func update(display: Display, zones: [Zone], selected: Set<ZoneID>) {
         self.display = display
         self.zones = zones
         self.selected = selected
@@ -99,7 +99,7 @@ private final class ZoneOverlayView: NSView {
             let frame = NSRect(x: zone.frame.minX - display.frame.minX,
                                y: display.frame.maxY - zone.frame.maxY,
                                width: zone.frame.width, height: zone.frame.height)
-            let active = zone.id == selected
+            let active = selected.contains(zone.id)
             let lineWidth: CGFloat = active ? 4 : 2
             let path = NSBezierPath(roundedRect: frame.insetBy(dx: lineWidth / 2, dy: lineWidth / 2), xRadius: 9, yRadius: 9)
             (active ? NSColor.systemBlue : NSColor.black).withAlphaComponent(active ? 0.92 : 0.7).setStroke()

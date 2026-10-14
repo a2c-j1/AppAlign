@@ -3,6 +3,7 @@ import Foundation
 import XCTest
 
 final class LayoutEditorConcurrencyTests: XCTestCase {
+
     @MainActor
     func testQueuedSaveCopiesLayoutThatPrecedingApplyMadeActive() async throws {
         let fixture = try await makeFixture()
@@ -251,6 +252,79 @@ final class LayoutEditorConcurrencyTests: XCTestCase {
 }
 
 extension LayoutEditorConcurrencyTests {
+    @MainActor
+    func testQuickLayoutSwitchInvalidatesSharedTicketBeforePublishingAssignment() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.remove() }
+        var ordinaryCancellation = false
+        fixture.controller.invalidateDragCommit = { ordinaryCancellation = true }
+        let before = fixture.controller.placementValidity.revision
+        let now = DispatchTime.now().uptimeNanoseconds
+        let oldTicket = try XCTUnwrap(fixture.controller.placementValidity.reserve(
+            startDeadline: now + 2_000_000_000, totalDeadline: now + 5_000_000_000
+        ))
+
+        let applied = fixture.controller.applyQuickLayout(fixture.custom.id, at: CGPoint(x: 20, y: 20))
+        XCTAssertEqual(applied?.id, fixture.custom.id)
+        XCTAssertEqual(oldTicket.state, .invalidated)
+        XCTAssertEqual(fixture.controller.placementValidity.revision.configuration, before.configuration)
+        XCTAssertEqual(fixture.controller.placementValidity.revision.layout, before.layout + 1)
+        XCTAssertFalse(ordinaryCancellation, "A quick switch must not use the external-configuration cancellation route.")
+        XCTAssertEqual(fixture.controller.appliedDragLayoutSnapshot(at: CGPoint(x: 20, y: 20))?.layout.id, fixture.custom.id)
+
+        await fixture.controller.saveChain?.value
+        let persisted = try await fixture.coordinator.load()
+        XCTAssertEqual(persisted.assignments[fixture.firstUUID]?.layoutID, fixture.custom.id)
+        XCTAssertNil(fixture.controller.quickLayoutOverrides[fixture.first.id], "A matching successful save can clear the active override.")
+        oldTicket.finish()
+    }
+    @MainActor
+    func testFailedQuickSwitchSaveKeepsSessionAssignmentAndRetryPersistsIt() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.remove() }
+        fixture.access.failNextWrite("assignments.json")
+        XCTAssertEqual(fixture.controller.applyQuickLayout(fixture.custom.id, at: CGPoint(x: 20, y: 20))?.id, fixture.custom.id)
+        await fixture.controller.saveChain?.value
+        XCTAssertTrue(fixture.controller.canRetrySave)
+        XCTAssertEqual(fixture.controller.appliedDragLayoutSnapshot(at: CGPoint(x: 20, y: 20))?.layout.id, fixture.custom.id)
+        XCTAssertEqual(fixture.controller.assignments[fixture.firstUUID]?.layoutID, fixture.custom.id)
+
+        let retried = await fixture.controller.retryFailedSave()
+        XCTAssertTrue(retried)
+        let persisted = try await fixture.coordinator.load()
+        XCTAssertEqual(persisted.assignments[fixture.firstUUID]?.layoutID, fixture.custom.id)
+        XCTAssertEqual(fixture.controller.appliedDragLayoutSnapshot(at: CGPoint(x: 20, y: 20))?.layout.id, fixture.custom.id)
+        XCTAssertNil(fixture.controller.quickLayoutOverrides[fixture.first.id])
+    }
+
+    @MainActor
+    func testCatalogSaveKeepsFailedQuickAssignmentPendingForRetry() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.remove() }
+        fixture.access.failNextWrite("assignments.json")
+        XCTAssertEqual(fixture.controller.applyQuickLayout(fixture.custom.id, at: CGPoint(x: 20, y: 20))?.id, fixture.custom.id)
+        await fixture.controller.saveChain?.value
+        XCTAssertTrue(fixture.controller.canRetrySave)
+        XCTAssertFalse(fixture.controller.lastSaveSucceeded)
+
+        let catalogLayout = layout(name: "Catalog C")
+        _ = try success(await fixture.controller.saveEditorLayout(catalogLayout, identity: fixture.identity()))
+        _ = try success(await fixture.controller.renameEditorLayout(catalogLayout.id, to: "Renamed C", identity: fixture.identity()))
+
+        XCTAssertTrue(fixture.controller.canRetrySave, "Catalog-only writes must leave the failed quick assignment retryable.")
+        XCTAssertFalse(fixture.controller.lastSaveSucceeded, "Catalog-only writes must not mark the paired quick assignment durable.")
+        XCTAssertEqual(fixture.controller.assignments[fixture.firstUUID]?.layoutID, fixture.custom.id)
+        XCTAssertEqual(fixture.controller.quickLayoutOverrides[fixture.first.id]?.id, fixture.custom.id)
+
+        let retried = await fixture.controller.retryFailedSave()
+        XCTAssertTrue(retried)
+        let persisted = try await fixture.coordinator.load()
+        XCTAssertEqual(persisted.assignments[fixture.firstUUID]?.layoutID, fixture.custom.id)
+        XCTAssertEqual(persisted.layouts[catalogLayout.id]?.name, "Renamed C")
+        XCTAssertTrue(fixture.controller.lastSaveSucceeded)
+        XCTAssertFalse(fixture.controller.canRetrySave)
+    }
+
     @MainActor
     func testQueuedRenameChangesOnlyNameOfLatestSavedDefinition() async throws {
         let fixture = try await makeFixture()

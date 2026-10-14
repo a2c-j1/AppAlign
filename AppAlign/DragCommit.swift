@@ -25,6 +25,7 @@ struct DragCommitOffer: Sendable {
     let layoutRevision: UInt64
     let workAreaKey: WorkAreaKey
     let zoneID: ZoneID
+    var zoneIDs: Set<ZoneID> = []
     let layoutSnapshot: DragLayoutSnapshot
     let ticket: DragCommitTicket
 }
@@ -63,6 +64,11 @@ final class DragSnapController: ObservableObject {
     private var generation: UInt64 = 0
     private let overlay: any ZoneOverlayPresenting
     private var gestureActive = false
+    private var rangeAnchor: [Zone]?
+    private var rangeWorkArea: WorkAreaKey?
+    private var rangeLayoutID: UUID?
+    private var rangePlacementRevision: PlacementRevision?
+    private var lastModifierFlags: UInt64?
 
     init(layoutController: LayoutController, runtime: any DragCommitOperating,
          overlay: any ZoneOverlayPresenting = ZoneOverlayManager()) {
@@ -80,8 +86,17 @@ final class DragSnapController: ObservableObject {
     }
 
     func acceptedInput(_ event: DragInputEvent) {
+        if event.kind == .flagsChanged {
+            if let lastModifierFlags,
+               lastModifierFlags & settings.rangeModifier.eventFlag != 0,
+               event.flags & settings.rangeModifier.eventFlag == 0 {
+                clearRangeSelection()
+            }
+            lastModifierFlags = event.flags
+        }
         if event.kind == .escape || event.kind == .leftDown {
             cancel(reason: "A new input cancelled the pending drag placement.")
+            lastModifierFlags = event.flags
         }
         if event.kind == .buttonChanged, let edge = event.buttonEdge {
             let button = Int(event.button)
@@ -96,11 +111,6 @@ final class DragSnapController: ObservableObject {
             }
         }
         if gestureActive { renderOverlay(point: event.location, flags: event.flags) }
-    }
-
-    func isActivated(flags: UInt64) -> Bool {
-        let shift = flags & CGEventFlags.maskShift.rawValue != 0
-        return settings.requireShift ? (shift != toggleActive) : !(shift != toggleActive)
     }
 
     func accept(_ offer: DragCommitOffer) -> Bool {
@@ -122,12 +132,14 @@ final class DragSnapController: ObservableObject {
         task = Task { @MainActor [self, runtime] in
             defer {
                 offer.ticket.finish()
-                self.deadlineTask?.cancel()
-                self.deadlineTask = nil
-                self.activeOffer = nil
-                self.isCommitting = false
-                self.gateChanged?(false)
-                self.task = nil
+                if self.activeOffer?.id == offer.id {
+                    self.deadlineTask?.cancel()
+                    self.deadlineTask = nil
+                    self.activeOffer = nil
+                    self.isCommitting = false
+                    self.gateChanged?(false)
+                    self.task = nil
+                }
             }
             do {
                 guard await runtime.handoffDragLease(token: offer.token, sourceLease: offer.sourceLease,
@@ -146,17 +158,23 @@ final class DragSnapController: ObservableObject {
                     guard let self, self.generation == generation,
                           self.activeOffer?.id == offer.id,
                           self.layoutController.appliedDragLayoutSnapshot(at: offer.point) == offer.layoutSnapshot,
+                          offer.layoutSnapshot.placementRevision == offer.ticket.revision,
                           offer.ticket.state == .pending else { return false }
                     return true
                 }
                 guard self.generation == generation, self.activeOffer?.id == offer.id,
                       self.layoutController.appliedDragLayoutSnapshot(at: offer.point) == offer.layoutSnapshot,
+                      offer.layoutSnapshot.placementRevision == offer.ticket.revision,
                       offer.ticket.completeIfCurrent(now: DispatchTime.now().uptimeNanoseconds) else {
                     throw WindowManagementError.displayConfigurationChanged
                 }
-                self.statusMessage = "Window placed in zone."
+                if self.generation == generation, self.activeOffer?.id == offer.id {
+                    self.statusMessage = "Window placed in zone."
+                }
             } catch {
-                self.statusMessage = error.localizedDescription
+                if self.generation == generation, self.activeOffer?.id == offer.id {
+                    self.statusMessage = error.localizedDescription
+                }
             }
             await runtime.releaseDragLease(offer.sourceLease)
             await runtime.releaseDragCommit(token: offer.token, commitID: offer.id)
@@ -169,9 +187,9 @@ final class DragSnapController: ObservableObject {
         guard isActivated(flags: context.event.flags),
               let snapshot = layoutController.appliedDragLayoutSnapshot(at: context.event.location),
               self.generation == generation,
-              let zone = ZoneSelectionEngine.select(point: context.event.location, zones: snapshot.zones,
-                                                   workArea: snapshot.display.workArea,
-                                                   radius: CGFloat(settings.selectionRadius)) else {
+              let selection = selectionAt(point: context.event.location, flags: context.event.flags,
+                                          snapshot: snapshot, updateRangeAnchor: false),
+              let targetFrame = ZoneSelectionEngine.union(of: selection.map(\.frame)) else {
             overlay.hideAll()
             return false
         }
@@ -185,13 +203,20 @@ final class DragSnapController: ObservableObject {
         let offer = DragCommitOffer(id: DragCommitID(), run: context.run, session: context.session,
                                     inputEpoch: context.event.epoch, gesture: context.event.gesture,
                                     token: context.token, sourceLease: context.sourceLease,
-                                    originalFrame: context.originalFrame, targetFrame: zone.frame,
+                                    originalFrame: context.originalFrame, targetFrame: targetFrame,
                                     point: context.event.location, flags: context.event.flags,
                                     timestamp: context.event.timestamp, sequence: context.event.sequence,
                                     displayFingerprint: snapshot.fingerprint, layoutRevision: snapshot.revision,
-                                    workAreaKey: snapshot.workAreaKey, zoneID: zone.id,
+                                    workAreaKey: snapshot.workAreaKey, zoneID: selection[0].id,
+                                    zoneIDs: Set(selection.map(\.id)),
                                     layoutSnapshot: snapshot, ticket: ticket)
-        return accept(offer)
+        guard accept(offer) else {
+            ticket.invalidate()
+            ticket.finish()
+            overlay.hideAll()
+            return false
+        }
+        return true
     }
 
     func lifecycle(_ event: DragLifecycleEvent) {
@@ -202,9 +227,19 @@ final class DragSnapController: ObservableObject {
         case .ended, .cancelled:
             gestureActive = false
             overlay.hideAll()
+            clearRangeSelection()
             toggleActive = false
             heldToggleButton = false
         }
+    }
+
+    func reselectAfterQuickSwitch(point: CGPoint, flags: UInt64) {
+        guard gestureActive else { return }
+        generation &+= 1
+        activeOffer?.ticket.invalidate()
+        clearRangeSelection()
+        overlay.hideAll()
+        renderOverlay(point: point, flags: flags)
     }
 
     private func renderOverlay(point: CGPoint, flags: UInt64) {
@@ -215,10 +250,47 @@ final class DragSnapController: ObservableObject {
             overlay.hideAll()
             return
         }
-        let zone = ZoneSelectionEngine.select(point: point, zones: snapshot.zones,
-                                             workArea: snapshot.display.workArea,
-                                             radius: CGFloat(settings.selectionRadius))
-        overlay.show(snapshot, selected: zone?.id)
+        guard let selection = selectionAt(point: point, flags: flags, snapshot: snapshot, updateRangeAnchor: true) else {
+            overlay.show(snapshot, selected: [])
+            return
+        }
+        overlay.show(snapshot, selected: Set(selection.map(\.id)))
+    }
+
+    private func selectionAt(point: CGPoint, flags: UInt64, snapshot: DragLayoutSnapshot,
+                             updateRangeAnchor: Bool) -> [Zone]? {
+        let layoutID = snapshot.layout.id
+        if rangeWorkArea != snapshot.workAreaKey || rangeLayoutID != layoutID
+            || rangePlacementRevision != snapshot.placementRevision {
+            clearRangeSelection()
+            rangeWorkArea = snapshot.workAreaKey
+            rangeLayoutID = layoutID
+            rangePlacementRevision = snapshot.placementRevision
+        }
+        let modifierDown = flags & settings.rangeModifier.eventFlag != 0
+        let current = ZoneSelectionEngine.selectZones(point: point, zones: snapshot.zones,
+                                                      workArea: snapshot.display.workArea,
+                                                      radius: CGFloat(settings.selectionRadius),
+                                                      strategy: settings.overlapStrategy)
+        guard !current.isEmpty else {
+            if updateRangeAnchor, !modifierDown { rangeAnchor = nil }
+            return nil
+        }
+        guard modifierDown else {
+            if updateRangeAnchor { rangeAnchor = nil }
+            return current
+        }
+        if rangeAnchor == nil, updateRangeAnchor { rangeAnchor = current }
+        guard let anchor = rangeAnchor else { return current }
+        let ranged = ZoneSelectionEngine.range(anchor: anchor, current: current, zones: snapshot.zones)
+        return ranged.isEmpty ? current : ranged
+    }
+
+    private func clearRangeSelection() {
+        rangeAnchor = nil
+        rangeWorkArea = nil
+        rangeLayoutID = nil
+        rangePlacementRevision = nil
     }
 
     func cancel(reason: String) {
@@ -226,6 +298,7 @@ final class DragSnapController: ObservableObject {
         gestureActive = false
         toggleActive = false
         heldToggleButton = false
+        clearRangeSelection()
         if let offer = activeOffer { offer.ticket.invalidate() }
         if activeOffer == nil {
             isCommitting = false
@@ -249,19 +322,34 @@ final class DragKeyboardGate {
     private var configurationPending = false
     private let keyboard: KeyboardSnapController
     private let hotkeys: GlobalHotkeys
+    private let layoutHotkeys: LayoutHotkeys?
 
-    init(keyboard: KeyboardSnapController, hotkeys: GlobalHotkeys) {
+    init(keyboard: KeyboardSnapController, hotkeys: GlobalHotkeys, layoutHotkeys: LayoutHotkeys? = nil) {
         self.keyboard = keyboard
         self.hotkeys = hotkeys
+        self.layoutHotkeys = layoutHotkeys
     }
 
     func setDrag(_ active: Bool) { dragActive = active; update() }
     func setCommit(_ active: Bool) { commitActive = active; update() }
-    func setConfigurationPending(_ pending: Bool) { configurationPending = pending; update() }
+    func setConfigurationPending(_ pending: Bool) {
+        configurationPending = pending
+        layoutHotkeys?.setConfigurationPending(pending)
+        update()
+    }
 
     private func update() {
         let closed = dragActive || commitActive || configurationPending
         keyboard.setDragGateClosed(closed)
         hotkeys.setDragGateClosed(closed)
     }
+}
+
+@MainActor
+extension DragSnapController {
+    func isActivated(flags: UInt64) -> Bool {
+        let shift = flags & CGEventFlags.maskShift.rawValue != 0
+        return settings.requireShift ? (shift != toggleActive) : !(shift != toggleActive)
+    }
+
 }

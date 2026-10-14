@@ -45,6 +45,10 @@ struct KeyboardSettings: Equatable, Sendable {
         result[.direction(.right)] = KeyboardShortcut(keyCode: 124, modifiers: KeyboardShortcut.defaultModifiers)
         result[.direction(.north)] = KeyboardShortcut(keyCode: 126, modifiers: KeyboardShortcut.defaultModifiers)
         result[.direction(.south)] = KeyboardShortcut(keyCode: 125, modifiers: KeyboardShortcut.defaultModifiers)
+        result[.extend(.left)] = KeyboardShortcut(keyCode: 123, modifiers: KeyboardShortcut.defaultModifiers | KeyboardShortcut.shift)
+        result[.extend(.right)] = KeyboardShortcut(keyCode: 124, modifiers: KeyboardShortcut.defaultModifiers | KeyboardShortcut.shift)
+        result[.extend(.north)] = KeyboardShortcut(keyCode: 126, modifiers: KeyboardShortcut.defaultModifiers | KeyboardShortcut.shift)
+        result[.extend(.south)] = KeyboardShortcut(keyCode: 125, modifiers: KeyboardShortcut.defaultModifiers | KeyboardShortcut.shift)
         result[.next] = KeyboardShortcut(keyCode: 30, modifiers: KeyboardShortcut.defaultModifiers)
         result[.previous] = KeyboardShortcut(keyCode: 33, modifiers: KeyboardShortcut.defaultModifiers)
         result[.restore] = KeyboardShortcut(keyCode: 15, modifiers: KeyboardShortcut.defaultModifiers)
@@ -144,6 +148,7 @@ private extension KeyboardSnapAction {
         case .next: "next"
         case .previous: "previous"
         case .direction(let direction): "direction.\(direction.rawValue)"
+        case .extend(let direction): "extend.\(direction.rawValue)"
         case .restore: "restore"
         }
     }
@@ -156,6 +161,7 @@ private extension KeyboardSnapAction {
         case .next: return "Next zone"
         case .previous: return "Previous zone"
         case .direction(let direction): return direction.rawValue.capitalized
+        case .extend(let direction): return "Extend \(direction.rawValue.capitalized)"
         case .restore: return "Restore"
         }
     }
@@ -164,6 +170,10 @@ private extension KeyboardSnapAction {
         if storageKey == "next" { self = .next; return }
         if storageKey == "previous" { self = .previous; return }
         if storageKey == "restore" { self = .restore; return }
+        if storageKey.hasPrefix("extend."), let direction = NavigationDirection(rawValue: String(storageKey.dropFirst(7))) {
+            self = .extend(direction)
+            return
+        }
         if storageKey.hasPrefix("zone."), let rawValue = Int(storageKey.dropFirst(5)) {
             self = .zone(ZoneID(rawValue: rawValue))
             return
@@ -173,5 +183,63 @@ private extension KeyboardSnapAction {
             return
         }
         return nil
+    }
+}
+
+struct LayoutHotkeySettings: Equatable, Sendable {
+    var isEnabled = false
+    var bindings: [UUID: KeyboardShortcut] = [:]
+
+    static let prefix = "layout.hotkey."
+    static let managedKeys = Set(["layout.hotkey.enabled"])
+
+    static func decode(from values: [String: PersistedSetting]) -> LayoutHotkeySettings {
+        var result = LayoutHotkeySettings()
+        if case .bool(let value) = values["layout.hotkey.enabled"] { result.isEnabled = value }
+        for key in values.keys where key.hasPrefix(prefix) {
+            let suffix = String(key.dropFirst(prefix.count))
+            guard let separator = suffix.lastIndex(of: "."), let id = UUID(uuidString: String(suffix[..<separator])) else { continue }
+            let field = String(suffix[suffix.index(after: separator)...])
+            var shortcut = result.bindings[id] ?? KeyboardShortcut(keyCode: 0, modifiers: 0)
+            switch (field, values[key]) {
+            case ("key", .integer(let code)) where (0 ... 127).contains(code): shortcut.keyCode = UInt16(code)
+            case ("modifiers", .integer(let modifiers)) where modifiers >= 0 && modifiers <= Int(KeyboardShortcut.supportedModifiers): shortcut.modifiers = UInt32(modifiers)
+            default: continue
+            }
+            result.bindings[id] = shortcut
+        }
+        return result
+    }
+
+    static func managedKeys(in values: [String: PersistedSetting]) -> Set<String> {
+        var keys = managedKeys
+        for key in values.keys where key.hasPrefix(prefix) {
+            let suffix = String(key.dropFirst(prefix.count))
+            guard let separator = suffix.lastIndex(of: "."), UUID(uuidString: String(suffix[..<separator])) != nil,
+                  ["key", "modifiers"].contains(String(suffix[suffix.index(after: separator)...])) else { continue }
+            keys.insert(key)
+        }
+        return keys
+    }
+
+    func applying(to values: [String: PersistedSetting]) -> [String: PersistedSetting] {
+        var result = values
+        for key in Self.managedKeys(in: values) where key != "layout.hotkey.enabled" { result.removeValue(forKey: key) }
+        result["layout.hotkey.enabled"] = .bool(isEnabled)
+        for (id, shortcut) in bindings {
+            result["\(Self.prefix)\(id.uuidString).key"] = .integer(Int(shortcut.keyCode))
+            result["\(Self.prefix)\(id.uuidString).modifiers"] = .integer(Int(shortcut.modifiers))
+        }
+        return result
+    }
+
+    var validBindings: [UUID: KeyboardShortcut] {
+        var output: [UUID: KeyboardShortcut] = [:]
+        var used = Set<KeyboardShortcut>()
+        for id in bindings.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
+            guard let value = bindings[id], value.isValid, used.insert(value).inserted else { continue }
+            output[id] = value
+        }
+        return output
     }
 }

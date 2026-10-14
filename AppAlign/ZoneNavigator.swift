@@ -65,6 +65,7 @@ enum KeyboardSnapAction: Hashable, Sendable {
     case next
     case previous
     case direction(NavigationDirection)
+    case extend(NavigationDirection)
     case restore
 }
 
@@ -140,6 +141,8 @@ enum ZoneNavigator {
                     excludingID: validCurrentID
                 )
             }
+        case .extend:
+            return nil
         case .restore:
             return nil
         }

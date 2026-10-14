@@ -126,16 +126,72 @@ private final class CGEventTapResource: InputTapResource, @unchecked Sendable {
 
 @MainActor
 final class InputMonitor: DragInputMonitoring {
-    private let core = InputMonitorCore()
+    private let core: InputMonitorCore
+    private var dragEvent: (@MainActor @Sendable (DragInputEvent) -> Void)?
+    private var dragStatus: (@MainActor @Sendable (DragMonitorStatus) -> Void)?
+    private var flagsObserver: (@MainActor @Sendable (UInt64) -> Void)?
+    private var flagsStatus: (@MainActor @Sendable (DragMonitorStatus) -> Void)?
+    private var coreActive = false
+    private var currentStatus: DragMonitorStatus?
+    private var minimumDragSequence: UInt64 = 0
+    private var minimumFlagsSequence: UInt64 = 0
+
+    init(inbox: OrderedInteractionInbox = OrderedInteractionInbox(), resourceFactory: InputTapResourceFactory = .live) {
+        core = InputMonitorCore(resourceFactory: resourceFactory, inbox: inbox)
+    }
 
     func start(
         onEvent: @escaping @MainActor @Sendable (DragInputEvent) -> Void,
         onStatus: @escaping @MainActor @Sendable (DragMonitorStatus) -> Void
     ) {
-        core.start(onEvent: onEvent, onStatus: onStatus)
+        minimumDragSequence = coreActive ? core.acceptedSequence + 1 : 0
+        dragEvent = onEvent
+        dragStatus = onStatus
+        if coreActive, let currentStatus { onStatus(currentStatus) }
+        ensureStarted()
     }
 
     func stop() {
+        dragEvent = nil
+        dragStatus = nil
+        stopIfUnused()
+    }
+
+    func setFlagsObserver(_ observer: (@MainActor @Sendable (UInt64) -> Void)?,
+                          onStatus: @escaping @MainActor @Sendable (DragMonitorStatus) -> Void = { _ in }) {
+        flagsObserver = observer
+        minimumFlagsSequence = coreActive ? core.acceptedSequence + 1 : 0
+        flagsStatus = observer == nil ? nil : onStatus
+        if observer != nil {
+            if coreActive, let currentStatus { onStatus(currentStatus) }
+            ensureStarted()
+        } else { stopIfUnused() }
+    }
+
+    private func ensureStarted() {
+        guard !coreActive, dragEvent != nil || flagsObserver != nil else { return }
+        coreActive = true
+        currentStatus = nil
+        core.start(onEvent: { [weak self] event in
+            guard let self else { return }
+            if event.kind == .flagsChanged, event.sequence >= self.minimumFlagsSequence { self.flagsObserver?(event.flags) }
+            if event.sequence >= self.minimumDragSequence { self.dragEvent?(event) }
+        }, onStatus: { [weak self] status in
+            guard let self else { return }
+            self.currentStatus = status
+            if status != .ready {
+                self.coreActive = false
+                self.core.stop()
+            }
+            self.flagsStatus?(status)
+            self.dragStatus?(status)
+        })
+    }
+
+    private func stopIfUnused() {
+        guard dragEvent == nil, flagsObserver == nil else { return }
+        coreActive = false
+        currentStatus = nil
         core.stop()
     }
 
@@ -144,6 +200,8 @@ final class InputMonitor: DragInputMonitoring {
 
 final class InputMonitorCore: @unchecked Sendable {
     private let resourceFactory: InputTapResourceFactory
+    private let inbox: OrderedInteractionInbox
+    private let sourceID = UUID()
     private let lock = NSLock()
     private var lifecycle = InputMonitorGeneration()
     private var stopping = true
@@ -155,9 +213,13 @@ final class InputMonitorCore: @unchecked Sendable {
     private var onEvent: (@MainActor @Sendable (DragInputEvent) -> Void)?
     private var onStatus: (@MainActor @Sendable (DragMonitorStatus) -> Void)?
     private var interruptionReason: String?
+    private var lastAcceptedSequence: UInt64 = 0
 
-    init(resourceFactory: InputTapResourceFactory = .live) {
+    var acceptedSequence: UInt64 { lock.withLock { lastAcceptedSequence } }
+
+    init(resourceFactory: InputTapResourceFactory = .live, inbox: OrderedInteractionInbox = OrderedInteractionInbox()) {
         self.resourceFactory = resourceFactory
+        self.inbox = inbox
     }
 
     func start(
@@ -169,6 +231,7 @@ final class InputMonitorCore: @unchecked Sendable {
         let requestedGeneration = lifecycle.start()
         stopping = false
         mailbox = DragMailbox(capacity: 256)
+        lastAcceptedSequence = 0
         interruptionReason = nil
         drainScheduled = false
         buttonMask = 0
@@ -299,13 +362,28 @@ final class InputMonitorCore: @unchecked Sendable {
             buttonMask: buttonMask,
             buttonEdge: Self.edge(for: payload.eventType)
         )
-        let shouldScheduleDrain = !drainScheduled
-        drainScheduled = true
-        let requestedGeneration = lifecycle.value
-        lock.unlock()
-        if shouldScheduleDrain {
-            DispatchQueue.main.async { [weak self] in self?.drainMailbox(generation: requestedGeneration) }
+        let accepted = mailbox.drain()
+        for event in accepted {
+            lastAcceptedSequence = event.sequence
+            inbox.enqueueInput(event, source: sourceID, generation: payload.generation) { [weak self] event in
+                self?.deliverInboxEvent(event, generation: payload.generation)
+            }
         }
+        lock.unlock()
+    }
+
+    @MainActor
+    private func deliverInboxEvent(_ event: DragInputEvent, generation requestedGeneration: UInt64) {
+        lock.lock()
+        let accepted = !stopping && interruptionReason == nil && lifecycle.accepts(requestedGeneration)
+        let handler = onEvent
+        let status = onStatus
+        lock.unlock()
+        guard accepted else { return }
+        if event.kind == .overflow {
+            status?(.interrupted("Input event queue overflowed. The gesture was cancelled; choose Retry."))
+            stopFromDrain(generation: requestedGeneration)
+        } else { handler?(event) }
     }
 
     private static func edge(for type: CGEventType) -> MouseButtonEdge? {

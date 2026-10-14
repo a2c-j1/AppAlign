@@ -72,7 +72,9 @@ extension LayoutController {
     private func layoutValues(for display: Display) -> (layout: PersistedLayout, zones: [Zone])? {
         guard display.workArea.width > 0, display.workArea.height > 0 else { return nil }
         let layout: PersistedLayout
-        if let persistentID = display.persistentID,
+        if let override = quickLayoutOverrides[display.id] {
+            layout = override
+        } else if let persistentID = display.persistentID,
            let layoutID = assignments[persistentID.uuid]?.layoutID,
            let assigned = savedLayouts[layoutID] {
             layout = assigned
