@@ -27,15 +27,20 @@ final class DisplayProvider: ObservableObject {
 
     @discardableResult
     func refresh() -> DisplaySnapshot {
+        let sampled = sample()
+        publish(sampled)
+        return sampled
+    }
+
+    func sample() -> DisplaySnapshot {
         if let injectedSnapshots {
-            snapshot = injectedSnapshots[injectedSnapshotIndex]
+            let result = injectedSnapshots[injectedSnapshotIndex]
             injectedSnapshotIndex = min(injectedSnapshotIndex + 1, injectedSnapshots.count - 1)
-            return snapshot
+            return result
         }
         let screens = NSScreen.screens
         guard let primary = screens.first else {
-            snapshot = DisplaySnapshot(displays: [], primaryFrame: .zero)
-            return snapshot
+            return DisplaySnapshot(displays: [], primaryFrame: .zero)
         }
         let primaryFrame = primary.frame
         let numberedScreens: [ScreenInput] = screens.enumerated().compactMap { index, screen in
@@ -68,11 +73,14 @@ final class DisplayProvider: ObservableObject {
                 backingScaleFactor: screen.backingScaleFactor
             )
         }
-        snapshot = DisplaySnapshot(
+        return DisplaySnapshot(
             displays: displays,
             primaryFrame: (try? DisplayGeometry.globalFrame(from: primaryFrame, primaryFrame: primaryFrame)) ?? .zero
         )
-        return snapshot
+    }
+
+    func publish(_ sampled: DisplaySnapshot) {
+        snapshot = sampled
     }
 
     private func persistentID(for runtimeID: UInt32) -> PersistentDisplayID? {

@@ -393,6 +393,32 @@ final class DragSnapSettingsAndOverlayTests: XCTestCase {
         XCTAssertTrue(factory.panels.allSatisfy { !$0.visible })
     }
 
+    @MainActor
+    func testCursorDisplayResolutionUsesHalfOpenEdgesAndExcludesDockAndGaps() throws {
+        let left = makeDisplay()
+        let rightFrame = CGRect(x: 1_000, y: 0, width: 1_000, height: 800)
+        let right = Display(runtimeID: RuntimeDisplayID(rawValue: 2), persistentID: PersistentDisplayID(uuid: UUID()),
+                            sessionID: UUID(), name: "Right", frame: rightFrame, workArea: rightFrame,
+                            isPrimary: false, backingScaleFactor: 1)
+        let dockDisplay = Display(runtimeID: left.runtimeID, persistentID: left.persistentID, sessionID: left.sessionID,
+                                  name: left.name, frame: left.frame,
+                                  workArea: CGRect(x: 0, y: 0, width: 1_000, height: 700),
+                                  isPrimary: true, backingScaleFactor: left.backingScaleFactor)
+        let gapRightFrame = CGRect(x: 1_100, y: 0, width: 1_000, height: 800)
+        let gapRight = Display(runtimeID: right.runtimeID, persistentID: right.persistentID, sessionID: right.sessionID,
+                               name: right.name, frame: gapRightFrame, workArea: gapRightFrame,
+                               isPrimary: false, backingScaleFactor: 1)
+        let layout = LayoutController(displayProvider: DisplayProvider(snapshot: DisplaySnapshot(
+            displays: [dockDisplay, right], primaryFrame: left.frame
+        )))
+        XCTAssertEqual(layout.appliedDragLayoutSnapshot(at: CGPoint(x: 1_000, y: 20))?.display.id, right.id)
+        XCTAssertNil(layout.appliedDragLayoutSnapshot(at: CGPoint(x: 20, y: 700)), "The Dock area is outside the visible work area.")
+        let gapLayout = LayoutController(displayProvider: DisplayProvider(snapshot: DisplaySnapshot(
+            displays: [left, gapRight], primaryFrame: left.frame
+        )))
+        XCTAssertNil(gapLayout.appliedDragLayoutSnapshot(at: CGPoint(x: 1_050, y: 20)))
+    }
+
     private func makeDisplay() -> Display {
         Display(runtimeID: RuntimeDisplayID(rawValue: 1), persistentID: PersistentDisplayID(uuid: UUID()),
                 sessionID: UUID(), name: "Test", frame: CGRect(x: 0, y: 0, width: 1_000, height: 800),

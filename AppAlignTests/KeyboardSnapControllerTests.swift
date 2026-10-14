@@ -1,6 +1,89 @@
 import XCTest
+import ApplicationServices
 
 final class KeyboardSnapControllerTests: XCTestCase {
+    @MainActor
+    func testManualPlacementAndRestoreRejectInvalidationAfterReadback() throws {
+        let frame = CGRect(x: 100, y: 100, width: 300, height: 200)
+        let display = Display(runtimeID: RuntimeDisplayID(rawValue: 1), persistentID: nil, sessionID: UUID(),
+                              name: "Test", frame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+                              workArea: CGRect(x: 0, y: 0, width: 1_000, height: 780), isPrimary: true,
+                              backingScaleFactor: 1)
+        let snapshot = DisplaySnapshot(displays: [display], primaryFrame: display.frame)
+        let window = AXWindow(applicationElement: AXUIElementCreateApplication(200),
+                              element: AXUIElementCreateSystemWide(), pid: 200)
+
+        let placed = CGRect(x: 10, y: 10, width: 480, height: 380)
+
+        // A control with the same controller dependencies proves that the
+        // result boundary still accepts a current ticket for both operations.
+        do {
+            let validity = PlacementValidity()
+            var backendFrame = frame
+            let dependencies = PlacementControllerDependencies(
+                isAccessibilityTrusted: { true },
+                validateWindow: { _ in },
+                readFrame: { _ in backendFrame },
+                movePlacement: { _, requested, ticket in
+                    XCTAssertEqual(ticket.state, .writing)
+                    backendFrame = requested
+                    return PlacementResult(requestedFrame: requested, actualFrame: requested)
+                }
+            )
+            let controller = PlacementController(
+                displayProvider: DisplayProvider(snapshot: snapshot),
+                validity: validity,
+                refreshDisplayConfiguration: { snapshot },
+                dependencies: dependencies,
+                initialCapture: CapturedWindow(window: window, originalFrame: frame,
+                                               displayFingerprint: snapshot.fingerprint)
+            )
+            try controller.placeCapturedWindow(in: placed, displayFingerprint: snapshot.fingerprint)
+            XCTAssertEqual(controller.actualFrame, placed)
+            XCTAssertTrue(controller.statusMessage.contains("Placed and verified"))
+            XCTAssertTrue(controller.canRestore)
+            controller.restoreCapturedWindow()
+            XCTAssertEqual(controller.actualFrame, frame)
+            XCTAssertTrue(controller.statusMessage.contains("Restored and verified"))
+            XCTAssertTrue(controller.canRestore)
+        }
+
+        for restoring in [false, true] {
+            let validity = PlacementValidity()
+            var backendFrame = frame
+            let dependencies = PlacementControllerDependencies(
+                isAccessibilityTrusted: { true },
+                validateWindow: { _ in },
+                readFrame: { _ in backendFrame },
+                movePlacement: { _, requested, _ in
+                    backendFrame = requested
+                    // Simulate the configuration callback arriving after AX
+                    // readback but before the controller accepts success.
+                    _ = validity.invalidateForConfigurationChange()
+                    return PlacementResult(requestedFrame: requested, actualFrame: requested)
+                }
+            )
+            let controller = PlacementController(
+                displayProvider: DisplayProvider(snapshot: snapshot),
+                validity: validity,
+                refreshDisplayConfiguration: { snapshot },
+                dependencies: dependencies,
+                initialCapture: CapturedWindow(window: window, originalFrame: frame,
+                                               displayFingerprint: snapshot.fingerprint)
+            )
+            if restoring {
+                controller.restoreCapturedWindow()
+            } else {
+                XCTAssertThrowsError(try controller.placeCapturedWindow(in: placed,
+                                                                         displayFingerprint: snapshot.fingerprint))
+            }
+            XCTAssertFalse(controller.statusMessage.contains("verified"))
+            XCTAssertEqual(controller.actualFrame, restoring ? frame : placed)
+            XCTAssertTrue(controller.hasCapturedWindow)
+            XCTAssertTrue(controller.canRestore, "A rejected completion must preserve the original Restore target.")
+        }
+    }
+
     @MainActor
     func testFirstMovePreservesOriginalAndRestoreSuccessConsumesSession() async throws {
         let fixture = try await Fixture.make()
@@ -60,6 +143,67 @@ final class KeyboardSnapControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testUnchangedDisplayConfigurationRestoresExactFrameOutsideWorkArea() async throws {
+        let original = CGRect(x: -40, y: -20, width: 300, height: 200)
+        let fixture = try await Fixture.make(originalFrame: original,
+                                             workArea: CGRect(x: 0, y: 30, width: 1_000, height: 750))
+        defer { fixture.remove() }
+        var settings = fixture.layout.keyboardSettings
+        settings.isEnabled = true
+        fixture.layout.updateKeyboardSettings(settings)
+
+        fixture.controller.handle(.zone(ZoneID(rawValue: 0)))
+        let placementIdle = await fixture.waitUntilIdle()
+        XCTAssertTrue(placementIdle)
+        fixture.controller.handle(.restore)
+        let restoreIdle = await fixture.waitUntilIdle()
+        XCTAssertTrue(restoreIdle)
+        let restoredFrame = await fixture.backend.currentFrame()
+        XCTAssertEqual(restoredFrame, original)
+        XCTAssertFalse(fixture.controller.hasRestoreTarget)
+    }
+
+    @MainActor
+    func testConfigurationChangeTranslatesRestoreAnchorAndDisconnectKeepsIt() async throws {
+        let original = CGRect(x: 600, y: 400, width: 300, height: 200)
+        let id = PersistentDisplayID(uuid: UUID())
+        let first = makeDisplay(id: id, frame: CGRect(x: 0, y: 0, width: 1_000, height: 800))
+        let translated = makeDisplay(id: id, frame: CGRect(x: 1_000, y: 0, width: 1_000, height: 800))
+        let fixture = try await Fixture.make(originalFrame: original,
+                                             snapshots: Array(repeating: snapshot(first), count: 5) + [snapshot(translated)])
+        defer { fixture.remove() }
+        var settings = fixture.layout.keyboardSettings
+        settings.isEnabled = true
+        fixture.layout.updateKeyboardSettings(settings)
+        fixture.controller.handle(.zone(ZoneID(rawValue: 0)))
+        let placementIdle = await fixture.waitUntilIdle()
+        XCTAssertTrue(placementIdle)
+        fixture.controller.handle(.restore)
+        let restoreIdle = await fixture.waitUntilIdle()
+        XCTAssertTrue(restoreIdle)
+        let frameAfterMove = await fixture.backend.currentFrame()
+        XCTAssertEqual(frameAfterMove, CGRect(x: 1_600, y: 400, width: 300, height: 200))
+        XCTAssertFalse(fixture.controller.hasRestoreTarget)
+
+        let disconnectedFixture = try await Fixture.make(originalFrame: original,
+                                                         snapshots: Array(repeating: snapshot(first), count: 5)
+                                                            + [DisplaySnapshot(displays: [], primaryFrame: .zero)])
+        defer { disconnectedFixture.remove() }
+        var disconnectedSettings = disconnectedFixture.layout.keyboardSettings
+        disconnectedSettings.isEnabled = true
+        disconnectedFixture.layout.updateKeyboardSettings(disconnectedSettings)
+        disconnectedFixture.controller.handle(.zone(ZoneID(rawValue: 0)))
+        let disconnectedPlacementIdle = await disconnectedFixture.waitUntilIdle()
+        XCTAssertTrue(disconnectedPlacementIdle)
+        disconnectedFixture.controller.handle(.restore)
+        let disconnectedRestoreIdle = await disconnectedFixture.waitUntilIdle()
+        XCTAssertTrue(disconnectedRestoreIdle)
+        XCTAssertTrue(disconnectedFixture.controller.hasRestoreTarget)
+        let writes = await disconnectedFixture.backend.writeCount()
+        XCTAssertEqual(writes, 1)
+    }
+
+    @MainActor
     private struct Fixture {
         let layout: LayoutController
         let backend: FakeKeyboardWindowBackend
@@ -67,21 +211,25 @@ final class KeyboardSnapControllerTests: XCTestCase {
         let originalFrame = CGRect(x: 600, y: 400, width: 300, height: 200)
         let directory: URL
 
-        static func make() async throws -> Fixture {
+        static func make(originalFrame: CGRect = CGRect(x: 600, y: 400, width: 300, height: 200),
+                         workArea: CGRect = CGRect(x: 0, y: 0, width: 1_000, height: 800),
+                         snapshots: [DisplaySnapshot]? = nil) async throws -> Fixture {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             let uuid = UUID()
             let display = Display(
                 runtimeID: RuntimeDisplayID(rawValue: 1),
                 persistentID: PersistentDisplayID(uuid: uuid),
                 sessionID: UUID(), name: "Test", frame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
-                workArea: CGRect(x: 0, y: 0, width: 1_000, height: 800), isPrimary: true, backingScaleFactor: 1
+                workArea: workArea, isPrimary: true, backingScaleFactor: 1
             )
+            let provider = snapshots.map { DisplayProvider(snapshots: $0) }
+                ?? DisplayProvider(snapshot: DisplaySnapshot(displays: [display], primaryFrame: display.frame))
             let layout = LayoutController(
-                displayProvider: DisplayProvider(snapshot: DisplaySnapshot(displays: [display], primaryFrame: display.frame)),
+                displayProvider: provider,
                 storeCoordinator: PersistentStoreCoordinator(directory: directory)
             )
             await layout.loadPersistentState()
-            let frame = CGRect(x: 600, y: 400, width: 300, height: 200)
+            let frame = originalFrame
             let backend = FakeKeyboardWindowBackend(frame: frame)
             let environment = KeyboardEnvironment(frontmostPID: { 200 }, isAccessibilityTrusted: { true }, ownPID: 100)
             let controller = KeyboardSnapController(layoutController: layout, backend: backend, environment: environment)
@@ -97,6 +245,15 @@ final class KeyboardSnapControllerTests: XCTestCase {
         }
 
         func remove() { try? FileManager.default.removeItem(at: directory) }
+    }
+
+    private func snapshot(_ display: Display) -> DisplaySnapshot {
+        DisplaySnapshot(displays: [display], primaryFrame: display.frame)
+    }
+
+    private func makeDisplay(id: PersistentDisplayID, frame: CGRect) -> Display {
+        Display(runtimeID: RuntimeDisplayID(rawValue: 1), persistentID: id, sessionID: UUID(), name: "Test",
+                frame: frame, workArea: frame, isPrimary: true, backingScaleFactor: 1)
     }
 }
 
@@ -114,15 +271,15 @@ private actor FakeKeyboardWindowBackend: KeyboardWindowOperating {
 
     func retain(_ token: RuntimeWindowToken) async {}
 
-    func move(_ token: RuntimeWindowToken, to frame: CGRect, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
-        guard await preflight() else { throw WindowManagementError.displayConfigurationChanged }
+    func move(_ token: RuntimeWindowToken, to frame: CGRect, ticket: PlacementCommitTicket, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
+        guard await preflight(), ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else { throw WindowManagementError.displayConfigurationChanged }
         self.frame = frame
         writes += 1
         return frame
     }
 
-    func restore(_ token: RuntimeWindowToken, to frame: CGRect, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
-        guard await preflight() else { throw WindowManagementError.displayConfigurationChanged }
+    func restore(_ token: RuntimeWindowToken, to frame: CGRect, ticket: PlacementCommitTicket, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
+        guard await preflight(), ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else { throw WindowManagementError.displayConfigurationChanged }
         if failRestore {
             failRestore = false
             throw WindowManagementError.noCapturedWindow

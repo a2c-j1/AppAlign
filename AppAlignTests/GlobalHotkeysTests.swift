@@ -347,25 +347,25 @@ private actor HotkeyFakeWindowBackend: KeyboardWindowOperating {
 
     func retain(_ token: RuntimeWindowToken) async {}
 
-    func move(_ token: RuntimeWindowToken, to frame: CGRect, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
+    func move(_ token: RuntimeWindowToken, to frame: CGRect, ticket: PlacementCommitTicket, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
         if blockPreflight {
             blockPreflight = false
             preflightStarted = true
             await withCheckedContinuation { preflightContinuation = $0 }
         }
-        guard await preflight() else { throw WindowManagementError.displayConfigurationChanged }
+        guard await preflight(), ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else { throw WindowManagementError.displayConfigurationChanged }
         self.frame = frame
         writes += 1
         return frame
     }
 
-    func restore(_ token: RuntimeWindowToken, to frame: CGRect, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
+    func restore(_ token: RuntimeWindowToken, to frame: CGRect, ticket: PlacementCommitTicket, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
         if blockPreflight {
             blockPreflight = false
             preflightStarted = true
             await withCheckedContinuation { preflightContinuation = $0 }
         }
-        guard await preflight() else { throw WindowManagementError.displayConfigurationChanged }
+        guard await preflight(), ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else { throw WindowManagementError.displayConfigurationChanged }
         self.frame = frame
         writes += 1
         return frame

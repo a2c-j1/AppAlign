@@ -183,24 +183,28 @@ enum ZoneNavigator {
         direction: NavigationDirection,
         excludingID: ZoneID?
     ) -> Zone? {
-        let vector = direction.vector
         let candidates = zones.compactMap { zone -> (Zone, CGFloat)? in
             guard zone.id != excludingID, isFinite(zone.frame), zone.frame.width > 0, zone.frame.height > 0 else { return nil }
             let target = CGPoint(x: zone.frame.midX, y: zone.frame.midY)
-            let deltaX = target.x - source.x
-            let deltaY = target.y - source.y
-            guard deltaX.isFinite, deltaY.isFinite else { return nil }
-            let along = deltaX * vector.dx + deltaY * vector.dy
-            let across = abs(deltaX * vector.dy - deltaY * vector.dx)
-            guard along > 0, across / along <= 10 else { return nil }
-            let ratio = across / along
-            let score = along * (1 + 4 * ratio * ratio) / 4
-            guard score.isFinite else { return nil }
+            guard let score = directionalScore(from: source, to: target, direction: direction) else { return nil }
             return (zone, score)
         }
         return candidates.min { lhs, rhs in
             lhs.1 == rhs.1 ? lhs.0.id.rawValue < rhs.0.id.rawValue : lhs.1 < rhs.1
         }?.0
+    }
+
+    static func directionalScore(from source: CGPoint, to target: CGPoint, direction: NavigationDirection) -> CGFloat? {
+        let vector = direction.vector
+        let deltaX = target.x - source.x
+        let deltaY = target.y - source.y
+        guard deltaX.isFinite, deltaY.isFinite else { return nil }
+        let along = deltaX * vector.dx + deltaY * vector.dy
+        let across = abs(deltaX * vector.dy - deltaY * vector.dx)
+        guard along > 0, across / along <= 10 else { return nil }
+        let ratio = across / along
+        let score = along * (1 + 4 * ratio * ratio) / 4
+        return score.isFinite ? score : nil
     }
 
     private static func isFinite(_ rect: CGRect) -> Bool {

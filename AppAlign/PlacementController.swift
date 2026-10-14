@@ -14,25 +14,44 @@ final class PlacementController: ObservableObject {
     @Published private(set) var capturedDisplayFingerprint: String?
 
     private let ownPID = ProcessInfo.processInfo.processIdentifier
-    private let displayProvider = DisplayProvider()
+    private let displayProvider: DisplayProvider
     private let repository = WindowRepository()
-    private let mover = WindowMover()
+    private let dependencies: PlacementControllerDependencies
+    private let validity: PlacementValidity
+    private let refreshDisplayConfiguration: @MainActor () -> DisplaySnapshot
     private var rememberedApplicationPID: pid_t?
     private var capturedWindow: AXWindow?
     private var originalFrame: CGRect?
 
-    init() {
-        accessibilityGranted = AXIsProcessTrusted()
+    init(displayProvider: DisplayProvider = DisplayProvider(),
+         validity: PlacementValidity = PlacementValidity(),
+         refreshDisplayConfiguration: (@MainActor () -> DisplaySnapshot)? = nil,
+         dependencies: PlacementControllerDependencies = .live,
+         initialCapture: CapturedWindow? = nil) {
+        self.displayProvider = displayProvider
+        self.validity = validity
+        self.dependencies = dependencies
+        self.refreshDisplayConfiguration = refreshDisplayConfiguration ?? {
+            let sample = displayProvider.sample()
+            displayProvider.publish(sample)
+            return sample
+        }
+        capturedWindow = initialCapture?.window
+        originalFrame = initialCapture?.originalFrame
+        capturedDisplayFingerprint = initialCapture?.displayFingerprint
+        hasCapturedWindow = initialCapture != nil
+        canRestore = initialCapture != nil
+        accessibilityGranted = dependencies.isAccessibilityTrusted()
     }
 
     func menuDidOpen() {
         refreshAccessibility()
-        displayProvider.refresh()
+        _ = refreshDisplayConfiguration()
         rememberFrontmostApplication()
     }
 
     func refreshAccessibility() {
-        accessibilityGranted = AXIsProcessTrusted()
+        accessibilityGranted = dependencies.isAccessibilityTrusted()
     }
 
     func requestAccessibilityAccess() {
@@ -48,7 +67,7 @@ final class PlacementController: ObservableObject {
 
     func captureFocusedWindow() {
         refreshAccessibility()
-        let displaySnapshot = displayProvider.refresh()
+        let displaySnapshot = refreshDisplayConfiguration()
         guard accessibilityGranted else {
             statusMessage = WindowManagementError.accessibilityPermissionRequired.localizedDescription
             return
@@ -62,7 +81,7 @@ final class PlacementController: ObservableObject {
 
         do {
             let window = try repository.focusedWindow(applicationPID: pid)
-            try WindowFilter(ownPID: ownPID).validate(window)
+            try dependencies.validateWindow(window)
             let frame = try window.frame()
 
             capturedWindow = window
@@ -91,14 +110,22 @@ final class PlacementController: ObservableObject {
         do {
             refreshAccessibility()
             guard accessibilityGranted else { throw WindowManagementError.accessibilityPermissionRequired }
-            try WindowFilter(ownPID: ownPID).validate(window)
+            try dependencies.validateWindow(window)
             try validateDisplayConfiguration(expectedFingerprint: capturedDisplayFingerprint)
+            let ticket = try makeTicket()
+            defer { ticket.finish() }
+            guard ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else {
+                throw WindowManagementError.displayConfigurationChanged
+            }
             requestedFrame = originalFrame
-            let result = try mover.move(window, to: originalFrame)
+            let result = try dependencies.movePlacement(window, originalFrame, ticket)
+            guard ticket.completeIfCurrent(now: DispatchTime.now().uptimeNanoseconds) else {
+                throw WindowManagementError.displayConfigurationChanged
+            }
             actualFrame = result.actualFrame
             statusMessage = "Restored and verified the original frame."
         } catch {
-            actualFrame = try? window.frame()
+            actualFrame = try? dependencies.readFrame(window)
             statusMessage = error.localizedDescription
         }
     }
@@ -120,15 +147,23 @@ final class PlacementController: ObservableObject {
         do {
             refreshAccessibility()
             guard accessibilityGranted else { throw WindowManagementError.accessibilityPermissionRequired }
-            try WindowFilter(ownPID: ownPID).validate(window)
+            try dependencies.validateWindow(window)
             try validateDisplayConfiguration(expectedFingerprint: displayFingerprint)
             try validateDisplayConfiguration(expectedFingerprint: capturedDisplayFingerprint)
+            let ticket = try makeTicket()
+            defer { ticket.finish() }
+            guard ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else {
+                throw WindowManagementError.displayConfigurationChanged
+            }
             requestedFrame = frame
-            let result = try mover.move(window, to: frame)
+            let result = try dependencies.movePlacement(window, frame, ticket)
+            guard ticket.completeIfCurrent(now: DispatchTime.now().uptimeNanoseconds) else {
+                throw WindowManagementError.displayConfigurationChanged
+            }
             actualFrame = result.actualFrame
             statusMessage = "Placed and verified the captured window at \(Self.describe(result.actualFrame))."
         } catch {
-            actualFrame = try? window.frame()
+            actualFrame = try? dependencies.readFrame(window)
             statusMessage = error.localizedDescription
             throw error
         }
@@ -145,14 +180,46 @@ final class PlacementController: ObservableObject {
     }
 
     private func validateDisplayConfiguration(expectedFingerprint: String?) throws {
-        let current = displayProvider.refresh().fingerprint
+        let current = refreshDisplayConfiguration().fingerprint
         guard let expectedFingerprint, expectedFingerprint == current else {
             canRestore = false
             throw WindowManagementError.displayConfigurationChanged
         }
     }
 
+    private func makeTicket() throws -> PlacementCommitTicket {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard let ticket = validity.reserve(startDeadline: now + 2_000_000_000,
+                                            totalDeadline: now + 5_000_000_000) else {
+            throw WindowManagementError.operationFailed
+        }
+        return ticket
+    }
+
     static func describe(_ frame: CGRect) -> String {
         "x=\(frame.origin.x), y=\(frame.origin.y), w=\(frame.width), h=\(frame.height)"
+    }
+}
+
+struct CapturedWindow {
+    let window: AXWindow
+    let originalFrame: CGRect
+    let displayFingerprint: String
+}
+
+@MainActor
+struct PlacementControllerDependencies {
+    let isAccessibilityTrusted: () -> Bool
+    let validateWindow: (AXWindow) throws -> Void
+    let readFrame: (AXWindow) throws -> CGRect
+    let movePlacement: (AXWindow, CGRect, PlacementCommitTicket) throws -> PlacementResult
+
+    static var live: PlacementControllerDependencies {
+        PlacementControllerDependencies(
+            isAccessibilityTrusted: { AXIsProcessTrusted() },
+            validateWindow: { try WindowFilter(ownPID: ProcessInfo.processInfo.processIdentifier).validate($0) },
+            readFrame: { try $0.frame() },
+            movePlacement: { try WindowMover().movePlacement($0, to: $1, ticket: $2) }
+        )
     }
 }
