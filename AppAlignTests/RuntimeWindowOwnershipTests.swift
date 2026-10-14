@@ -1,6 +1,83 @@
 import XCTest
 
 final class RuntimeWindowOwnershipTests: XCTestCase {
+    func testActualFocusedWindowPathRechecksOwnershipAfterPreflightAwait() async throws {
+        for teardown in [RuntimeTeardown.discard, .shutdown] {
+            let pid: pid_t = 99001
+            let application = AXUIElementCreateApplication(pid)
+            let window = AXWindow(applicationElement: application, element: application, pid: pid)
+            let runtime = AccessibilityWindowRuntime(
+                focusedWindowProvider: { _ in window },
+                focusedWindowValidator: { _ in },
+                frontmostPIDProvider: { pid },
+                accessibilityTrustedProvider: { true }
+            )
+            let token = try await runtime.token(for: window)
+            await runtime.retain(token)
+            let validity = PlacementValidity()
+            let ticket = try XCTUnwrap(validity.reserve(startDeadline: .max, totalDeadline: .max))
+            let barrier = RuntimePreflightBarrier()
+            let writes = RuntimeWriteCounter()
+            let operation = Task {
+                try await runtime.withCurrentFocusedWindow(token, ticket: ticket, preflight: {
+                    barrier.pause()
+                }, operation: { _ in
+                    writes.increment()
+                    return CGRect(x: 20, y: 30, width: 400, height: 300)
+                })
+            }
+            XCTAssertEqual(barrier.entered.wait(timeout: .now() + 2), .success)
+            switch teardown {
+            case .discard: await runtime.discard(token)
+            case .shutdown: await runtime.shutdown()
+            }
+            barrier.resume.signal()
+            do {
+                _ = try await operation.value
+                XCTFail("Teardown during preflight must reject the write.")
+            } catch {
+                XCTAssertEqual(writes.value, 0)
+            }
+        }
+    }
+
+    func testActualFocusedWindowPathRejectsTargetSwitchAfterPreflightAwait() async throws {
+        let pid: pid_t = 99002
+        let first = AXUIElementCreateApplication(pid)
+        let second = AXUIElementCreateSystemWide()
+        let windows = RuntimeFocusedWindowBox(AXWindow(applicationElement: first, element: first, pid: pid))
+        let runtime = AccessibilityWindowRuntime(
+            focusedWindowProvider: { _ in windows.read() },
+            focusedWindowValidator: { _ in },
+            frontmostPIDProvider: { pid },
+            accessibilityTrustedProvider: { true }
+        )
+        let original = windows.read()
+        let token = try await runtime.token(for: original)
+        await runtime.retain(token)
+        let validity = PlacementValidity()
+        let ticket = try XCTUnwrap(validity.reserve(startDeadline: .max, totalDeadline: .max))
+        let barrier = RuntimePreflightBarrier()
+        let writes = RuntimeWriteCounter()
+        let operation = Task {
+            try await runtime.withCurrentFocusedWindow(token, ticket: ticket, preflight: {
+                barrier.pause()
+            }, operation: { _ in
+                writes.increment()
+                return CGRect.zero
+            })
+        }
+        XCTAssertEqual(barrier.entered.wait(timeout: .now() + 2), .success)
+        windows.replace(AXWindow(applicationElement: second, element: second, pid: pid))
+        barrier.resume.signal()
+        do {
+            _ = try await operation.value
+            XCTFail("A changed focused AX target must reject the write.")
+        } catch {
+            XCTAssertEqual(writes.value, 0)
+        }
+    }
+
     func testKeyboardDiscardKeepsRecordWhileDragLeaseIsActive() {
         var ownership = RuntimeWindowOwnership()
         let lease = DragLeaseID(rawValue: UUID())
@@ -116,4 +193,31 @@ final class RuntimeWindowOwnershipTests: XCTestCase {
         generation.stop()
         XCTAssertFalse(generation.accepts(second))
     }
+}
+
+private enum RuntimeTeardown { case discard, shutdown }
+
+private final class RuntimePreflightBarrier: @unchecked Sendable {
+    let entered = DispatchSemaphore(value: 0)
+    let resume = DispatchSemaphore(value: 0)
+    @MainActor func pause() -> Bool {
+        entered.signal()
+        _ = resume.wait(timeout: .now() + 3)
+        return true
+    }
+}
+
+private final class RuntimeWriteCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func increment() { lock.withLock { count += 1 } }
+}
+
+private final class RuntimeFocusedWindowBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var window: AXWindow
+    init(_ window: AXWindow) { self.window = window }
+    func read() -> AXWindow { lock.withLock { window } }
+    func replace(_ window: AXWindow) { lock.withLock { self.window = window } }
 }

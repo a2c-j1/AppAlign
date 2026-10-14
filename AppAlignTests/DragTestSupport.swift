@@ -133,14 +133,16 @@ actor FakeDragReader: DragWindowReading, DragCommitOperating, KeyboardWindowOper
         RuntimeWindowSnapshot(token: focusedToken ?? token, frame: currentFrame)
     }
     func retain(_ token: RuntimeWindowToken) { guard self.token == token else { return }; ownership.retainKeyboard() }
-    func move(_ token: RuntimeWindowToken, to frame: CGRect, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
-        guard self.token == token, await preflight() else { throw DragTestError.unavailable }
+    func move(_ token: RuntimeWindowToken, to frame: CGRect, ticket: PlacementCommitTicket, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
+        guard self.token == token, await preflight(),
+              ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else { throw DragTestError.unavailable }
         currentFrame = frame
         ownership.retainKeyboard()
         return frame
     }
-    func restore(_ token: RuntimeWindowToken, to frame: CGRect, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
-        guard self.token == token, await preflight() else { throw DragTestError.unavailable }
+    func restore(_ token: RuntimeWindowToken, to frame: CGRect, ticket: PlacementCommitTicket, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
+        guard self.token == token, await preflight(),
+              ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else { throw DragTestError.unavailable }
         currentFrame = frame
         ownership.retainKeyboard()
         return frame

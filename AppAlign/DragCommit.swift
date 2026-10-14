@@ -7,47 +7,6 @@ struct DragCommitID: Hashable, Sendable {
     init(rawValue: UUID = UUID()) { self.rawValue = rawValue }
 }
 
-/// Cancellation and the first AX write share one lock, so a cancelled pending
-/// placement cannot pass a stale MainActor preflight and then start writing.
-final class DragCommitTicket: @unchecked Sendable {
-    enum State: Equatable { case pending, writing, invalidated, finished }
-
-    private let lock = NSLock()
-    private var current: State = .pending
-    let startDeadline: UInt64
-    let totalDeadline: UInt64
-
-    init(startDeadline: UInt64, totalDeadline: UInt64) {
-        self.startDeadline = startDeadline
-        self.totalDeadline = totalDeadline
-    }
-
-    var state: State { lock.withLock { current } }
-
-    func invalidate() {
-        lock.withLock {
-            if current == .pending || current == .writing { current = .invalidated }
-        }
-    }
-
-    func beginWrite(now: UInt64) -> Bool {
-        lock.withLock {
-            guard current == .pending, now < startDeadline, now < totalDeadline else {
-                if current == .pending { current = .invalidated }
-                return false
-            }
-            current = .writing
-            return true
-        }
-    }
-
-    func mayContinueWrite(now: UInt64) -> Bool {
-        lock.withLock { current == .writing && now < totalDeadline }
-    }
-
-    func finish() { lock.withLock { current = .finished } }
-}
-
 struct DragCommitOffer: Sendable {
     let id: DragCommitID
     let run: UInt64
@@ -94,6 +53,7 @@ final class DragSnapController: ObservableObject {
     var gateChanged: (@MainActor (Bool) -> Void)?
 
     private let layoutController: LayoutController
+    private let validity: PlacementValidity
     private let runtime: any DragCommitOperating
     private var activeOffer: DragCommitOffer?
     private var task: Task<Void, Never>?
@@ -107,6 +67,7 @@ final class DragSnapController: ObservableObject {
     init(layoutController: LayoutController, runtime: any DragCommitOperating,
          overlay: any ZoneOverlayPresenting = ZoneOverlayManager()) {
         self.layoutController = layoutController
+        validity = layoutController.placementValidity
         self.runtime = runtime
         self.overlay = overlay
     }
@@ -188,6 +149,11 @@ final class DragSnapController: ObservableObject {
                           offer.ticket.state == .pending else { return false }
                     return true
                 }
+                guard self.generation == generation, self.activeOffer?.id == offer.id,
+                      self.layoutController.appliedDragLayoutSnapshot(at: offer.point) == offer.layoutSnapshot,
+                      offer.ticket.completeIfCurrent(now: DispatchTime.now().uptimeNanoseconds) else {
+                    throw WindowManagementError.displayConfigurationChanged
+                }
                 self.statusMessage = "Window placed in zone."
             } catch {
                 self.statusMessage = error.localizedDescription
@@ -210,8 +176,12 @@ final class DragSnapController: ObservableObject {
             return false
         }
         let now = DispatchTime.now().uptimeNanoseconds
-        let ticket = DragCommitTicket(startDeadline: now + 2_000_000_000,
-                                      totalDeadline: now + 5_000_000_000)
+        guard let ticket = validity.reserve(startDeadline: now + 2_000_000_000,
+                                            totalDeadline: now + 5_000_000_000) else {
+            statusMessage = "A window placement is already pending or in progress."
+            overlay.hideAll()
+            return false
+        }
         let offer = DragCommitOffer(id: DragCommitID(), run: context.run, session: context.session,
                                     inputEpoch: context.event.epoch, gesture: context.event.gesture,
                                     token: context.token, sourceLease: context.sourceLease,
@@ -276,6 +246,7 @@ final class DragSnapController: ObservableObject {
 final class DragKeyboardGate {
     private var dragActive = false
     private var commitActive = false
+    private var configurationPending = false
     private let keyboard: KeyboardSnapController
     private let hotkeys: GlobalHotkeys
 
@@ -286,9 +257,10 @@ final class DragKeyboardGate {
 
     func setDrag(_ active: Bool) { dragActive = active; update() }
     func setCommit(_ active: Bool) { commitActive = active; update() }
+    func setConfigurationPending(_ pending: Bool) { configurationPending = pending; update() }
 
     private func update() {
-        let closed = dragActive || commitActive
+        let closed = dragActive || commitActive || configurationPending
         keyboard.setDragGateClosed(closed)
         hotkeys.setDragGateClosed(closed)
     }

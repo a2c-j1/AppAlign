@@ -13,14 +13,19 @@ struct AppAlignApp: App {
 
     @MainActor
     init() {
-        let layout = LayoutController()
-        let placement = PlacementController()
+        let displayProvider = DisplayProvider()
+        let validity = PlacementValidity()
+        let layout = LayoutController(displayProvider: displayProvider, placementValidity: validity)
+        let placement = PlacementController(displayProvider: displayProvider, validity: validity,
+                                            refreshDisplayConfiguration: { layout.refreshDisplays() })
         let runtime = AccessibilityWindowRuntime()
         let keyboard = KeyboardSnapController(layoutController: layout, backend: runtime)
-        let drag = DragDetectionController(reader: runtime)
+        let drag = DragDetectionController(reader: runtime, displayProvider: displayProvider)
         let hotkeys = GlobalHotkeys(layoutController: layout, snapController: keyboard)
         let dragSnap = DragSnapController(layoutController: layout, runtime: runtime)
         let gate = DragKeyboardGate(keyboard: keyboard, hotkeys: hotkeys)
+        let displayConfiguration = DisplayConfigurationController(layout: layout, drag: dragSnap,
+                                                                  detection: drag, keyboard: keyboard, gate: gate)
         drag.dragGateChanged = { gate.setDrag($0) }
         dragSnap.gateChanged = { gate.setCommit($0) }
         drag.onWillEnd = { dragSnap.prepareCommit($0) }
@@ -44,9 +49,11 @@ struct AppAlignApp: App {
         delegate.keyboardSnapController = keyboard
         delegate.dragDetectionController = drag
         delegate.dragSnapController = dragSnap
+        delegate.displayConfigurationController = displayConfiguration
         Task { @MainActor in
             await layout.loadPersistentState()
             guard !delegate.isTerminating else { return }
+            displayConfiguration.start()
             hotkeys.start()
         }
     }
@@ -103,9 +110,11 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
     weak var keyboardSnapController: KeyboardSnapController?
     weak var dragDetectionController: DragDetectionController?
     weak var dragSnapController: DragSnapController?
+    var displayConfigurationController: DisplayConfigurationController?
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         isTerminating = true
+        displayConfigurationController?.shutdown()
         globalHotkeys?.shutdown()
         dragDetectionController?.shutdownForQuit()
         keyboardSnapController?.suspend()
@@ -137,6 +146,7 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
             }
             if !retrySucceeded {
                 isTerminating = false
+                displayConfigurationController?.cancelQuit()
                 keyboardSnapController?.resume()
                 globalHotkeys?.start()
                 dragDetectionController?.resumeAfterCancelledQuit()
@@ -146,6 +156,10 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
             sender.reply(toApplicationShouldTerminate: retrySucceeded)
         }
         return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        displayConfigurationController?.dispose()
     }
 }
 

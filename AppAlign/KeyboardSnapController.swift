@@ -43,8 +43,10 @@ protocol DragWindowReading: Sendable {
 protocol KeyboardWindowOperating: Sendable {
     func focusedWindow(applicationPID: pid_t, ownPID: pid_t) async throws -> RuntimeWindowSnapshot
     func retain(_ token: RuntimeWindowToken) async
-    func move(_ token: RuntimeWindowToken, to frame: CGRect, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect
-    func restore(_ token: RuntimeWindowToken, to frame: CGRect, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect
+    func move(_ token: RuntimeWindowToken, to frame: CGRect, ticket: PlacementCommitTicket,
+              preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect
+    func restore(_ token: RuntimeWindowToken, to frame: CGRect, ticket: PlacementCommitTicket,
+                 preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect
     func discard(_ token: RuntimeWindowToken) async
     func shutdown() async
     func discardProcess(_ pid: pid_t) async
@@ -75,25 +77,41 @@ struct KeyboardEnvironment {
     }
 }
 
+private struct KeyboardPlacementSession {
+    let token: RuntimeWindowToken
+    let originalFrame: CGRect
+    let restoreAnchor: KeyboardRestoreAnchor
+    var activeAddress: ZoneAddress?
+}
+
+private struct KeyboardRestoreAnchor {
+    let displayID: DisplaySelectionID
+    let displayFrame: CGRect
+    let configurationFingerprint: String
+}
+
+private struct KeyboardNavigationTarget {
+    let session: KeyboardPlacementSession
+    let address: ZoneAddress
+    let zone: Zone
+}
+
 @MainActor
 final class KeyboardSnapController: ObservableObject {
-    private struct PlacementSession {
-        let token: RuntimeWindowToken
-        let originalFrame: CGRect
-        var activeZoneID: ZoneID?
-    }
-
     @Published private(set) var statusMessage = "Keyboard placement is disabled."
     @Published private(set) var isBusy = false
     @Published private(set) var hasRestoreTarget = false
     var didFinishAction: (@MainActor () -> Void)?
 
     private let layoutController: LayoutController
+    private let validity: PlacementValidity
     private let backend: any KeyboardWindowOperating
     var backendForEligibility: any KeyboardWindowOperating { backend }
     private let environment: KeyboardEnvironment
     private var ownPID: pid_t { environment.ownPID }
-    private var sessions: [UUID: PlacementSession] = [:]
+    private var sessions: [UUID: KeyboardPlacementSession] = [:]
+    private var activeTicket: PlacementCommitTicket?
+    private var activeTicketToken: RuntimeWindowToken?
     private let maximumSessions = 64
     private var lifecycleGeneration: UInt64 = 0
     private var isRunning = true
@@ -105,6 +123,7 @@ final class KeyboardSnapController: ObservableObject {
         environment: KeyboardEnvironment = .live
     ) {
         self.layoutController = layoutController
+        validity = layoutController.placementValidity
         self.backend = backend
         self.environment = environment
     }
@@ -124,7 +143,7 @@ final class KeyboardSnapController: ObservableObject {
     }
 
     func shutdown() async {
-        lifecycleGeneration &+= 1
+        invalidatePendingOperations()
         isRunning = false
         sessions.removeAll()
         hasRestoreTarget = false
@@ -132,7 +151,7 @@ final class KeyboardSnapController: ObservableObject {
     }
 
     func suspend() {
-        lifecycleGeneration &+= 1
+        invalidatePendingOperations()
         isRunning = false
     }
 
@@ -143,6 +162,7 @@ final class KeyboardSnapController: ObservableObject {
 
     func invalidatePendingOperations() {
         lifecycleGeneration &+= 1
+        activeTicket?.invalidate()
     }
 
     func setDragGateClosed(_ closed: Bool) {
@@ -152,23 +172,25 @@ final class KeyboardSnapController: ObservableObject {
     }
 
     func isEligible(_ action: KeyboardSnapAction, for focused: RuntimeWindowSnapshot, layout snapshot: KeyboardLayoutSnapshot?) -> Bool {
-        if action == .restore { return sessions[focused.token.id] != nil }
+        if action == .restore {
+            guard let session = sessions[focused.token.id] else { return false }
+            return restoreFrame(for: session) != nil
+        }
         guard let snapshot else { return false }
         let session = sessions[focused.token.id]
-        let currentID = ZoneNavigator.resolvedCurrentID(session?.activeZoneID, frame: focused.frame, zones: snapshot.zones)
-        let request = ZoneNavigationRequest(
+        let currentAddress = Self.resolvedCurrentAddress(session?.activeAddress, frame: focused.frame,
+                                                         displays: snapshot.displayLayouts)
+        let request = MultiDisplayNavigationRequest(
             mode: layoutController.keyboardSettings.mode,
-            currentID: currentID,
+            currentAddress: currentAddress,
+            currentDisplay: snapshot.display.id,
             currentFrame: focused.frame,
-            zones: snapshot.zones,
-            workArea: snapshot.display.workArea,
+            displays: snapshot.displayLayouts,
             cycle: layoutController.keyboardSettings.cyclesAtEdges
         )
-        guard let target = ZoneNavigator.zone(for: action, request: request) else { return false }
-        guard target.id != currentID else { return false }
-        return Self.centerDistance(target.frame, focused.frame) > 2
-            || abs(target.frame.width - focused.frame.width) > 2
-            || abs(target.frame.height - focused.frame.height) > 2
+        guard let (address, target) = MultiDisplayNavigator.zone(for: action, request: request) else { return false }
+        guard address != currentAddress else { return false }
+        return !Self.framesMatch(target.frame, focused.frame)
     }
 
     var frontmostPID: pid_t? { environment.frontmostPID() }
@@ -214,27 +236,20 @@ final class KeyboardSnapController: ObservableObject {
             statusMessage = "No applied layout is available for the window's display."
             return
         }
-        var session = sessions[focused.token.id] ?? PlacementSession(
+        let existing = sessions[focused.token.id]
+        let sourceDisplay = snapshot.display
+        var session = existing ?? KeyboardPlacementSession(
             token: focused.token,
             originalFrame: focused.frame,
-            activeZoneID: nil
+            restoreAnchor: KeyboardRestoreAnchor(displayID: sourceDisplay.id, displayFrame: sourceDisplay.frame,
+                                          configurationFingerprint: layoutController.displayProvider.snapshot.fingerprint),
+            activeAddress: nil
         )
-        session.activeZoneID = ZoneNavigator.resolvedCurrentID(session.activeZoneID, frame: focused.frame, zones: snapshot.zones)
-        let request = ZoneNavigationRequest(
-            mode: layoutController.keyboardSettings.mode,
-            currentID: session.activeZoneID,
-            currentFrame: focused.frame,
-            zones: snapshot.zones,
-            workArea: snapshot.display.workArea,
-            cycle: layoutController.keyboardSettings.cyclesAtEdges
-        )
-        guard let zone = ZoneNavigator.zone(for: action, request: request) else {
-            statusMessage = action == .direction(.north) || action == .direction(.south)
-                ? "Up and Down are unavailable in zone-order mode."
-                : "There is no eligible zone in that direction."
-            return
-        }
-        if zone.id == session.activeZoneID {
+        guard let target = navigationTarget(action, focused: focused, snapshot: snapshot, session: session) else { return }
+        session = target.session
+        let targetAddress = target.address
+        let zone = target.zone
+        if targetAddress == session.activeAddress {
             statusMessage = "The window is already in zone \(zone.id.displayNumber)."
             return
         }
@@ -260,6 +275,14 @@ final class KeyboardSnapController: ObservableObject {
         sessions[focused.token.id] = session
         hasRestoreTarget = true
         do {
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard let ticket = validity.reserve(startDeadline: now + 2_000_000_000,
+                                                totalDeadline: now + 5_000_000_000) else {
+                statusMessage = "A window placement is already pending or in progress."
+                return
+            }
+            installActiveTicket(ticket, token: focused.token)
+            defer { finishActiveTicket(ticket) }
             let savedSettings = layoutController.keyboardSettings
             let preflight: @MainActor @Sendable () -> Bool = { [weak self] in
                 guard let self, self.isRunning, !self.dragGateClosed, self.lifecycleGeneration == generation,
@@ -269,13 +292,12 @@ final class KeyboardSnapController: ObservableObject {
                       self.layoutController.keyboardSettings == savedSettings else { return false }
                 return self.layoutController.isCurrent(snapshot, for: focused.frame)
             }
-            let actualFrame = try await backend.move(focused.token, to: zone.frame, preflight: preflight)
+            let actualFrame = try await backend.move(focused.token, to: zone.frame, ticket: ticket, preflight: preflight)
             guard Self.matches(actualFrame, zone.frame) else { throw KeyboardSnapError.readbackMismatch }
-            guard isRunning, lifecycleGeneration == generation else {
-                await discardProbeIfUnowned(focused.token)
-                return
+            guard preflight(), ticket.completeIfCurrent(now: DispatchTime.now().uptimeNanoseconds) else {
+                throw WindowManagementError.displayConfigurationChanged
             }
-            session.activeZoneID = zone.id
+            session.activeAddress = targetAddress
             sessions[focused.token.id] = session
             statusMessage = "Placed window in zone \(zone.id.displayNumber)."
         } catch {
@@ -293,15 +315,30 @@ final class KeyboardSnapController: ObservableObject {
             statusMessage = "The front window changed. Try Restore again."
             return
         }
+        guard let targetFrame = restoreFrame(for: session) else {
+            statusMessage = "Restore failed; the original frame is still saved. \(WindowManagementError.displayConfigurationChanged.localizedDescription)"
+            return
+        }
         do {
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard let ticket = validity.reserve(startDeadline: now + 2_000_000_000,
+                                                totalDeadline: now + 5_000_000_000) else {
+                statusMessage = "A window placement is already pending or in progress."
+                return
+            }
+            installActiveTicket(ticket, token: focused.token)
+            defer { finishActiveTicket(ticket) }
             let preflight: @MainActor @Sendable () -> Bool = { [weak self] in
                 guard let self, self.isRunning, !self.dragGateClosed, self.lifecycleGeneration == generation,
                       self.layoutController.keyboardSettings.isEnabled else { return false }
                 return self.frontmostPID == focused.token.pid && self.accessibilityIsTrusted
             }
-            let actualFrame = try await backend.restore(session.token, to: session.originalFrame, preflight: preflight)
-            guard Self.matches(actualFrame, session.originalFrame) else { throw KeyboardSnapError.readbackMismatch }
-            guard isRunning, lifecycleGeneration == generation else { return }
+            let actualFrame = try await backend.restore(session.token, to: targetFrame,
+                                                        ticket: ticket, preflight: preflight)
+            guard Self.matches(actualFrame, targetFrame) else { throw KeyboardSnapError.readbackMismatch }
+            guard preflight(), ticket.completeIfCurrent(now: DispatchTime.now().uptimeNanoseconds) else {
+                throw WindowManagementError.displayConfigurationChanged
+            }
             sessions.removeValue(forKey: focused.token.id)
             hasRestoreTarget = !sessions.isEmpty
             statusMessage = "Restored and verified the original window frame."
@@ -314,17 +351,100 @@ final class KeyboardSnapController: ObservableObject {
         }
     }
 
-    private static func centerDistance(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
-        hypot(lhs.midX - rhs.midX, lhs.midY - rhs.midY)
+}
+
+extension KeyboardSnapController {
+    private func navigationTarget(
+        _ action: KeyboardSnapAction,
+        focused: RuntimeWindowSnapshot,
+        snapshot: KeyboardLayoutSnapshot,
+        session: KeyboardPlacementSession
+    ) -> KeyboardNavigationTarget? {
+        var session = session
+        session.activeAddress = Self.resolvedCurrentAddress(session.activeAddress, frame: focused.frame,
+                                                            displays: snapshot.displayLayouts)
+        let request = MultiDisplayNavigationRequest(
+            mode: layoutController.keyboardSettings.mode,
+            currentAddress: session.activeAddress,
+            currentDisplay: snapshot.display.id,
+            currentFrame: focused.frame,
+            displays: snapshot.displayLayouts,
+            cycle: layoutController.keyboardSettings.cyclesAtEdges
+        )
+        guard let (address, zone) = MultiDisplayNavigator.zone(for: action, request: request) else {
+            let message = action == .direction(.north) || action == .direction(.south)
+                ? "Up and Down are unavailable in zone-order mode."
+                : "There is no eligible zone in that direction."
+            statusMessage = message
+            return nil
+        }
+        guard address != session.activeAddress else {
+            statusMessage = "The window is already in zone \(zone.id.displayNumber)."
+            return nil
+        }
+        return KeyboardNavigationTarget(session: session, address: address, zone: zone)
     }
 
-    private static func matches(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+    private func installActiveTicket(_ ticket: PlacementCommitTicket, token: RuntimeWindowToken) {
+        activeTicket = ticket
+        activeTicketToken = token
+    }
+
+    private func finishActiveTicket(_ ticket: PlacementCommitTicket) {
+        ticket.finish()
+        if activeTicket === ticket {
+            activeTicket = nil
+            activeTicketToken = nil
+        }
+    }
+
+    private func invalidateActiveTicket(for pid: pid_t) {
+        guard activeTicketToken?.pid == pid else { return }
+        activeTicket?.invalidate()
+    }
+
+    private func restoreFrame(for session: KeyboardPlacementSession) -> CGRect? {
+        let snapshot = layoutController.refreshDisplays()
+        let original = session.originalFrame
+        guard DisplayGeometry.isFinite(original), original.width > 0, original.height > 0 else { return nil }
+        if snapshot.fingerprint == session.restoreAnchor.configurationFingerprint { return original }
+        guard let display = snapshot.displays.first(where: { $0.id == session.restoreAnchor.displayID }) else { return nil }
+        let deltaX = display.frame.minX - session.restoreAnchor.displayFrame.minX
+        let deltaY = display.frame.minY - session.restoreAnchor.displayFrame.minY
+        let frame = original.offsetBy(dx: deltaX, dy: deltaY)
+        guard DisplayGeometry.isFinite(frame), frame.width > 0, frame.height > 0,
+              display.workArea.contains(frame) else { return nil }
+        return frame
+    }
+
+    static func resolvedCurrentAddress(_ address: ZoneAddress?, frame: CGRect,
+                                       displays: [KeyboardDisplayLayout]) -> ZoneAddress? {
+        if let address,
+           let display = displays.first(where: { $0.display.selectionKey == address.workArea }),
+           let zone = display.zones.first(where: { $0.id == address.zoneID }),
+           framesMatch(zone.frame, frame) { return address }
+        let matches = displays.flatMap { display in
+            display.zones.filter { framesMatch($0.frame, frame) }
+                .map { ZoneAddress(workArea: display.display.selectionKey, zoneID: $0.id) }
+        }
+        return matches.sorted {
+            let left = String(describing: $0.workArea.display)
+            let right = String(describing: $1.workArea.display)
+            return left == right ? $0.zoneID.rawValue < $1.zoneID.rawValue : left < right
+        }.first
+    }
+
+    static func matches(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
         [lhs.minX - rhs.minX, lhs.minY - rhs.minY, lhs.width - rhs.width, lhs.height - rhs.height]
             .allSatisfy { $0.isFinite && abs($0) <= 2 }
     }
 
+    static func framesMatch(_ lhs: CGRect, _ rhs: CGRect) -> Bool { matches(lhs, rhs) }
+
     func discardProcess(_ pid: pid_t) async {
         lifecycleGeneration &+= 1
+        invalidateActiveTicket(for: pid)
+        invalidateActiveTicket(for: pid)
         let removed = sessions.values.filter { $0.token.pid == pid }.map(\.token)
         sessions = sessions.filter { $0.value.token.pid != pid }
         hasRestoreTarget = !sessions.isEmpty

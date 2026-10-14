@@ -14,13 +14,13 @@ struct DragEnvironment {
     var displayFingerprint: @MainActor () -> String
     var now: @MainActor () -> UInt64
 
-    static func live() -> DragEnvironment {
-        let displays = DisplayProvider()
+    static func live(displayProvider: DisplayProvider? = nil) -> DragEnvironment {
+        let displays = displayProvider ?? DisplayProvider()
         return DragEnvironment(inputGranted: { CGPreflightListenEventAccess() }, accessibilityGranted: { AXIsProcessTrusted() },
                                requestInput: { CGRequestListenEventAccess() }, requestAccessibility: {
                                    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true as CFBoolean] as CFDictionary
                                    _ = AXIsProcessTrustedWithOptions(options)
-                               }, buttonsReleased: { NSEvent.pressedMouseButtons == 0 }, displayFingerprint: { displays.refresh().fingerprint },
+                               }, buttonsReleased: { NSEvent.pressedMouseButtons == 0 }, displayFingerprint: { displays.snapshot.fingerprint },
                                now: { DispatchTime.now().uptimeNanoseconds })
     }
 }
@@ -91,9 +91,10 @@ final class DragDetectionController: ObservableObject {
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
 
     init(reader: any DragWindowReading, monitor: (any DragInputMonitoring)? = nil,
-         environment: DragEnvironment? = nil, ownPID: pid_t = ProcessInfo.processInfo.processIdentifier, installsObservers: Bool = true) {
+         environment: DragEnvironment? = nil, displayProvider: DisplayProvider? = nil,
+         ownPID: pid_t = ProcessInfo.processInfo.processIdentifier, installsObservers: Bool = true) {
         self.reader = reader; self.monitor = monitor ?? InputMonitor()
-        self.environment = environment ?? .live(); self.ownPID = ownPID; self.installsObservers = installsObservers
+        self.environment = environment ?? .live(displayProvider: displayProvider); self.ownPID = ownPID; self.installsObservers = installsObservers
     }
 
     var cleanupRequestCount: Int { cleanupQueue.count }

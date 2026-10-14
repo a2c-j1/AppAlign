@@ -273,78 +273,65 @@ actor AccessibilityWindowRuntime: KeyboardWindowOperating {
     var lastWriteEndNanoseconds: UInt64 = 0
     let repository = WindowRepository(messagingTimeout: 0.5)
     let mover = WindowMover(messagingTimeout: 0.5, retryLimit: 1)
+    let focusedWindowProvider: @Sendable (pid_t) throws -> AXWindow
+    let focusedWindowValidator: @Sendable (AXWindow) throws -> Void
+    let frontmostPIDProvider: @Sendable () -> pid_t?
+    let accessibilityTrustedProvider: @Sendable () -> Bool
+
+    init(focusedWindowProvider: (@Sendable (pid_t) throws -> AXWindow)? = nil,
+         focusedWindowValidator: (@Sendable (AXWindow) throws -> Void)? = nil,
+         frontmostPIDProvider: (@Sendable () -> pid_t?)? = nil,
+         accessibilityTrustedProvider: (@Sendable () -> Bool)? = nil) {
+        self.focusedWindowProvider = focusedWindowProvider ?? { pid in
+            try WindowRepository(messagingTimeout: 0.5).focusedWindow(applicationPID: pid)
+        }
+        self.focusedWindowValidator = focusedWindowValidator ?? { window in
+            try WindowFilter(ownPID: ProcessInfo.processInfo.processIdentifier).validate(window)
+        }
+        self.frontmostPIDProvider = frontmostPIDProvider ?? { NSWorkspace.shared.frontmostApplication?.processIdentifier }
+        self.accessibilityTrustedProvider = accessibilityTrustedProvider ?? { AXIsProcessTrusted() }
+    }
 }
 
 extension AccessibilityWindowRuntime {
-    func discardProcess(_ pid: pid_t) async {
-        let removedRecords = records.values.filter { $0.window.pid == pid }
-        records = records.filter { $0.value.window.pid != pid }
-        for registration in removedRecords.compactMap(\.observerRegistration) {
-            registration.invalidate()
+    static func stringAttribute(_ attribute: CFString, from element: AXUIElement, timeout: Float = 0.5) throws -> String? {
+        let timeout = AXUIElementSetMessagingTimeout(element, timeout)
+        guard timeout == .success else { throw WindowManagementError.readFailed(attribute: "messaging timeout", code: timeout.rawValue) }
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
+        if result == .noValue || result == .attributeUnsupported { return nil }
+        guard result == .success else { throw WindowManagementError.readFailed(attribute: attribute as String, code: result.rawValue) }
+        return value as? String
+    }
+
+    static func associatedWindow(for element: AXUIElement, timeout: Float) throws -> AXUIElement? {
+        let timeoutResult = AXUIElementSetMessagingTimeout(element, timeout)
+        guard timeoutResult == .success else {
+            throw WindowManagementError.readFailed(attribute: "messaging timeout", code: timeoutResult.rawValue)
+        }
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &value)
+        if result == .noValue || result == .attributeUnsupported { return nil }
+        guard result == .success else {
+            throw WindowManagementError.readFailed(attribute: kAXWindowAttribute as String, code: result.rawValue)
+        }
+        guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            throw WindowManagementError.invalidAttribute(attribute: kAXWindowAttribute as String)
+        }
+        // The type id is checked directly above.
+        // swiftlint:disable:next force_cast
+        return value as! AXUIElement
+    }
+
+    static func configure(_ element: AXUIElement, before deadline: UInt64) throws {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard now < deadline else { throw WindowManagementError.operationFailed }
+        let remaining = Float(deadline - now) / 1_000_000_000
+        let timeout = AXUIElementSetMessagingTimeout(element, min(0.5, remaining))
+        guard timeout == .success else {
+            throw WindowManagementError.readFailed(attribute: "messaging timeout", code: timeout.rawValue)
         }
     }
-
-    func focusedWindow(applicationPID: pid_t, ownPID: pid_t) async throws -> RuntimeWindowSnapshot {
-        guard applicationPID != ownPID else {
-            throw WindowManagementError.excludedWindow(reason: "AppAlign cannot move its own windows")
-        }
-        let focused = try repository.focusedWindow(applicationPID: applicationPID)
-        try WindowFilter(ownPID: ownPID).validate(focused)
-        let frame = try focused.frame()
-        guard Self.isFinite(frame), frame.width > 0, frame.height > 0 else {
-            throw WindowManagementError.invalidFocusedWindow
-        }
-
-        if let match = records.first(where: { $0.value.window.pid == focused.pid && CFEqual($0.value.window.element, focused.element) }) {
-            return RuntimeWindowSnapshot(token: RuntimeWindowToken(id: match.key, pid: focused.pid), frame: frame)
-        }
-        if records.count >= 128,
-           let oldest = records.keys.first(where: { !Self.isOwned(records[$0]) }) {
-            records.removeValue(forKey: oldest)
-        }
-        guard records.count < 128 else { throw WindowManagementError.invalidFocusedWindow }
-        let id = UUID()
-        records[id] = Record(window: focused)
-        return RuntimeWindowSnapshot(token: RuntimeWindowToken(id: id, pid: focused.pid), frame: frame)
-    }
-
-    func retain(_ token: RuntimeWindowToken) async {
-        guard var record = records[token.id], record.window.pid == token.pid else { return }
-        record.ownership.retainKeyboard()
-        records[token.id] = record
-    }
-
-    func move(
-        _ token: RuntimeWindowToken,
-        to frame: CGRect,
-        preflight: @MainActor @Sendable () -> Bool
-    ) async throws -> CGRect {
-        try await withCurrentFocusedWindow(token, preflight: preflight) { window in try mover.move(window, to: frame).actualFrame }
-    }
-
-    func restore(
-        _ token: RuntimeWindowToken,
-        to frame: CGRect,
-        preflight: @MainActor @Sendable () -> Bool
-    ) async throws -> CGRect {
-        try await withCurrentFocusedWindow(token, preflight: preflight) { window in try mover.move(window, to: frame).actualFrame }
-    }
-
-    func discard(_ token: RuntimeWindowToken) async {
-        guard var record = records[token.id], record.window.pid == token.pid else { return }
-        record.ownership.discardKeyboard()
-        if !record.ownership.isOwned { records.removeValue(forKey: token.id) } else { records[token.id] = record }
-    }
-
-    func shutdown() async {
-        let registrations = records.values.compactMap(\.observerRegistration)
-        records.removeAll()
-        for registration in registrations {
-            registration.invalidate()
-        }
-    }
-
-    func isWriteInProgress() async -> Bool { writeInProgress }
 
     func window(at point: CGPoint, ownPID: pid_t, downTimestamp: UInt64) async throws -> DragWindowSnapshot {
         guard downTimestamp > lastWriteEndNanoseconds else { throw WindowManagementError.displayConfigurationChanged }
@@ -539,47 +526,6 @@ extension AccessibilityWindowRuntime {
         releaseOwnership(id: token.id) { $0.releaseDragCommit(commitID) }
     }
 
-    private static func stringAttribute(_ attribute: CFString, from element: AXUIElement, timeout: Float = 0.5) throws -> String? {
-        let timeout = AXUIElementSetMessagingTimeout(element, timeout)
-        guard timeout == .success else { throw WindowManagementError.readFailed(attribute: "messaging timeout", code: timeout.rawValue) }
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
-        if result == .noValue || result == .attributeUnsupported { return nil }
-        guard result == .success else { throw WindowManagementError.readFailed(attribute: attribute as String, code: result.rawValue) }
-        return value as? String
-    }
-
-    private static func associatedWindow(for element: AXUIElement, timeout: Float) throws -> AXUIElement? {
-        let timeoutResult = AXUIElementSetMessagingTimeout(element, timeout)
-        guard timeoutResult == .success else {
-            throw WindowManagementError.readFailed(attribute: "messaging timeout", code: timeoutResult.rawValue)
-        }
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &value)
-        if result == .noValue || result == .attributeUnsupported { return nil }
-        guard result == .success else {
-            throw WindowManagementError.readFailed(attribute: kAXWindowAttribute as String, code: result.rawValue)
-        }
-        guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
-            throw WindowManagementError.invalidAttribute(attribute: kAXWindowAttribute as String)
-        }
-        // The type id is checked directly above.
-        // swiftlint:disable:next force_cast
-        return value as! AXUIElement
-    }
-
-    private static func remainingTimeout(before deadline: UInt64) throws -> Float {
-        let now = DispatchTime.now().uptimeNanoseconds
-        guard now < deadline else { throw WindowManagementError.operationFailed }
-        return Float(deadline - now) / 1_000_000_000
-    }
-
-    private static func configure(_ element: AXUIElement, before deadline: UInt64) throws {
-        let timeout = AXUIElementSetMessagingTimeout(element, min(0.5, try remainingTimeout(before: deadline)))
-        guard timeout == .success else {
-            throw WindowManagementError.readFailed(attribute: "messaging timeout", code: timeout.rawValue)
-        }
-    }
 }
 
 extension AccessibilityWindowRuntime: DragWindowReading {}

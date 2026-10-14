@@ -81,8 +81,13 @@ struct DisplaySnapshot: Equatable, Sendable {
     let primaryFrame: CGRect
 
     var fingerprint: String {
-        displays.map {
-            "\($0.runtimeID.rawValue):\($0.frame.origin.x),\($0.frame.origin.y),\($0.frame.width),\($0.frame.height):\($0.workArea.origin.x),\($0.workArea.origin.y),\($0.workArea.width),\($0.workArea.height):\($0.backingScaleFactor)"
+        let displayFingerprints = displays.map {
+            let frame = $0.frame
+            let workArea = $0.workArea
+            let frameGeometry = "\(frame.origin.x),\(frame.origin.y),\(frame.width),\(frame.height)"
+            let workAreaGeometry = "\(workArea.origin.x),\(workArea.origin.y),\(workArea.width),\(workArea.height)"
+            return "\($0.id):\($0.runtimeID.rawValue):\(frameGeometry):\(workAreaGeometry):\($0.backingScaleFactor)"
         }.joined(separator: "|")
+        return "primary:\(primaryFrame.origin.x),\(primaryFrame.origin.y),\(primaryFrame.width),\(primaryFrame.height)|\(displayFingerprints)"
     }
 }

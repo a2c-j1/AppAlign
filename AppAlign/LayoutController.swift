@@ -62,14 +62,19 @@ final class LayoutController: ObservableObject {
     var keyboardSettingsRevision: UInt64 = 0
     var keyboardSettingsRetrySnapshot: [String: PersistedSetting]?
     var dragLayoutRevision: UInt64 = 0
+    let placementValidity: PlacementValidity
     var dragSettings = DragSettings()
     var dragSettingsRetrySnapshot: [String: PersistedSetting]?
     var dragSettingsRevision: UInt64 = 0
     var invalidateDragCommit: (@MainActor () -> Void)?
     var lastDragDisplaySnapshot: DisplaySnapshot?
+    var lastDragCursorDisplayID: DisplaySelectionID?
+    var refreshConfiguration: (@MainActor () -> DisplaySnapshot)?
 
-    init(displayProvider: DisplayProvider = DisplayProvider(), storeCoordinator: PersistentStoreCoordinator? = nil) {
+    init(displayProvider: DisplayProvider = DisplayProvider(), storeCoordinator: PersistentStoreCoordinator? = nil,
+         placementValidity: PlacementValidity = PlacementValidity()) {
         self.displayProvider = displayProvider
+        self.placementValidity = placementValidity
         if let storeCoordinator {
             self.storeCoordinator = storeCoordinator
         } else if let directory = Self.applicationStoreDirectory() {
@@ -83,9 +88,6 @@ final class LayoutController: ObservableObject {
         recalculate()
     }
 
-    var selectedDisplay: Display? {
-        displayProvider.snapshot.displays.first { $0.id == selectedDisplayID }
-    }
     func loadPersistentState() async {
         guard !persistenceReady, !loadInProgress else { return }
         guard let storeCoordinator else {
@@ -121,15 +123,12 @@ final class LayoutController: ObservableObject {
         showLayoutForSelectedDisplay()
     }
 
-    @discardableResult
-    func refreshDisplays() -> DisplaySnapshot {
+    func displaysDidPublish(_ result: DisplaySnapshot) {
         let previous = selectedDisplayID
-        let result = displayProvider.refresh()
         if !result.displays.contains(where: { $0.id == selectedDisplayID }) {
             selectedDisplayID = result.displays.first(where: \.isPrimary)?.id
         }
         if selectedDisplayID != previous { showLayoutForSelectedDisplay() } else { recalculate() }
-        return result
     }
     func recalculate() {
         invalidateAppliedDragLayout()
