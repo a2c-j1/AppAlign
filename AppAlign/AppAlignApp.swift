@@ -1,4 +1,6 @@
 import AppKit
+import Combine
+import CoreGraphics
 import SwiftUI
 
 @main
@@ -8,6 +10,7 @@ struct AppAlignApp: App {
     @StateObject private var layoutController: LayoutController
     @StateObject private var keyboardSnapController: KeyboardSnapController
     @StateObject private var globalHotkeys: GlobalHotkeys
+    @StateObject private var layoutHotkeys: LayoutHotkeys
     @StateObject private var dragDetectionController: DragDetectionController
     @StateObject private var dragSnapController: DragSnapController
 
@@ -20,10 +23,17 @@ struct AppAlignApp: App {
                                             refreshDisplayConfiguration: { layout.refreshDisplays() })
         let runtime = AccessibilityWindowRuntime()
         let keyboard = KeyboardSnapController(layoutController: layout, backend: runtime)
-        let drag = DragDetectionController(reader: runtime, displayProvider: displayProvider)
+        let inbox = OrderedInteractionInbox()
+        let input = InputMonitor(inbox: inbox)
+        let drag = DragDetectionController(reader: runtime, monitor: input, displayProvider: displayProvider)
         let hotkeys = GlobalHotkeys(layoutController: layout, snapController: keyboard)
         let dragSnap = DragSnapController(layoutController: layout, runtime: runtime)
-        let gate = DragKeyboardGate(keyboard: keyboard, hotkeys: hotkeys)
+        let layoutHotkeys = LayoutHotkeys(layoutController: layout, inbox: inbox) { layoutID, point, flags in
+            guard layout.applyQuickLayout(layoutID, at: point) != nil else { return }
+            keyboard.resetNavigationHistory()
+            dragSnap.reselectAfterQuickSwitch(point: point, flags: flags)
+        }
+        let gate = DragKeyboardGate(keyboard: keyboard, hotkeys: hotkeys, layoutHotkeys: layoutHotkeys)
         let displayConfiguration = DisplayConfigurationController(layout: layout, drag: dragSnap,
                                                                   detection: drag, keyboard: keyboard, gate: gate)
         drag.dragGateChanged = { gate.setDrag($0) }
@@ -41,20 +51,44 @@ struct AppAlignApp: App {
         _placementController = StateObject(wrappedValue: placement)
         _keyboardSnapController = StateObject(wrappedValue: keyboard)
         _globalHotkeys = StateObject(wrappedValue: hotkeys)
+        _layoutHotkeys = StateObject(wrappedValue: layoutHotkeys)
         _dragDetectionController = StateObject(wrappedValue: drag)
         _dragSnapController = StateObject(wrappedValue: dragSnap)
         let delegate = appDelegate
         delegate.layoutController = layout
         delegate.globalHotkeys = hotkeys
+        delegate.layoutHotkeys = layoutHotkeys
         delegate.keyboardSnapController = keyboard
         delegate.dragDetectionController = drag
         delegate.dragSnapController = dragSnap
         delegate.displayConfigurationController = displayConfiguration
+        delegate.keyboardFlagsMonitor = input
+        delegate.flagsObservation = layout.$keyboardSettings
+            .map(\.isEnabled)
+            .removeDuplicates()
+            .sink { _ in
+                Task { @MainActor [weak delegate] in
+                    guard let delegate, !delegate.isTerminating else { return }
+                    delegate.refreshKeyboardFlagsObservation?()
+                }
+            }
+        delegate.refreshKeyboardFlagsObservation = {
+            guard !delegate.isTerminating else { keyboard.setExtensionFlagsAvailable(false); return }
+            guard layout.keyboardSettings.isEnabled else {
+                input.setFlagsObserver(nil)
+                keyboard.setExtensionFlagsAvailable(false)
+                return
+            }
+            input.setFlagsObserver({ flags in
+                keyboard.extensionModifierFlagsChanged(flags)
+            }, onStatus: { keyboard.flagsMonitorStatus($0) })
+        }
         Task { @MainActor in
             await layout.loadPersistentState()
             guard !delegate.isTerminating else { return }
             displayConfiguration.start()
             hotkeys.start()
+            layoutHotkeys.start()
         }
     }
 
@@ -65,16 +99,18 @@ struct AppAlignApp: App {
                 .environmentObject(layoutController)
                 .environmentObject(keyboardSnapController)
                 .environmentObject(globalHotkeys)
+                .environmentObject(layoutHotkeys)
                 .environmentObject(dragDetectionController)
                 .environmentObject(dragSnapController)
                 .task {
                     appDelegate.layoutController = layoutController
                     appDelegate.globalHotkeys = globalHotkeys
+                    appDelegate.layoutHotkeys = layoutHotkeys
                     appDelegate.keyboardSnapController = keyboardSnapController
                     appDelegate.dragDetectionController = dragDetectionController
                     appDelegate.dragSnapController = dragSnapController
                     if !layoutController.persistenceReady { await layoutController.loadPersistentState() }
-                    if !appDelegate.isTerminating { globalHotkeys.settingsDidChange() }
+                    if !appDelegate.isTerminating { globalHotkeys.settingsDidChange(); layoutHotkeys.settingsDidChange() }
                 }
                 .onAppear {
                     placementController.menuDidOpen()
@@ -87,16 +123,18 @@ struct AppAlignApp: App {
                 .environmentObject(layoutController)
                 .environmentObject(keyboardSnapController)
                 .environmentObject(globalHotkeys)
+                .environmentObject(layoutHotkeys)
                 .environmentObject(dragDetectionController)
                 .environmentObject(dragSnapController)
                 .task {
                     appDelegate.layoutController = layoutController
                     appDelegate.globalHotkeys = globalHotkeys
+                    appDelegate.layoutHotkeys = layoutHotkeys
                     appDelegate.keyboardSnapController = keyboardSnapController
                     appDelegate.dragDetectionController = dragDetectionController
                     appDelegate.dragSnapController = dragSnapController
                     if !layoutController.persistenceReady { await layoutController.loadPersistentState() }
-                    if !appDelegate.isTerminating { globalHotkeys.settingsDidChange() }
+                    if !appDelegate.isTerminating { globalHotkeys.settingsDidChange(); layoutHotkeys.settingsDidChange() }
                 }
         }
     }
@@ -107,6 +145,10 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
     private(set) var isTerminating = false
     weak var layoutController: LayoutController?
     weak var globalHotkeys: GlobalHotkeys?
+    weak var layoutHotkeys: LayoutHotkeys?
+    weak var keyboardFlagsMonitor: InputMonitor?
+    var flagsObservation: AnyCancellable?
+    var refreshKeyboardFlagsObservation: (@MainActor () -> Void)?
     weak var keyboardSnapController: KeyboardSnapController?
     weak var dragDetectionController: DragDetectionController?
     weak var dragSnapController: DragSnapController?
@@ -114,8 +156,13 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         isTerminating = true
+        flagsObservation?.cancel()
+        flagsObservation = nil
         displayConfigurationController?.shutdown()
         globalHotkeys?.shutdown()
+        layoutHotkeys?.shutdown()
+        keyboardFlagsMonitor?.setFlagsObserver(nil)
+        keyboardSnapController?.setExtensionFlagsAvailable(false)
         dragDetectionController?.shutdownForQuit()
         keyboardSnapController?.suspend()
         Task { @MainActor [weak self] in
@@ -149,7 +196,18 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
                 displayConfigurationController?.cancelQuit()
                 keyboardSnapController?.resume()
                 globalHotkeys?.start()
+                layoutHotkeys?.start()
                 dragDetectionController?.resumeAfterCancelledQuit()
+                refreshKeyboardFlagsObservation?()
+                flagsObservation = layoutController.$keyboardSettings
+                    .map(\.isEnabled)
+                    .removeDuplicates()
+                    .sink { [weak self] _ in
+                        Task { @MainActor [weak self] in
+                            guard let self, !self.isTerminating else { return }
+                            self.refreshKeyboardFlagsObservation?()
+                        }
+                    }
             } else {
                 await keyboardSnapController?.shutdown()
             }

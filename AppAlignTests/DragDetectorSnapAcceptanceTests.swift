@@ -10,12 +10,13 @@ private struct WiredDragSnapFlow {
     let overlay: FakeZoneOverlay
     private let gate: TestDragGate
 
-    init() {
+    init(storeCoordinator: PersistentStoreCoordinator? = nil) {
         let fixture = DragFixture()
         let display = Display(runtimeID: RuntimeDisplayID(rawValue: 1), persistentID: PersistentDisplayID(uuid: UUID()),
                               sessionID: UUID(), name: "Acceptance display", frame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
                               workArea: CGRect(x: 0, y: 0, width: 1_000, height: 800), isPrimary: true, backingScaleFactor: 1)
-        let layout = LayoutController(displayProvider: DisplayProvider(snapshot: DisplaySnapshot(displays: [display], primaryFrame: display.frame)))
+        let layout = LayoutController(displayProvider: DisplayProvider(snapshot: DisplaySnapshot(displays: [display], primaryFrame: display.frame)),
+                                      storeCoordinator: storeCoordinator)
         let overlay = FakeZoneOverlay()
         let snap = DragSnapController(layoutController: layout, runtime: fixture.reader, overlay: overlay)
         let gate = TestDragGate()
@@ -96,7 +97,7 @@ final class DragFinalReleaseAcceptanceTests: XCTestCase {
         let firstPoint = CGPoint(x: firstZone.frame.midX, y: firstZone.frame.midY)
         flow.sendShift(at: CGPoint(x: 10, y: 0), down: true)
         try await flow.drag(to: firstPoint)
-        XCTAssertEqual(flow.overlay.selected, firstZone.id)
+        XCTAssertEqual(flow.overlay.selected, [firstZone.id])
 
         flow.finish(at: CGPoint(x: -100, y: -100))
         try await flow.assertDrained()
@@ -115,7 +116,7 @@ final class DragFinalReleaseAcceptanceTests: XCTestCase {
         let secondPoint = CGPoint(x: secondZone.frame.midX, y: secondZone.frame.midY)
         flow.sendShift(at: CGPoint(x: 10, y: 0), down: true)
         try await flow.drag(to: firstPoint)
-        XCTAssertEqual(flow.overlay.selected, firstZone.id)
+        XCTAssertEqual(flow.overlay.selected, [firstZone.id])
 
         flow.finish(at: secondPoint)
         try await spin { await flow.fixture.reader.commitCount == 1 }
@@ -128,6 +129,61 @@ final class DragFinalReleaseAcceptanceTests: XCTestCase {
         XCTAssertNotEqual(firstZone.frame, secondZone.frame)
         XCTAssertFalse(flow.overlay.isVisible)
         flow.fixture.stop()
+    }
+
+    @MainActor
+    func testAcceptedLayoutSwitchBarrierThenImmediateUpUsesFreshLayout() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Issue10QuickSwitch-\(UUID().uuidString)", isDirectory: true)
+        let coordinator = PersistentStoreCoordinator(directory: directory)
+        let layoutID = UUID()
+        let nextLayout = PersistedLayout(
+            id: layoutID,
+            definition: .grid(GridLayout(id: LayoutID(rawValue: layoutID), rows: 1, columns: 2,
+                                         rowPercentages: [10_000], columnPercentages: [5_000, 5_000],
+                                         cellChildMap: [[3, 9]])),
+            spacing: 0, template: .columns, zoneCount: 2, name: "Quick Layout")
+        try await coordinator.saveLayoutAndAssignments([PersistentStoreCoordinator.defaultLayout(), nextLayout], [])
+        let flow = WiredDragSnapFlow(storeCoordinator: coordinator)
+        defer {
+            flow.fixture.stop()
+            try? FileManager.default.removeItem(at: directory)
+        }
+        await flow.layout.loadPersistentState()
+        XCTAssertTrue(flow.layout.persistenceReady)
+
+        try await flow.startMoving()
+        let point = CGPoint(x: 250, y: 200)
+        flow.sendShift(at: point, down: true)
+        let oldSnapshot = try XCTUnwrap(flow.layout.appliedDragLayoutSnapshot(at: point))
+        let oldRevision = oldSnapshot.placementRevision
+
+        let inbox = OrderedInteractionInbox()
+        let switchAccepted = expectation(description: "layout switch accepted before release")
+        XCTAssertTrue(inbox.enqueueControl {
+            XCTAssertNotNil(flow.layout.applyQuickLayout(nextLayout.id, at: point))
+            flow.snap.reselectAfterQuickSwitch(point: point, flags: CGEventFlags.maskShift.rawValue)
+            switchAccepted.fulfill()
+        })
+        await fulfillment(of: [switchAccepted], timeout: 2)
+
+        let newSnapshot = try XCTUnwrap(flow.layout.appliedDragLayoutSnapshot(at: point))
+        XCTAssertEqual(newSnapshot.layout.id, nextLayout.id)
+        XCTAssertNotEqual(newSnapshot.placementRevision, oldRevision)
+        let selected = try XCTUnwrap(ZoneSelectionEngine.selectZones(point: point, zones: newSnapshot.zones,
+                                                                      workArea: newSnapshot.display.workArea,
+                                                                      radius: CGFloat(flow.layout.dragSettings.selectionRadius),
+                                                                      strategy: .smallest))
+        let expectedFrame = try XCTUnwrap(ZoneSelectionEngine.union(of: selected.map(\.frame)))
+
+        // This release is the first input after the accepted control barrier.
+        flow.finish(at: point)
+        try await spin { await flow.fixture.reader.commitCount == 1 }
+        try await spin { !flow.snap.isCommitting }
+        try await flow.assertDrained()
+        let actualFrame = await flow.fixture.reader.currentFrameValue()
+        XCTAssertEqual(actualFrame, expectedFrame)
+        let writes = await flow.fixture.reader.commitCount
+        XCTAssertEqual(writes, 1)
     }
 }
 
@@ -213,5 +269,115 @@ final class DragDetectorCancellationAcceptanceTests: XCTestCase {
         case .quit:
             flow.fixture.controller.shutdownForQuit()
         }
+    }
+}
+
+extension DragFinalReleaseAcceptanceTests {
+    @MainActor
+    func testQuickSwitchSaveFailureKeepsMovingGestureAndFreshDrop() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Issue10QuickSwitchFailure-\(UUID().uuidString)", isDirectory: true)
+        let access = Issue10QuickSwitchFileAccess()
+        let coordinator = PersistentStoreCoordinator(directory: directory, fileAccess: access)
+        let layoutID = UUID()
+        let nextLayout = PersistedLayout(
+            id: layoutID,
+            definition: .grid(GridLayout(id: LayoutID(rawValue: layoutID), rows: 1, columns: 2,
+                                         rowPercentages: [10_000], columnPercentages: [5_000, 5_000],
+                                         cellChildMap: [[3, 9]])),
+            spacing: 0, template: .columns, zoneCount: 2, name: "Quick Layout")
+        try await coordinator.saveLayoutAndAssignments([PersistentStoreCoordinator.defaultLayout(), nextLayout], [])
+        access.failNextAssignmentWrite()
+        let flow = WiredDragSnapFlow(storeCoordinator: coordinator)
+        defer {
+            flow.fixture.stop()
+            try? FileManager.default.removeItem(at: directory)
+        }
+        await flow.layout.loadPersistentState()
+        try await flow.startMoving()
+
+        let point = CGPoint(x: 250, y: 200)
+        flow.sendShift(at: point, down: true)
+        let inbox = OrderedInteractionInbox()
+        let switchAccepted = expectation(description: "quick switch accepted before failed save")
+        XCTAssertTrue(inbox.enqueueControl {
+            XCTAssertNotNil(flow.layout.applyQuickLayout(nextLayout.id, at: point))
+            flow.snap.reselectAfterQuickSwitch(point: point, flags: CGEventFlags.maskShift.rawValue)
+            switchAccepted.fulfill()
+        })
+        await fulfillment(of: [switchAccepted], timeout: 2)
+        await flow.layout.saveChain?.value
+
+        XCTAssertTrue(flow.layout.canRetrySave)
+        XCTAssertEqual(flow.layout.appliedDragLayoutSnapshot(at: point)?.layout.id, nextLayout.id)
+        XCTAssertTrue(flow.overlay.isVisible, "A failed persistence recovery must keep the active gesture selection visible.")
+        let snapshot = try XCTUnwrap(flow.layout.appliedDragLayoutSnapshot(at: point))
+        let selected = try XCTUnwrap(ZoneSelectionEngine.selectZones(point: point, zones: snapshot.zones,
+                                                                      workArea: snapshot.display.workArea,
+                                                                      radius: CGFloat(flow.layout.dragSettings.selectionRadius),
+                                                                      strategy: .smallest))
+        let expectedFrame = try XCTUnwrap(ZoneSelectionEngine.union(of: selected.map(\.frame)))
+
+        flow.finish(at: point)
+        try await spin { await flow.fixture.reader.commitCount == 1 }
+        try await spin { !flow.snap.isCommitting }
+        try await flow.assertDrained()
+        let actualFrame = await flow.fixture.reader.currentFrameValue()
+        let writes = await flow.fixture.reader.commitCount
+        XCTAssertEqual(actualFrame, expectedFrame)
+        XCTAssertEqual(writes, 1)
+    }
+}
+
+private final class Issue10QuickSwitchFileAccess: AtomicFileAccess, @unchecked Sendable {
+    private let lock = NSLock()
+    private var shouldFailAssignmentWrite = false
+
+    func failNextAssignmentWrite() {
+        lock.withLock { shouldFailAssignmentWrite = true }
+    }
+
+    func read(_ url: URL) throws -> Data? {
+        try LocalAtomicFileAccess().read(url)
+    }
+
+    func writeAtomically(_ data: Data, to url: URL) throws {
+        let shouldFail = lock.withLock {
+            guard shouldFailAssignmentWrite, url.lastPathComponent == "assignments.json" else { return false }
+            shouldFailAssignmentWrite = false
+            return true
+        }
+        if shouldFail { throw CocoaError(.fileWriteUnknown) }
+        try LocalAtomicFileAccess().writeAtomically(data, to: url)
+    }
+}
+
+extension DragFinalReleaseAcceptanceTests {
+    @MainActor
+    func testRangeModifierReleaseWhileShiftInactiveStartsANewAnchor() async throws {
+        let flow = WiredDragSnapFlow()
+        defer { flow.fixture.stop() }
+        try await flow.startMoving()
+        let (anchorZone, targetZone) = try flow.zones()
+        let anchor = CGPoint(x: anchorZone.frame.midX, y: anchorZone.frame.midY)
+        let target = CGPoint(x: targetZone.frame.midX, y: targetZone.frame.midY)
+        let shift = CGEventFlags.maskShift.rawValue
+        let option = CGEventFlags.maskAlternate.rawValue
+
+        flow.fixture.send(.flagsChanged, gesture: 1, point: anchor, flags: shift | option)
+        XCTAssertTrue(flow.overlay.isVisible)
+        flow.fixture.send(.flagsChanged, gesture: 1, point: anchor, flags: option)
+        XCTAssertFalse(flow.overlay.isVisible)
+        flow.fixture.send(.flagsChanged, gesture: 1, point: anchor, flags: 0)
+        flow.fixture.send(.flagsChanged, gesture: 1, point: target, flags: option)
+        flow.fixture.send(.leftDragged, gesture: 1, point: target, flags: option)
+        flow.fixture.send(.flagsChanged, gesture: 1, point: target, flags: option | shift)
+        XCTAssertTrue(flow.overlay.isVisible)
+
+        flow.fixture.send(.leftUp, gesture: 1, point: target, flags: option | shift)
+        try await flow.assertDrained()
+        let actualFrame = await flow.fixture.reader.currentFrameValue()
+        let writes = await flow.fixture.reader.commitCount
+        XCTAssertEqual(actualFrame, targetZone.frame)
+        XCTAssertEqual(writes, 1)
     }
 }

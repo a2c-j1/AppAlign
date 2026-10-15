@@ -78,6 +78,70 @@ final class RuntimeWindowOwnershipTests: XCTestCase {
         }
     }
 
+    func testNavigationResetInvalidatesExtensionTicketAtRuntimeBeginWriteBoundary() async throws {
+        let pid: pid_t = 99003
+        let application = AXUIElementCreateApplication(pid)
+        let window = AXWindow(applicationElement: application, element: application, pid: pid)
+        let providerBarrier = RuntimeFocusedWindowProviderBarrier(window: window)
+        let runtime = AccessibilityWindowRuntime(
+            focusedWindowProvider: { _ in providerBarrier.provideWindow() },
+            focusedWindowValidator: { _ in },
+            frontmostPIDProvider: { pid },
+            accessibilityTrustedProvider: { true }
+        )
+        let token = try await runtime.token(for: window)
+        await runtime.retain(token)
+
+        let workArea = CGRect(x: 0, y: 0, width: 1_000, height: 800)
+        let display = Display(runtimeID: RuntimeDisplayID(rawValue: 1), persistentID: PersistentDisplayID(uuid: UUID()),
+                              sessionID: UUID(), name: "Test", frame: workArea, workArea: workArea,
+                              isPrimary: true, backingScaleFactor: 1)
+        let (controller, ticket) = await MainActor.run { () -> (KeyboardSnapController, PlacementCommitTicket) in
+            let layout = LayoutController(displayProvider: DisplayProvider(snapshot: DisplaySnapshot(displays: [display], primaryFrame: workArea)))
+            var settings = layout.keyboardSettings
+            settings.isEnabled = true
+            layout.updateKeyboardSettings(settings)
+            let controller = KeyboardSnapController(
+                layoutController: layout,
+                backend: runtime,
+                environment: KeyboardEnvironment(frontmostPID: { pid }, isAccessibilityTrusted: { true }, ownPID: 100)
+            )
+            controller.flagsMonitorStatus(.ready)
+            let now = DispatchTime.now().uptimeNanoseconds
+            let ticket = layout.placementValidity.reserve(startDeadline: now + 2_000_000_000,
+                                                           totalDeadline: now + 5_000_000_000)!
+            controller.installActiveExtensionTicket(ticket, token: token)
+            return (controller, ticket)
+        }
+        let capturedGeneration = await MainActor.run { controller.extensionHistoryGeneration }
+        let setterStarts = RuntimeWriteCounter()
+        let operation = Task {
+            try await runtime.withCurrentFocusedWindow(token, ticket: ticket, preflight: {
+                controller.extensionHistoryGeneration == capturedGeneration
+            }, operation: { _ in
+                setterStarts.increment()
+                return CGRect(x: 10, y: 20, width: 300, height: 200)
+            })
+        }
+
+        XCTAssertEqual(providerBarrier.entered.wait(timeout: .now() + 2), .success,
+                       "The provider barrier runs after preflight returned true and before beginWrite.")
+        await MainActor.run { controller.resetNavigationHistory(for: WorkAreaKey(display: display.id, spaceScope: nil)) }
+        providerBarrier.resume.signal()
+        do {
+            _ = try await operation.value
+            XCTFail("Reset must invalidate the extension-owned ticket before the runtime setter begins.")
+        } catch {
+            XCTAssertEqual(setterStarts.value, 0)
+        }
+        XCTAssertEqual(ticket.state, .invalidated)
+        XCTAssertFalse(ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds))
+        XCTAssertFalse(ticket.mayContinueWrite(now: DispatchTime.now().uptimeNanoseconds))
+        XCTAssertFalse(ticket.completeIfCurrent(now: DispatchTime.now().uptimeNanoseconds))
+        await MainActor.run { controller.finishActiveTicket(ticket) }
+        await runtime.shutdown()
+    }
+
     func testKeyboardDiscardKeepsRecordWhileDragLeaseIsActive() {
         var ownership = RuntimeWindowOwnership()
         let lease = DragLeaseID(rawValue: UUID())
@@ -220,4 +284,26 @@ private final class RuntimeFocusedWindowBox: @unchecked Sendable {
     init(_ window: AXWindow) { self.window = window }
     func read() -> AXWindow { lock.withLock { window } }
     func replace(_ window: AXWindow) { lock.withLock { self.window = window } }
+}
+
+private final class RuntimeFocusedWindowProviderBarrier: @unchecked Sendable {
+    let entered = DispatchSemaphore(value: 0)
+    let resume = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var callCount = 0
+    private let window: AXWindow
+
+    init(window: AXWindow) { self.window = window }
+
+    func provideWindow() -> AXWindow {
+        let shouldPause = lock.withLock { () -> Bool in
+            callCount += 1
+            return callCount == 2
+        }
+        if shouldPause {
+            entered.signal()
+            _ = resume.wait(timeout: .now() + 3)
+        }
+        return window
+    }
 }

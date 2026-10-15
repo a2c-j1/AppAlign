@@ -20,6 +20,15 @@ extension LayoutController {
         enqueueSettingsSave(category: .keyboard, revision: keyboardSettingsRevision)
     }
 
+    func updateLayoutHotkeySettings(_ updated: LayoutHotkeySettings) {
+        guard acceptsChanges, persistenceReady else { return }
+        layoutHotkeySettings = updated
+        settings = updated.applying(to: settings)
+        layoutHotkeySettingsRevision &+= 1
+        layoutHotkeySettingsRetrySnapshot = settings
+        enqueueSettingsSave(category: .layoutHotkey, revision: layoutHotkeySettingsRevision)
+    }
+
     func updateDragSettings(_ updated: DragSettings) {
         guard acceptsChanges, persistenceReady else { return }
         invalidateDragCommit?()
@@ -38,6 +47,10 @@ extension LayoutController {
         await retrySettingsSave(category: .drag)
     }
 
+    func retryLayoutHotkeySettingsSave() async -> Bool {
+        await retrySettingsSave(category: .layoutHotkey)
+    }
+
     func adoptSettings(_ loaded: [String: PersistedSetting]) {
         var merged = loaded
         if let snapshot = keyboardSettingsRetrySnapshot {
@@ -49,12 +62,18 @@ extension LayoutController {
             for key in DragSettings.managedKeys { merged.removeValue(forKey: key) }
             merged.merge(snapshot.filter { DragSettings.managedKeys.contains($0.key) }) { _, pending in pending }
         }
+        if let snapshot = layoutHotkeySettingsRetrySnapshot {
+            let keys = LayoutHotkeySettings.managedKeys(in: merged).union(LayoutHotkeySettings.managedKeys(in: snapshot))
+            for key in keys { merged.removeValue(forKey: key) }
+            merged.merge(snapshot.filter { keys.contains($0.key) }) { _, pending in pending }
+        }
         settings = merged
         keyboardSettings = KeyboardSettings.decode(from: merged)
         dragSettings = DragSettings.decode(from: merged)
+        layoutHotkeySettings = LayoutHotkeySettings.decode(from: merged)
     }
 
-    private enum SettingsCategory: Equatable { case keyboard, drag }
+    private enum SettingsCategory: Equatable { case keyboard, drag, layoutHotkey }
 
     private func enqueueSettingsSave(category: SettingsCategory, revision: UInt64) {
         guard let storeCoordinator else {
@@ -106,6 +125,9 @@ extension LayoutController {
         var result = settings
         mergePending(keyboardSettingsRetrySnapshot, keys: KeyboardSettings.managedKeys(in: settings), into: &result)
         mergePending(dragSettingsRetrySnapshot, keys: DragSettings.managedKeys, into: &result)
+        let layoutKeys = LayoutHotkeySettings.managedKeys(in: settings)
+            .union(LayoutHotkeySettings.managedKeys(in: layoutHotkeySettingsRetrySnapshot ?? [:]))
+        mergePending(layoutHotkeySettingsRetrySnapshot, keys: layoutKeys, into: &result)
         return result
     }
 
@@ -116,7 +138,11 @@ extension LayoutController {
     }
 
     private func settingsRevision(_ category: SettingsCategory) -> UInt64 {
-        category == .keyboard ? keyboardSettingsRevision : dragSettingsRevision
+        switch category {
+        case .keyboard: keyboardSettingsRevision
+        case .drag: dragSettingsRevision
+        case .layoutHotkey: layoutHotkeySettingsRevision
+        }
     }
 
     private func isCurrentSettingsRevision(_ category: SettingsCategory, _ revision: UInt64) -> Bool {
@@ -124,14 +150,26 @@ extension LayoutController {
     }
 
     private func hasSettingsRetry(_ category: SettingsCategory) -> Bool {
-        category == .keyboard ? keyboardSettingsRetrySnapshot != nil : dragSettingsRetrySnapshot != nil
+        switch category {
+        case .keyboard: keyboardSettingsRetrySnapshot != nil
+        case .drag: dragSettingsRetrySnapshot != nil
+        case .layoutHotkey: layoutHotkeySettingsRetrySnapshot != nil
+        }
     }
 
     private func markSettingsRetry(_ category: SettingsCategory) {
-        if category == .keyboard { keyboardSettingsRetrySnapshot = settings } else { dragSettingsRetrySnapshot = settings }
+        switch category {
+        case .keyboard: keyboardSettingsRetrySnapshot = settings
+        case .drag: dragSettingsRetrySnapshot = settings
+        case .layoutHotkey: layoutHotkeySettingsRetrySnapshot = settings
+        }
     }
 
     private func clearSettingsRetry(_ category: SettingsCategory) {
-        if category == .keyboard { keyboardSettingsRetrySnapshot = nil } else { dragSettingsRetrySnapshot = nil }
+        switch category {
+        case .keyboard: keyboardSettingsRetrySnapshot = nil
+        case .drag: dragSettingsRetrySnapshot = nil
+        case .layoutHotkey: layoutHotkeySettingsRetrySnapshot = nil
+        }
     }
 }

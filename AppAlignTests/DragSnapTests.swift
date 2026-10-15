@@ -62,7 +62,8 @@ final class DragSnapTests: XCTestCase {
         let lease = DragLeaseID(rawValue: UUID())
         await runtime.retainFakeLease(lease)
         let now = DispatchTime.now().uptimeNanoseconds
-        let ticket = DragCommitTicket(startDeadline: now + 2_000_000_000, totalDeadline: now + 5_000_000_000)
+        let ticket = try XCTUnwrap(layout.placementValidity.reserve(startDeadline: now + 2_000_000_000,
+                                                                    totalDeadline: now + 5_000_000_000))
         let zone = try XCTUnwrap(ZoneSelectionEngine.select(point: CGPoint(x: 20, y: 20), zones: snapshot.zones,
                                                              workArea: display.workArea, radius: 20))
         let offer = DragCommitOffer(id: DragCommitID(), run: 1, session: 1, inputEpoch: 1, gesture: 1,
@@ -103,7 +104,8 @@ final class DragSnapTests: XCTestCase {
                                     timestamp: 1, sequence: 1, displayFingerprint: snapshot.fingerprint,
                                     layoutRevision: snapshot.revision, workAreaKey: snapshot.workAreaKey,
                                     zoneID: zone.id, layoutSnapshot: snapshot,
-                                    ticket: DragCommitTicket(startDeadline: now - 1, totalDeadline: now - 1))
+                                    ticket: try XCTUnwrap(layout.placementValidity.reserve(startDeadline: now - 1,
+                                                                                           totalDeadline: now - 1)))
         XCTAssertTrue(snap.accept(offer))
         try await spin { !snap.isCommitting }
         let writes = await runtime.commitCount
@@ -134,7 +136,8 @@ final class DragSnapTests: XCTestCase {
                                    timestamp: session, sequence: session, displayFingerprint: snapshot.fingerprint,
                                    layoutRevision: snapshot.revision, workAreaKey: snapshot.workAreaKey,
                                    zoneID: zone.id, layoutSnapshot: snapshot,
-                                   ticket: DragCommitTicket(startDeadline: now + 2_000_000_000,
+                                   ticket: DragCommitTicket(fixtureRevision: snapshot.placementRevision,
+                                                            startDeadline: now + 2_000_000_000,
                                                             totalDeadline: now + 5_000_000_000))
         }
 
@@ -246,8 +249,8 @@ final class DragKeyboardRestoreTests: XCTestCase {
                                     timestamp: 2, sequence: 2, displayFingerprint: snapshot.fingerprint,
                                     layoutRevision: snapshot.revision, workAreaKey: snapshot.workAreaKey,
                                     zoneID: zone.id, layoutSnapshot: snapshot,
-                                    ticket: DragCommitTicket(startDeadline: now + 2_000_000_000,
-                                                             totalDeadline: now + 5_000_000_000))
+                                    ticket: try XCTUnwrap(layout.placementValidity.reserve(startDeadline: now + 2_000_000_000,
+                                                                                           totalDeadline: now + 5_000_000_000)))
         let snap = DragSnapController(layoutController: layout, runtime: runtime, overlay: FakeZoneOverlay())
         XCTAssertTrue(snap.accept(offer))
         try await spin { !snap.isCommitting }
@@ -292,6 +295,66 @@ final class DragZoneSelectionTests: XCTestCase {
         XCTAssertNil(ZoneSelectionEngine.select(point: CGPoint(x: 121, y: 20), zones: [zone], workArea: area, radius: 10))
         XCTAssertNil(ZoneSelectionEngine.select(point: CGPoint(x: 120, y: 20), zones: [zone], workArea: area, radius: 10))
         XCTAssertEqual(ZoneSelectionEngine.select(point: CGPoint(x: 20, y: 20), zones: [zone], workArea: area, radius: 0)?.id, zone.id)
+    }
+
+    func testOverlapModesPreserveLayoutOrderForAreaTiesAndSplitPositionalBands() {
+        let zones = [
+            Zone(id: ZoneID(rawValue: 9), frame: CGRect(x: 0, y: 0, width: 100, height: 100)),
+            Zone(id: ZoneID(rawValue: 2), frame: CGRect(x: 20, y: 0, width: 100, height: 100)),
+            Zone(id: ZoneID(rawValue: 30), frame: CGRect(x: 40, y: 0, width: 100, height: 100))
+        ]
+        let workArea = CGRect(x: 0, y: 0, width: 150, height: 100)
+        let smallest = ZoneSelectionEngine.selectZones(point: CGPoint(x: 50, y: 50), zones: zones,
+                                                       workArea: workArea, radius: 0, strategy: .smallest)
+        let largest = ZoneSelectionEngine.selectZones(point: CGPoint(x: 50, y: 50), zones: zones,
+                                                      workArea: workArea, radius: 0, strategy: .largest)
+        XCTAssertEqual(smallest.map(\.id), [zones[0].id])
+        XCTAssertEqual(largest.map(\.id), [zones[0].id])
+
+        let left = ZoneSelectionEngine.selectZones(point: CGPoint(x: 25, y: 50), zones: zones,
+                                                   workArea: workArea, radius: 0, strategy: .positional)
+        let right = ZoneSelectionEngine.selectZones(point: CGPoint(x: 110, y: 50), zones: zones,
+                                                    workArea: workArea, radius: 0, strategy: .positional)
+        // The common 80×100 intersection is split vertically; y=50 is the next band.
+        XCTAssertEqual(left.map(\.id), [zones[1].id])
+        XCTAssertEqual(right.map(\.id), [zones[2].id])
+    }
+
+    func testRangeUsesBoundingBoxFullContainmentAndKeepsSpacingGaps() {
+        let zones = [
+            Zone(id: ZoneID(rawValue: 4), frame: CGRect(x: 0, y: 0, width: 40, height: 40)),
+            Zone(id: ZoneID(rawValue: 1), frame: CGRect(x: 60, y: 0, width: 40, height: 40)),
+            Zone(id: ZoneID(rawValue: 8), frame: CGRect(x: 0, y: 60, width: 40, height: 40)),
+            Zone(id: ZoneID(rawValue: 3), frame: CGRect(x: 5, y: 5, width: 50, height: 30))
+        ]
+        let selected = ZoneSelectionEngine.range(anchor: [zones[0]], current: [zones[2]], zones: zones)
+        XCTAssertEqual(selected.map(\.id), [zones[0].id, zones[2].id])
+        XCTAssertEqual(ZoneSelectionEngine.union(of: selected.map(\.frame)), CGRect(x: 0, y: 0, width: 40, height: 100))
+    }
+
+    func testNonOverlappingSensitivityCandidatesAreReturnedInLayoutOrder() {
+        let zones = [
+            Zone(id: ZoneID(rawValue: 11), frame: CGRect(x: 0, y: 0, width: 40, height: 40)),
+            Zone(id: ZoneID(rawValue: 3), frame: CGRect(x: 60, y: 0, width: 40, height: 40))
+        ]
+        let selected = ZoneSelectionEngine.selectZones(point: CGPoint(x: 50, y: 20), zones: zones,
+                                                       workArea: CGRect(x: 0, y: 0, width: 100, height: 50), radius: 15)
+        XCTAssertEqual(selected.map(\.id), zones.map(\.id))
+    }
+
+    func testClosestCenterUsesSquaredCenterDistanceThresholdOfSeventyFive() {
+        let first = Zone(id: ZoneID(rawValue: 7), frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        func second(centerX: CGFloat) -> Zone {
+            Zone(id: ZoneID(rawValue: 2), frame: CGRect(x: centerX - 100, y: 0, width: 200, height: 100))
+        }
+        let area = CGRect(x: -100, y: 0, width: 300, height: 100)
+        let point = CGPoint(x: 58.66, y: 50)
+        let threshold = ZoneSelectionEngine.selectZones(point: point, zones: [first, second(centerX: 58.66)],
+                                                        workArea: area, radius: 0, strategy: .closestCenter)
+        let above = ZoneSelectionEngine.selectZones(point: point, zones: [first, second(centerX: 58.67)],
+                                                    workArea: area, radius: 0, strategy: .closestCenter)
+        XCTAssertEqual(threshold.map(\.id), [first.id], "At 75 point², the smaller area wins.")
+        XCTAssertEqual(above.map(\.id), [second(centerX: 58.67).id], "Above 75 point², cursor distance decides.")
     }
 }
 
@@ -377,15 +440,15 @@ final class DragSnapSettingsAndOverlayTests: XCTestCase {
         let factory = FakeOverlayPanelFactory()
         let manager = ZoneOverlayManager(makePanel: { factory.make() })
 
-        manager.show(firstSnapshot, selected: firstSnapshot.zones.first?.id)
-        manager.show(firstSnapshot, selected: firstSnapshot.zones.first?.id)
+        manager.show(firstSnapshot, selected: Set(firstSnapshot.zones.first.map { [$0.id] } ?? []))
+        manager.show(firstSnapshot, selected: Set(firstSnapshot.zones.first.map { [$0.id] } ?? []))
         XCTAssertEqual(factory.panels.count, 1)
         XCTAssertEqual(factory.panels[0].showCount, 2)
-        manager.show(secondSnapshot, selected: secondSnapshot.zones.first?.id)
+        manager.show(secondSnapshot, selected: Set(secondSnapshot.zones.first.map { [$0.id] } ?? []))
         XCTAssertEqual(factory.panels.count, 2)
         XCTAssertFalse(factory.panels[0].visible)
         XCTAssertTrue(factory.panels[1].visible)
-        manager.show(firstSnapshot, selected: nil)
+        manager.show(firstSnapshot, selected: [])
         XCTAssertEqual(factory.panels.count, 2)
         XCTAssertTrue(factory.panels[0].visible)
         XCTAssertFalse(factory.panels[1].visible)
@@ -430,13 +493,13 @@ final class DragSnapSettingsAndOverlayTests: XCTestCase {
 final class FakeZoneOverlay: ZoneOverlayPresenting {
     private(set) var showCount = 0
     private(set) var isVisible = false
-    private(set) var selected: ZoneID?
-    func show(_ snapshot: DragLayoutSnapshot, selected: ZoneID?) {
+    private(set) var selected: Set<ZoneID> = []
+    func show(_ snapshot: DragLayoutSnapshot, selected: Set<ZoneID>) {
         showCount += 1
         isVisible = true
         self.selected = selected
     }
-    func hideAll() { isVisible = false; selected = nil }
+    func hideAll() { isVisible = false; selected = [] }
 }
 
 @MainActor
@@ -453,7 +516,7 @@ private final class FakeOverlayPanelFactory {
 private final class FakeOverlayPanel: ZoneOverlayPanelPresenting {
     private(set) var showCount = 0
     private(set) var visible = false
-    func show(display: Display, snapshot: DragLayoutSnapshot, selected: ZoneID?) { showCount += 1; visible = true }
+    func show(display: Display, snapshot: DragLayoutSnapshot, selected: Set<ZoneID>) { showCount += 1; visible = true }
     func hide() { visible = false }
 }
 

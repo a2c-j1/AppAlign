@@ -22,6 +22,13 @@ final class PlacementValidity: @unchecked Sendable {
     private var accepting = true
     private var entries: [UUID: Entry] = [:]
 
+    init() {}
+
+    fileprivate init(fixtureRevision: PlacementRevision) {
+        configurationRevision = fixtureRevision.configuration
+        layoutRevision = fixtureRevision.layout
+    }
+
     var revision: PlacementRevision {
         lock.withLock { PlacementRevision(configuration: configurationRevision, layout: layoutRevision) }
     }
@@ -182,6 +189,14 @@ final class PlacementCommitTicket: @unchecked Sendable {
         self.init(id: UUID(), validity: validity, revision: validity.revision,
                   startDeadline: startDeadline, totalDeadline: totalDeadline)
         validity.registerFixtureTicket(id, revision: revision)
+    }
+
+    convenience init(fixtureRevision: PlacementRevision, startDeadline: UInt64, totalDeadline: UInt64) {
+        let validity = PlacementValidity(fixtureRevision: fixtureRevision)
+        let id = UUID()
+        self.init(id: id, validity: validity, revision: fixtureRevision,
+                  startDeadline: startDeadline, totalDeadline: totalDeadline)
+        validity.registerFixtureTicket(id, revision: fixtureRevision)
     }
 
     var state: PlacementValidity.State { validity.state(of: id, revision: revision) }

@@ -11,7 +11,7 @@ protocol HotKeyRegistering: AnyObject {
     func shutdown()
 }
 
-private enum HotKeyDispatchTable {
+enum HotKeyDispatchTable {
     static let lock = NSLock()
     nonisolated(unsafe) static var handlers: [UInt32: @Sendable () -> Void] = [:]
     nonisolated(unsafe) static var queuedIDs = Set<UInt32>()
@@ -34,6 +34,20 @@ private enum HotKeyDispatchTable {
         lock.lock()
         queuedIDs.remove(id)
         lock.unlock()
+    }
+}
+
+/// IDs are shared by all routes and never reused, so queued callbacks stay stale.
+enum HotKeyIDAllocator {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var nextID: UInt32 = 0
+
+    static func allocate() -> UInt32 {
+        lock.withLock {
+            precondition(nextID < UInt32.max, "Carbon hotkey identity space exhausted")
+            nextID += 1
+            return nextID
+        }
     }
 }
 
@@ -289,7 +303,7 @@ final class GlobalHotkeys: ObservableObject {
             return
         }
 
-        var desired = settings.validShortcuts
+        var desired = availableWindowShortcuts(settings.validShortcuts)
         if settings.mode == .zoneOrder {
             desired = desired.filter { action, _ in
                 switch action {
@@ -346,7 +360,7 @@ final class GlobalHotkeys: ObservableObject {
                 return
             }
             generation &+= 1
-            let id = generation
+            let id = HotKeyIDAllocator.allocate()
             let registration = Registration(id: id, action: action, shortcut: shortcut, lifecycleGeneration: requestedGeneration)
             if registrar.conflictsWithSystemShortcut(shortcut) {
                 unregisterAll()
@@ -398,6 +412,12 @@ extension GlobalHotkeys {
 }
 
 private extension GlobalHotkeys {
+    func availableWindowShortcuts(_ shortcuts: [KeyboardSnapAction: KeyboardShortcut]) -> [KeyboardSnapAction: KeyboardShortcut] {
+        guard settingsController.layoutHotkeySettings.isEnabled else { return shortcuts }
+        let layoutShortcuts = Set(settingsController.layoutHotkeySettings.bindings.values)
+        return shortcuts.filter { !layoutShortcuts.contains($0.value) }
+    }
+
     func rememberEnvironment() {
         lastObservedPID = environment.frontmostPID()
         lastObservedTrust = environment.isAccessibilityTrusted()
@@ -436,6 +456,8 @@ private extension GlobalHotkeys {
               settingsController.keyboardSettings.isEnabled,
               !snapController.isBusy,
               !snapController.dragGateClosed,
+              !(settingsController.layoutHotkeySettings.isEnabled
+                && settingsController.layoutHotkeySettings.bindings.values.contains(registration.shortcut)),
               environment.isAccessibilityTrusted(),
               let pid = environment.frontmostPID(), pid != ownPID else { return false }
         return settingsController.keyboardSettings.validShortcuts[registration.action] == registration.shortcut
@@ -462,6 +484,7 @@ private extension KeyboardSnapAction {
         case .next: return "next"
         case .previous: return "previous"
         case .direction(let direction): return direction.rawValue
+        case .extend(let direction): return "extend " + direction.rawValue
         case .restore: return "restore"
         }
     }

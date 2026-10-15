@@ -127,6 +127,26 @@ struct ContentView: View {
                         get: { dragSnapController.settings.requireShift },
                         set: { value in var updated = dragSnapController.settings; updated.requireShift = value; dragSnapController.updateSettings(updated) }
                     ))
+                    Picker("Range selection modifier", selection: Binding(
+                        get: { dragSnapController.settings.rangeModifier },
+                        set: { value in var updated = dragSnapController.settings; updated.rangeModifier = value; dragSnapController.updateSettings(updated) }
+                    )) {
+                        Text("Shift").tag(RangeSelectionModifier.shift)
+                        Text("Control").tag(RangeSelectionModifier.control)
+                        Text("Option").tag(RangeSelectionModifier.option)
+                        Text("Command").tag(RangeSelectionModifier.command)
+                    }
+                    .disabled(!layoutController.canEdit)
+                    Picker("Overlap selection", selection: Binding(
+                        get: { dragSnapController.settings.overlapStrategy },
+                        set: { value in var updated = dragSnapController.settings; updated.overlapStrategy = value; dragSnapController.updateSettings(updated) }
+                    )) {
+                        Text("Smallest").tag(ZoneOverlapStrategy.smallest)
+                        Text("Largest").tag(ZoneOverlapStrategy.largest)
+                        Text("Positional").tag(ZoneOverlapStrategy.positional)
+                        Text("Closest center").tag(ZoneOverlapStrategy.closestCenter)
+                    }
+                    .disabled(!layoutController.canEdit)
                     Picker("Toggle with button", selection: Binding<Int?>(
                         get: { dragSnapController.settings.toggleButton },
                         set: { value in var updated = dragSnapController.settings; updated.toggleButton = value; dragSnapController.updateSettings(updated) }

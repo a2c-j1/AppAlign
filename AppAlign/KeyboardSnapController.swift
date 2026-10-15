@@ -56,7 +56,7 @@ extension KeyboardWindowOperating {
     func discardProcess(_ pid: pid_t) async {}
 }
 
-private enum KeyboardSnapError: LocalizedError {
+enum KeyboardSnapError: LocalizedError {
     case readbackMismatch
 
     var errorDescription: String? { "The window manager did not confirm the requested frame." }
@@ -77,20 +77,27 @@ struct KeyboardEnvironment {
     }
 }
 
-private struct KeyboardPlacementSession {
+struct KeyboardPlacementSession {
     let token: RuntimeWindowToken
     let originalFrame: CGRect
     let restoreAnchor: KeyboardRestoreAnchor
     var activeAddress: ZoneAddress?
+    var extensionAnchor: ZoneAddress?
+    var extensionEndpoint: ZoneAddress?
+    var extensionLayoutID: UUID?
+    var extensionWorkArea: WorkAreaKey?
+    var extensionPlacementRevision: PlacementRevision?
+    var extensionLastFrame: CGRect?
+    var extendedAddresses: [ZoneAddress] = []
 }
 
-private struct KeyboardRestoreAnchor {
+struct KeyboardRestoreAnchor {
     let displayID: DisplaySelectionID
     let displayFrame: CGRect
     let configurationFingerprint: String
 }
 
-private struct KeyboardNavigationTarget {
+struct KeyboardNavigationTarget {
     let session: KeyboardPlacementSession
     let address: ZoneAddress
     let zone: Zone
@@ -98,24 +105,35 @@ private struct KeyboardNavigationTarget {
 
 @MainActor
 final class KeyboardSnapController: ObservableObject {
-    @Published private(set) var statusMessage = "Keyboard placement is disabled."
+    @Published var statusMessage = "Keyboard placement is disabled."
     @Published private(set) var isBusy = false
-    @Published private(set) var hasRestoreTarget = false
+    @Published var hasRestoreTarget = false
     var didFinishAction: (@MainActor () -> Void)?
 
-    private let layoutController: LayoutController
-    private let validity: PlacementValidity
-    private let backend: any KeyboardWindowOperating
+    let layoutController: LayoutController
+    let validity: PlacementValidity
+    let backend: any KeyboardWindowOperating
     var backendForEligibility: any KeyboardWindowOperating { backend }
-    private let environment: KeyboardEnvironment
-    private var ownPID: pid_t { environment.ownPID }
-    private var sessions: [UUID: KeyboardPlacementSession] = [:]
+    let environment: KeyboardEnvironment
+    var ownPID: pid_t { environment.ownPID }
+    var sessions: [UUID: KeyboardPlacementSession] = [:]
     private var activeTicket: PlacementCommitTicket?
     private var activeTicketToken: RuntimeWindowToken?
-    private let maximumSessions = 64
-    private var lifecycleGeneration: UInt64 = 0
-    private var isRunning = true
+    var activeExtensionTicket: PlacementCommitTicket?
+    var lastObservedWindowToken: RuntimeWindowToken?
+    let maximumSessions = 64
+    var lifecycleGeneration: UInt64 = 0
+    var extensionHistoryGeneration: UInt64 = 0
+    var extensionFlagsAvailable = false
+    var previousModifierFlags: UInt64?
+    var lastExtensionModifierMask: UInt64?
+    var pendingExtensionAttempt: KeyboardExtensionAttempt?
+    var isRunning = true
     private(set) var dragGateClosed = false
+
+    func setBusy(_ busy: Bool) {
+        isBusy = busy
+    }
 
     init(
         layoutController: LayoutController,
@@ -128,23 +146,11 @@ final class KeyboardSnapController: ObservableObject {
         self.environment = environment
     }
 
-    func handle(_ action: KeyboardSnapAction) {
-        guard isRunning, !isBusy, !dragGateClosed else { return }
-        isBusy = true
-        let generation = lifecycleGeneration
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.isBusy = false
-                self.didFinishAction?()
-            }
-            await self.perform(action, generation: generation)
-        }
-    }
-
     func shutdown() async {
         invalidatePendingOperations()
+        setExtensionFlagsAvailable(false)
         isRunning = false
+        lastObservedWindowToken = nil
         sessions.removeAll()
         hasRestoreTarget = false
         await backend.shutdown()
@@ -152,6 +158,7 @@ final class KeyboardSnapController: ObservableObject {
 
     func suspend() {
         invalidatePendingOperations()
+        setExtensionFlagsAvailable(false)
         isRunning = false
     }
 
@@ -171,34 +178,17 @@ final class KeyboardSnapController: ObservableObject {
         if closed { invalidatePendingOperations() }
     }
 
-    func isEligible(_ action: KeyboardSnapAction, for focused: RuntimeWindowSnapshot, layout snapshot: KeyboardLayoutSnapshot?) -> Bool {
-        if action == .restore {
-            guard let session = sessions[focused.token.id] else { return false }
-            return restoreFrame(for: session) != nil
-        }
-        guard let snapshot else { return false }
-        let session = sessions[focused.token.id]
-        let currentAddress = Self.resolvedCurrentAddress(session?.activeAddress, frame: focused.frame,
-                                                         displays: snapshot.displayLayouts)
-        let request = MultiDisplayNavigationRequest(
-            mode: layoutController.keyboardSettings.mode,
-            currentAddress: currentAddress,
-            currentDisplay: snapshot.display.id,
-            currentFrame: focused.frame,
-            displays: snapshot.displayLayouts,
-            cycle: layoutController.keyboardSettings.cyclesAtEdges
-        )
-        guard let (address, target) = MultiDisplayNavigator.zone(for: action, request: request) else { return false }
-        guard address != currentAddress else { return false }
-        return !Self.framesMatch(target.frame, focused.frame)
-    }
-
     var frontmostPID: pid_t? { environment.frontmostPID() }
     var accessibilityIsTrusted: Bool { environment.isAccessibilityTrusted() }
     var processID: pid_t { environment.ownPID }
 
-    private func perform(_ action: KeyboardSnapAction, generation: UInt64) async {
+    func perform(_ action: KeyboardSnapAction, generation: UInt64,
+                 extensionAttempt: KeyboardExtensionAttempt? = nil) async {
         guard isRunning, !dragGateClosed, lifecycleGeneration == generation else { return }
+        if case .extend = action, !extensionFlagsAvailable {
+            statusMessage = "Keyboard extension is unavailable because modifier monitoring is not ready."
+            return
+        }
         guard layoutController.keyboardSettings.isEnabled else {
             statusMessage = "Keyboard placement is disabled."
             return
@@ -214,14 +204,31 @@ final class KeyboardSnapController: ObservableObject {
         do {
             let focused = try await backend.focusedWindow(applicationPID: pid, ownPID: ownPID)
             guard isRunning, lifecycleGeneration == generation,
+                  extensionAttempt.map({ $0.historyGeneration == extensionHistoryGeneration }) ?? true,
                   frontmostPID == pid, accessibilityIsTrusted,
                   layoutController.keyboardSettings.isEnabled else {
                 await discardProbeIfUnowned(focused.token)
                 statusMessage = "The front window changed. Try the shortcut again."
                 return
             }
+            observeFocusedWindow(focused.token)
             if action == .restore {
                 await restore(focused, generation: generation)
+            } else if case .extend = action {
+                guard let extensionAttempt else { return }
+                let observedAttempt: KeyboardExtensionAttempt
+                if extensionHistoryGeneration == extensionAttempt.historyGeneration {
+                    observedAttempt = extensionAttempt
+                } else {
+                    observedAttempt = KeyboardExtensionAttempt(id: extensionAttempt.id,
+                                                               lifecycleGeneration: extensionAttempt.lifecycleGeneration,
+                                                               historyGeneration: extensionHistoryGeneration,
+                                                               modifierMask: extensionAttempt.modifierMask)
+                    if pendingExtensionAttempt?.id == extensionAttempt.id {
+                        pendingExtensionAttempt = observedAttempt
+                    }
+                }
+                await extend(action, focused: focused, attempt: observedAttempt)
             } else {
                 await place(action, focused: focused, generation: generation)
             }
@@ -243,10 +250,15 @@ final class KeyboardSnapController: ObservableObject {
             originalFrame: focused.frame,
             restoreAnchor: KeyboardRestoreAnchor(displayID: sourceDisplay.id, displayFrame: sourceDisplay.frame,
                                           configurationFingerprint: layoutController.displayProvider.snapshot.fingerprint),
-            activeAddress: nil
+            activeAddress: nil,
+            extensionAnchor: nil,
+            extensionEndpoint: nil,
+            extensionLayoutID: nil,
+            extensionWorkArea: nil
         )
         guard let target = navigationTarget(action, focused: focused, snapshot: snapshot, session: session) else { return }
         session = target.session
+        resetExtensionHistory(&session)
         let targetAddress = target.address
         let zone = target.zone
         if targetAddress == session.activeAddress {
@@ -298,6 +310,7 @@ final class KeyboardSnapController: ObservableObject {
                 throw WindowManagementError.displayConfigurationChanged
             }
             session.activeAddress = targetAddress
+            resetExtensionHistory(&session)
             sessions[focused.token.id] = session
             statusMessage = "Placed window in zone \(zone.id.displayNumber)."
         } catch {
@@ -361,8 +374,12 @@ extension KeyboardSnapController {
         session: KeyboardPlacementSession
     ) -> KeyboardNavigationTarget? {
         var session = session
-        session.activeAddress = Self.resolvedCurrentAddress(session.activeAddress, frame: focused.frame,
-                                                            displays: snapshot.displayLayouts)
+        let extendedUnionIsCurrent = session.extensionPlacementRevision == snapshot.revision
+            && session.extensionLayoutID == snapshot.layout.id
+            && session.extensionWorkArea == snapshot.display.selectionKey
+            && session.extensionLastFrame.map { Self.framesMatch($0, focused.frame) } == true
+        session.activeAddress = extendedUnionIsCurrent ? session.extensionEndpoint
+            : Self.resolvedCurrentAddress(session.activeAddress, frame: focused.frame, displays: snapshot.displayLayouts)
         let request = MultiDisplayNavigationRequest(
             mode: layoutController.keyboardSettings.mode,
             currentAddress: session.activeAddress,
@@ -385,17 +402,30 @@ extension KeyboardSnapController {
         return KeyboardNavigationTarget(session: session, address: address, zone: zone)
     }
 
-    private func installActiveTicket(_ ticket: PlacementCommitTicket, token: RuntimeWindowToken) {
+    func installActiveTicket(_ ticket: PlacementCommitTicket, token: RuntimeWindowToken) {
         activeTicket = ticket
         activeTicketToken = token
     }
 
-    private func finishActiveTicket(_ ticket: PlacementCommitTicket) {
+    func installActiveExtensionTicket(_ ticket: PlacementCommitTicket, token: RuntimeWindowToken) {
+        installActiveTicket(ticket, token: token)
+        activeExtensionTicket = ticket
+    }
+
+    func finishActiveTicket(_ ticket: PlacementCommitTicket) {
         ticket.finish()
         if activeTicket === ticket {
             activeTicket = nil
             activeTicketToken = nil
         }
+        if activeExtensionTicket === ticket { activeExtensionTicket = nil }
+    }
+
+    func observeFocusedWindow(_ token: RuntimeWindowToken) {
+        if let lastObservedWindowToken, lastObservedWindowToken != token {
+            resetNavigationHistory()
+        }
+        lastObservedWindowToken = token
     }
 
     private func invalidateActiveTicket(for pid: pid_t) {
@@ -441,10 +471,14 @@ extension KeyboardSnapController {
 
     static func framesMatch(_ lhs: CGRect, _ rhs: CGRect) -> Bool { matches(lhs, rhs) }
 
+}
+
+@MainActor
+extension KeyboardSnapController {
     func discardProcess(_ pid: pid_t) async {
         lifecycleGeneration &+= 1
         invalidateActiveTicket(for: pid)
-        invalidateActiveTicket(for: pid)
+        if lastObservedWindowToken?.pid == pid { lastObservedWindowToken = nil }
         let removed = sessions.values.filter { $0.token.pid == pid }.map(\.token)
         sessions = sessions.filter { $0.value.token.pid != pid }
         hasRestoreTarget = !sessions.isEmpty
@@ -455,5 +489,33 @@ extension KeyboardSnapController {
     func discardProbeIfUnowned(_ token: RuntimeWindowToken) async {
         guard !isBusy, sessions[token.id] == nil else { return }
         await backend.discard(token)
+    }
+
+    func isEligible(_ action: KeyboardSnapAction, for focused: RuntimeWindowSnapshot, layout snapshot: KeyboardLayoutSnapshot?) -> Bool {
+        observeFocusedWindow(focused.token)
+        if action == .restore {
+            guard let session = sessions[focused.token.id] else { return false }
+            return restoreFrame(for: session) != nil
+        }
+        guard let snapshot else { return false }
+        if case .extend = action, !extensionFlagsAvailable { return false }
+        let session = sessions[focused.token.id]
+        let currentAddress = Self.resolvedCurrentAddress(session?.activeAddress, frame: focused.frame,
+                                                         displays: snapshot.displayLayouts)
+        let request = MultiDisplayNavigationRequest(
+            mode: layoutController.keyboardSettings.mode,
+            currentAddress: currentAddress,
+            currentDisplay: snapshot.display.id,
+            currentFrame: focused.frame,
+            displays: snapshot.displayLayouts,
+            cycle: layoutController.keyboardSettings.cyclesAtEdges
+        )
+        if case .extend = action {
+            return extensionTarget(action, snapshot: snapshot, session: sessions[focused.token.id],
+                                   frame: focused.frame) != nil
+        }
+        guard let (address, target) = MultiDisplayNavigator.zone(for: action, request: request) else { return false }
+        guard address != currentAddress else { return false }
+        return !Self.framesMatch(target.frame, focused.frame)
     }
 }
