@@ -295,6 +295,23 @@ extension KeyboardLifecycleTests {
     }
 
     @MainActor
+    func testHistoryResetDoesNotInvalidateNormalPlacementTicket() async throws {
+        let fixture = try await LifecycleFixture.make()
+        defer { fixture.remove() }
+        await fixture.backend.arm(.afterPreflight)
+        fixture.controller.handle(.zone(ZoneID(rawValue: 0)))
+        try await fixture.waitForBarrier()
+
+        fixture.controller.resetNavigationHistory()
+        await fixture.backend.release()
+        try await fixture.waitUntilIdle()
+
+        let writes = await fixture.backend.writeCount()
+        XCTAssertEqual(writes, 1, "A navigation reset must not cancel an ordinary placement ticket.")
+        XCTAssertTrue(fixture.controller.statusMessage.contains("Placed window"))
+    }
+
+    @MainActor
     func testKeyboardNavigationCrossesDisplayAndRestoreUsesExactOriginalFrame() async throws {
         let secondID = PersistentDisplayID(uuid: UUID())
         let secondArea = CGRect(x: 1_000, y: 0, width: 1_000, height: 800)
@@ -399,16 +416,16 @@ extension KeyboardLifecycleTests {
     }
 }
 
-private enum LifecycleTestError: Error { case timeout }
+enum LifecycleTestError: Error { case timeout }
 
 @MainActor
-private final class LifecycleContext {
+final class LifecycleContext {
     var pid: pid_t? = 200
     var trusted = true
 }
 
 @MainActor
-private struct LifecycleFixture {
+struct LifecycleFixture {
     let layout: LayoutController
     let backend: LifecycleWindowBackend
     let controller: KeyboardSnapController
@@ -458,7 +475,7 @@ private struct LifecycleFixture {
 }
 
 /// This fake enforces the backend contract: the live focused token is checked after the preflight await.
-private actor LifecycleWindowBackend: KeyboardWindowOperating {
+actor LifecycleWindowBackend: KeyboardWindowOperating {
     enum Stage { case capture, retain, beforeWrite, afterPreflight, afterWrite }
     private var token = RuntimeWindowToken(id: UUID(), pid: 200)
     private var frame: CGRect

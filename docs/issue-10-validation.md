@@ -19,14 +19,14 @@
 
 | 項目 | 結果・証拠 |
 |---|---|
-| macOS build / XCTest / bundle smoke | scripts/test.sh成功。208件成功、失敗0、skip0、expected failure0 |
-| 最終結果束 | build/issue-10-evidence/AppAlignTests-20261014T164216Z-30406.xcresult |
-| 実行ログ | build/issue-10-evidence/test-p1-fix-final.log |
-| 親による独立結果確認 | xcresulttool summary: Passed、208/208。parent-xcresult-summary.jsonはdevice IDを除いて保存 |
+| macOS build / XCTest / bundle smoke | scripts/test.sh成功。220件成功、失敗0、skip0、expected failure0 |
+| 最終結果束 | build/issue-10-evidence/AppAlignTests-final-active-owner-20261015.xcresult |
+| 実行ログ | build/issue-10-evidence/full-suite-final.log |
+| 親による独立結果確認 | xcresulttool summary: Passed、220/220。parent-review-xcresult-summary.jsonはdevice IDを除いて保存 |
 | 既存テスト保持 | 基点の182 test methodsがすべて残る。assertion減少0、新skip0。baseline-test-preservation.json |
-| SwiftFormat | 親再確認で0/65 files require formatting。parent-format.log |
-| SwiftLint | 親再確認で0 violations / 0 serious、65 files。parent-lint.log |
-| Semgrep | 親再確認で4 rules、42 source files（未追跡を含む）、0 findings。parent-semgrep.log |
+| SwiftFormat | 親再確認で0/67 files require formatting。parent-review-format.log |
+| SwiftLint | 親再確認で0 violations / 0 serious、67 files。parent-review-lint.log |
+| Semgrep | 親再確認で4 rules、42 source files（未追跡を含む）、0 findings。parent-review-semgrep.log |
 | patch / project | git diff --check成功、PBX plutil -lint成功 |
 | 実行環境 | MacBook Air / arm64、macOS 27.0.1（26A434）、Xcode 26.5 |
 
@@ -76,4 +76,26 @@ fixtureによる成功は、native input、実AX配置、MacBook Air M1 + Dell�
 
 要件39/40、安全24/25、検証23/25、報告9/10、**95/100・重大欠落0**。計画とコードを照合し、mutation前失効、元lease保持、受理FIFO、最終up、layout順tie、既存drain、pending保存とRetryを確認した。
 
-208件の最終suite後、このworktreeのAppAlign/test/xcodebuild残留がないことを確認。CUAの試行後もAppAlign残留を確認していない。worktreeはLOCAL_READY報告とレビューのため保持する。
+220件の最終suite後、このworktreeのAppAlign/test/xcodebuild残留がないことを確認。CUAの試行後もAppAlign残留を確認していない。worktreeはLOCAL_READY報告とレビューのため保持する。
+
+## 523319eへの追加レビュー対応
+
+統括レビューで見つかった拡張処理の取消・履歴スコープを追加修正した。統括の最終受け入れは別途必要であり、この記録は作業セッション内のLOCAL_READYを示す。
+
+- history resetと同時に拡張専用ticketを同期失効する。通常配置ticketには作用しない。preflightがtrueで返った後からbeginWriteまでの実runtime境界でもsetter開始・後続書込・成功確定を拒否する。
+- handleで操作世代・所有modifier・pending IDを捕捉し、focusedWindow取得とretainのawaitを跨いで保持する。解除済み世代を新しいattemptとして採用しない。pending ownerはID照合で終了し、成功履歴のownerと寿命を分ける。
+- 初回・後続flagsとも現在の操作が所有するmodifierで判定する。別方向のmodifier成立は解除を隠さず、無関係なmodifierの解除は所有chordを取り消さない。古いsampleが押下を含まない場合も現在sampleで取消判定する。
+- 同じPIDでも別window tokenを操作・eligibility probeで観測した場合は拡張履歴をresetする。A/B両方のoriginal Restoreと所有権は保持する。自身の対象変更resetでは新対象への最初の拡張を正常に開始する。未観測のfocus遷移を検出したとは主張しない。
+
+| 追加検証 | 証拠 |
+|---|---|
+| 実runtimeのpreflight後barrier | RuntimeWindowOwnershipTests.testNavigationResetInvalidatesExtensionTicketAtRuntimeBeginWriteBoundary |
+| scoped reset / 通常配置の成功対照 | KeyboardExtensionRaceTests、KeyboardLifecycleTests.testHistoryResetDoesNotInvalidateNormalPlacementTicket |
+| capture/retain待機中の解除と保持対照・Restore | KeyboardExtensionAwaitTestsの4件 |
+| 同PID A→B→A、eligibilityのみB観測 | KeyboardExtensionRaceTestsの2件。A/B Restoreのactual frameも照合 |
+| 初回release・保持・方向別custom chord交替/無関係解除 | KeyboardSnapControllerTestsの追加3件 |
+| 既存208件の保持 | review-208-test-preservation.json: missing 0、assertion減少0、新skip0 |
+| 修正前失敗 | keyboard-review-race-before-fix.log、actual-runtime-reset-race-before-fix.log |
+| 最終結果 | full-suite-final.log、parent-review-xcresult-summary.json: 220/220、失敗0、skip0 |
+
+追加差分の作業セッション内レビュー: 競合遮断39/40、ticket分離25/25、対照テスト24/25、報告9/10、**97/100・重大指摘0**。既存lint閾値・Semgrepルールを維持し、追加テストを2ファイルへ分割してtest targetへ登録した。

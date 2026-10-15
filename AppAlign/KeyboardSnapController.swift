@@ -119,13 +119,21 @@ final class KeyboardSnapController: ObservableObject {
     var sessions: [UUID: KeyboardPlacementSession] = [:]
     private var activeTicket: PlacementCommitTicket?
     private var activeTicketToken: RuntimeWindowToken?
+    var activeExtensionTicket: PlacementCommitTicket?
+    var lastObservedWindowToken: RuntimeWindowToken?
     let maximumSessions = 64
     var lifecycleGeneration: UInt64 = 0
     var extensionHistoryGeneration: UInt64 = 0
     var extensionFlagsAvailable = false
     var previousModifierFlags: UInt64?
+    var lastExtensionModifierMask: UInt64?
+    var pendingExtensionAttempt: KeyboardExtensionAttempt?
     var isRunning = true
     private(set) var dragGateClosed = false
+
+    func setBusy(_ busy: Bool) {
+        isBusy = busy
+    }
 
     init(
         layoutController: LayoutController,
@@ -138,24 +146,11 @@ final class KeyboardSnapController: ObservableObject {
         self.environment = environment
     }
 
-    func handle(_ action: KeyboardSnapAction) {
-        guard isRunning, !isBusy, !dragGateClosed else { return }
-        isBusy = true
-        let generation = lifecycleGeneration
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.isBusy = false
-                self.didFinishAction?()
-            }
-            await self.perform(action, generation: generation)
-        }
-    }
-
     func shutdown() async {
         invalidatePendingOperations()
         setExtensionFlagsAvailable(false)
         isRunning = false
+        lastObservedWindowToken = nil
         sessions.removeAll()
         hasRestoreTarget = false
         await backend.shutdown()
@@ -187,7 +182,8 @@ final class KeyboardSnapController: ObservableObject {
     var accessibilityIsTrusted: Bool { environment.isAccessibilityTrusted() }
     var processID: pid_t { environment.ownPID }
 
-    private func perform(_ action: KeyboardSnapAction, generation: UInt64) async {
+    func perform(_ action: KeyboardSnapAction, generation: UInt64,
+                 extensionAttempt: KeyboardExtensionAttempt? = nil) async {
         guard isRunning, !dragGateClosed, lifecycleGeneration == generation else { return }
         if case .extend = action, !extensionFlagsAvailable {
             statusMessage = "Keyboard extension is unavailable because modifier monitoring is not ready."
@@ -208,16 +204,31 @@ final class KeyboardSnapController: ObservableObject {
         do {
             let focused = try await backend.focusedWindow(applicationPID: pid, ownPID: ownPID)
             guard isRunning, lifecycleGeneration == generation,
+                  extensionAttempt.map({ $0.historyGeneration == extensionHistoryGeneration }) ?? true,
                   frontmostPID == pid, accessibilityIsTrusted,
                   layoutController.keyboardSettings.isEnabled else {
                 await discardProbeIfUnowned(focused.token)
                 statusMessage = "The front window changed. Try the shortcut again."
                 return
             }
+            observeFocusedWindow(focused.token)
             if action == .restore {
                 await restore(focused, generation: generation)
             } else if case .extend = action {
-                await extend(action, focused: focused, generation: generation)
+                guard let extensionAttempt else { return }
+                let observedAttempt: KeyboardExtensionAttempt
+                if extensionHistoryGeneration == extensionAttempt.historyGeneration {
+                    observedAttempt = extensionAttempt
+                } else {
+                    observedAttempt = KeyboardExtensionAttempt(id: extensionAttempt.id,
+                                                               lifecycleGeneration: extensionAttempt.lifecycleGeneration,
+                                                               historyGeneration: extensionHistoryGeneration,
+                                                               modifierMask: extensionAttempt.modifierMask)
+                    if pendingExtensionAttempt?.id == extensionAttempt.id {
+                        pendingExtensionAttempt = observedAttempt
+                    }
+                }
+                await extend(action, focused: focused, attempt: observedAttempt)
             } else {
                 await place(action, focused: focused, generation: generation)
             }
@@ -396,12 +407,25 @@ extension KeyboardSnapController {
         activeTicketToken = token
     }
 
+    func installActiveExtensionTicket(_ ticket: PlacementCommitTicket, token: RuntimeWindowToken) {
+        installActiveTicket(ticket, token: token)
+        activeExtensionTicket = ticket
+    }
+
     func finishActiveTicket(_ ticket: PlacementCommitTicket) {
         ticket.finish()
         if activeTicket === ticket {
             activeTicket = nil
             activeTicketToken = nil
         }
+        if activeExtensionTicket === ticket { activeExtensionTicket = nil }
+    }
+
+    func observeFocusedWindow(_ token: RuntimeWindowToken) {
+        if let lastObservedWindowToken, lastObservedWindowToken != token {
+            resetNavigationHistory()
+        }
+        lastObservedWindowToken = token
     }
 
     private func invalidateActiveTicket(for pid: pid_t) {
@@ -454,6 +478,7 @@ extension KeyboardSnapController {
     func discardProcess(_ pid: pid_t) async {
         lifecycleGeneration &+= 1
         invalidateActiveTicket(for: pid)
+        if lastObservedWindowToken?.pid == pid { lastObservedWindowToken = nil }
         let removed = sessions.values.filter { $0.token.pid == pid }.map(\.token)
         sessions = sessions.filter { $0.value.token.pid != pid }
         hasRestoreTarget = !sessions.isEmpty
@@ -467,6 +492,7 @@ extension KeyboardSnapController {
     }
 
     func isEligible(_ action: KeyboardSnapAction, for focused: RuntimeWindowSnapshot, layout snapshot: KeyboardLayoutSnapshot?) -> Bool {
+        observeFocusedWindow(focused.token)
         if action == .restore {
             guard let session = sessions[focused.token.id] else { return false }
             return restoreFrame(for: session) != nil

@@ -2,12 +2,44 @@ import CoreGraphics
 import Foundation
 
 struct KeyboardExtensionAttempt {
+    let id: UUID
     let lifecycleGeneration: UInt64
     let historyGeneration: UInt64
+    let modifierMask: UInt64
 }
 
 @MainActor
 extension KeyboardSnapController {
+    func handle(_ action: KeyboardSnapAction) {
+        guard isRunning, !isBusy, !dragGateClosed else { return }
+        setBusy(true)
+        let generation = lifecycleGeneration
+        let attempt: KeyboardExtensionAttempt?
+        if case .extend = action {
+            let modifierMask = layoutController.keyboardSettings.shortcuts[action].map {
+                Self.eventFlags(for: $0.modifiers)
+            } ?? 0
+            let captured = KeyboardExtensionAttempt(id: UUID(), lifecycleGeneration: generation,
+                                                    historyGeneration: extensionHistoryGeneration,
+                                                    modifierMask: modifierMask)
+            pendingExtensionAttempt = captured
+            attempt = captured
+        } else {
+            attempt = nil
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if let attempt, self.pendingExtensionAttempt?.id == attempt.id {
+                    self.pendingExtensionAttempt = nil
+                }
+                self.setBusy(false)
+                self.didFinishAction?()
+            }
+            await self.perform(action, generation: generation, extensionAttempt: attempt)
+        }
+    }
+
     func flagsMonitorStatus(_ status: DragMonitorStatus) {
         switch status {
         case .ready:
@@ -30,22 +62,34 @@ extension KeyboardSnapController {
 
     func extensionModifierFlagsChanged(_ flags: UInt64) {
         guard extensionFlagsAvailable else { return }
-        defer { previousModifierFlags = flags }
-        guard let previousModifierFlags else { return }
-        let requiredFlags = Set(layoutController.keyboardSettings.shortcuts.compactMap { action, shortcut -> UInt64? in
-            guard case .extend = action else { return nil }
-            return Self.eventFlags(for: shortcut.modifiers)
-        }.filter { $0 != 0 })
-        if requiredFlags.contains(where: { previousModifierFlags & $0 == $0 && flags & $0 != $0 }) {
+        let requiredFlags = configuredExtensionModifierMasks
+        let activeOwnerMask = pendingExtensionAttempt?.modifierMask ?? lastExtensionModifierMask
+        guard let previousModifierFlags else {
+            self.previousModifierFlags = flags
+            // If an extension owns the history, only its chord can release it. Without an
+            // owner (for example, before the first extension), any active extension chord
+            // keeps history until the next observed transition.
+            let trackedChordIsReleased = activeOwnerMask.map { flags & $0 != $0 }
+                ?? (!requiredFlags.isEmpty && !requiredFlags.contains { flags & $0 == $0 })
+            if trackedChordIsReleased {
+                resetNavigationHistory()
+            }
+            return
+        }
+        self.previousModifierFlags = flags
+        let releasedOwnedChord = activeOwnerMask.map { flags & $0 != $0 }
+            ?? requiredFlags.contains { previousModifierFlags & $0 == $0 && flags & $0 != $0 }
+        if releasedOwnedChord {
             resetNavigationHistory()
         }
     }
 
-    func extend(_ action: KeyboardSnapAction, focused: RuntimeWindowSnapshot, generation: UInt64) async {
+    func extend(_ action: KeyboardSnapAction, focused: RuntimeWindowSnapshot,
+                attempt: KeyboardExtensionAttempt) async {
         guard let snapshot = layoutController.appliedLayoutSnapshot(for: focused.frame),
               let direction = extensionDirection(action) else { return }
-        let attempt = KeyboardExtensionAttempt(lifecycleGeneration: generation,
-                                               historyGeneration: extensionHistoryGeneration)
+        guard attempt.lifecycleGeneration == lifecycleGeneration,
+              attempt.historyGeneration == extensionHistoryGeneration else { return }
         let existing = sessions[focused.token.id]
         var currentSession = existing
         let existingExtensionIsCurrent = existing.map {
@@ -90,7 +134,8 @@ extension KeyboardSnapController {
             session.extensionAnchor = endpoint.0
             session.extensionEndpoint = endpoint.0
             let target = KeyboardNavigationTarget(session: session, address: endpoint.0, zone: endpoint.1)
-            await placeExtended([endpoint.1], endpoint: target, snapshot: snapshot, focused: focused, attempt: attempt)
+            await placeExtended([endpoint.1], endpoint: target, snapshot: snapshot, focused: focused,
+                                attempt: attempt)
             return
         }
         guard let nextZone = ZoneNavigator.directionalZone(from: currentZone.frame, zones: snapshot.zones,
@@ -106,11 +151,14 @@ extension KeyboardSnapController {
         let target = KeyboardNavigationTarget(session: session,
                                               address: ZoneAddress(workArea: snapshot.display.selectionKey, zoneID: nextZone.id),
                                               zone: nextZone)
-        await placeExtended(selection, endpoint: target, snapshot: snapshot, focused: focused, attempt: attempt)
+        await placeExtended(selection, endpoint: target, snapshot: snapshot, focused: focused,
+                            attempt: attempt)
     }
 
     func resetNavigationHistory(for workArea: WorkAreaKey? = nil) {
+        activeExtensionTicket?.invalidate()
         extensionHistoryGeneration &+= 1
+        lastExtensionModifierMask = nil
         for tokenID in Array(sessions.keys) {
             guard var session = sessions[tokenID], workArea == nil || session.extensionWorkArea == workArea else { continue }
             resetExtensionHistory(&session)
@@ -124,6 +172,11 @@ extension KeyboardSnapController {
         guard let targetFrame = ZoneSelectionEngine.union(of: selection.map(\.frame)),
               layoutController.isCurrent(snapshot, for: focused.frame), frontmostPID == focused.token.pid else { return }
         var session = endpoint.session
+        session.extensionAnchor = session.extensionAnchor ?? endpoint.address
+        session.extensionEndpoint = endpoint.address
+        session.extensionLayoutID = snapshot.layout.id
+        session.extensionWorkArea = snapshot.display.selectionKey
+        session.extensionPlacementRevision = snapshot.revision
         if sessions[focused.token.id] == nil {
             guard sessions.count < maximumSessions else { statusMessage = "Restore sessions are full."; return }
             await backend.retain(focused.token)
@@ -139,7 +192,8 @@ extension KeyboardSnapController {
                 statusMessage = "A window placement is already pending or in progress."
                 return
             }
-            installActiveTicket(ticket, token: focused.token)
+            installActiveExtensionTicket(ticket, token: focused.token)
+            lastExtensionModifierMask = attempt.modifierMask
             defer { finishActiveTicket(ticket) }
             let savedSettings = layoutController.keyboardSettings
             let preflight: @MainActor @Sendable () -> Bool = { [weak self] in
@@ -208,12 +262,20 @@ extension KeyboardSnapController {
         return (ZoneAddress(workArea: snapshot.display.selectionKey, zoneID: target.id), target)
     }
 
-    private static func eventFlags(for modifiers: UInt32) -> UInt64 {
+    static func eventFlags(for modifiers: UInt32) -> UInt64 {
         var flags: UInt64 = 0
         if modifiers & KeyboardShortcut.shift != 0 { flags |= CGEventFlags.maskShift.rawValue }
         if modifiers & KeyboardShortcut.control != 0 { flags |= CGEventFlags.maskControl.rawValue }
         if modifiers & KeyboardShortcut.option != 0 { flags |= CGEventFlags.maskAlternate.rawValue }
         if modifiers & KeyboardShortcut.command != 0 { flags |= CGEventFlags.maskCommand.rawValue }
         return flags
+    }
+
+    private var configuredExtensionModifierMasks: Set<UInt64> {
+        Set(layoutController.keyboardSettings.shortcuts.compactMap { action, shortcut -> UInt64? in
+            guard case .extend = action else { return nil }
+            let mask = Self.eventFlags(for: shortcut.modifiers)
+            return mask == 0 ? nil : mask
+        })
     }
 }
