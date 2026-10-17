@@ -17,6 +17,7 @@ struct DragLayoutSnapshot: Equatable, Sendable {
 @MainActor
 extension LayoutController {
     func invalidateAppliedDragLayout() {
+        cancelAutomaticRestores?()
         dragLayoutRevision &+= 1
         placementValidity.invalidateForLayoutChange()
         invalidateDragCommit?()

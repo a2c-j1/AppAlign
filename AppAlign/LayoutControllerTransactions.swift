@@ -247,6 +247,7 @@ extension LayoutController {
               snapshot.layout.id != id else { return nil }
 
         // Invalidate outstanding tickets before changing the assignment.
+        cancelAutomaticRestores?()
         placementValidity.invalidateForLayoutChange()
         dragLayoutRevision &+= 1
         quickLayoutMutationRevision &+= 1

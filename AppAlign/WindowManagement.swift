@@ -4,11 +4,87 @@ import AppKit
 import Foundation
 import Dispatch
 
+final class AXWindowCreationRegistration: @unchecked Sendable {
+    let isVerified: Bool
+    private let observer: AXObserver
+    private let source: CFRunLoopSource
+    private let applicationElement: AXUIElement
+    private let context: AXWindowCreationCallbackContext
+    private let callbackContext: UnsafeMutableRawPointer
+    private var invalidated = false
+
+    init?(pid: pid_t, signal: @escaping @Sendable () -> Void) {
+        var createdObserver: AXObserver?
+        guard AXObserverCreate(pid, axWindowCreationCallback, &createdObserver) == .success,
+              let createdObserver else { return nil }
+        observer = createdObserver
+        source = AXObserverGetRunLoopSource(createdObserver)
+        applicationElement = AXUIElementCreateApplication(pid)
+        context = AXWindowCreationCallbackContext(signal: signal)
+        callbackContext = Unmanaged.passRetained(context).toOpaque()
+        let timeoutResult = AXUIElementSetMessagingTimeout(applicationElement, 0.2)
+        guard timeoutResult == .success else {
+            isVerified = false
+            context.invalidate()
+            Unmanaged<AXWindowCreationCallbackContext>.fromOpaque(callbackContext).release()
+            return nil
+        }
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        let result = AXObserverAddNotification(observer, applicationElement,
+                                               kAXWindowCreatedNotification as CFString, callbackContext)
+        isVerified = result == .success
+        if !isVerified {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            context.invalidate()
+            Unmanaged<AXWindowCreationCallbackContext>.fromOpaque(callbackContext).release()
+            return nil
+        }
+    }
+
+    func invalidate() {
+        guard !invalidated else { return }
+        invalidated = true
+        context.invalidate()
+        AXObserverRemoveNotification(observer, applicationElement, kAXWindowCreatedNotification as CFString)
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        let releasingContext = context
+        DispatchQueue.main.async {
+            Unmanaged.passUnretained(releasingContext).release()
+        }
+    }
+}
+
+private final class AXWindowCreationCallbackContext: @unchecked Sendable {
+    private let lock = NSLock()
+    private let signal: @Sendable () -> Void
+    private var active = true
+
+    init(signal: @escaping @Sendable () -> Void) { self.signal = signal }
+
+    func receive() {
+        lock.lock()
+        let shouldSignal = active
+        lock.unlock()
+        if shouldSignal { signal() }
+    }
+
+    func invalidate() {
+        lock.lock()
+        active = false
+        lock.unlock()
+    }
+}
+
+private let axWindowCreationCallback: AXObserverCallback = { _, _, _, refcon in
+    guard let refcon else { return }
+    Unmanaged<AXWindowCreationCallbackContext>.fromOpaque(refcon).takeUnretainedValue().receive()
+}
+
 func configureAXMessagingTimeout(_ element: AXUIElement, timeout: Float) -> AXError {
     AXUIElementSetMessagingTimeout(element, timeout)
 }
 
-struct AXWindow {
+struct AXWindow: @unchecked Sendable {
     let applicationElement: AXUIElement
     let element: AXUIElement
     let pid: pid_t
@@ -248,6 +324,24 @@ struct WindowRepository {
             pid: pid
         )
     }
+
+    func applicationWindows(applicationPID: pid_t, timeout: Float? = nil,
+                            deadline: UInt64? = nil) throws -> [AXWindow] {
+        let timeout = timeout ?? messagingTimeout
+        let applicationElement = AXUIElementCreateApplication(applicationPID)
+        let timeoutResult = AXUIElementSetMessagingTimeout(applicationElement, timeout)
+        guard timeoutResult == .success else {
+            throw WindowManagementError.readFailed(attribute: "messaging timeout", code: timeoutResult.rawValue)
+        }
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(applicationElement, kAXWindowsAttribute as CFString, &value)
+        guard result == .success, let value, CFGetTypeID(value) == CFArrayGetTypeID(),
+              let elements = value as? [AXUIElement] else {
+            throw WindowManagementError.readFailed(attribute: kAXWindowsAttribute as String, code: result.rawValue)
+        }
+        return elements.map { AXWindow(applicationElement: applicationElement, element: $0, pid: applicationPID,
+                                       messagingTimeout: timeout, operationDeadline: deadline) }
+    }
 }
 
 private struct AXHitResult {
@@ -256,41 +350,6 @@ private struct AXHitResult {
     let windowElement: AXUIElement
     let hitRole: String?
     let ancestorRoles: [String]
-}
-
-actor AccessibilityWindowRuntime: KeyboardWindowOperating {
-    nonisolated let executor = AccessibilitySerialExecutor()
-    nonisolated var unownedExecutor: UnownedSerialExecutor { executor.asUnownedSerialExecutor() }
-    struct Record {
-        let window: AXWindow
-        var ownership = RuntimeWindowOwnership()
-        var revisionTracker = AXRevisionTracker()
-        var observerRegistration: AXObserverRegistration?
-    }
-
-    var records: [UUID: Record] = [:]
-    var writeInProgress = false
-    var lastWriteEndNanoseconds: UInt64 = 0
-    let repository = WindowRepository(messagingTimeout: 0.5)
-    let mover = WindowMover(messagingTimeout: 0.5, retryLimit: 1)
-    let focusedWindowProvider: @Sendable (pid_t) throws -> AXWindow
-    let focusedWindowValidator: @Sendable (AXWindow) throws -> Void
-    let frontmostPIDProvider: @Sendable () -> pid_t?
-    let accessibilityTrustedProvider: @Sendable () -> Bool
-
-    init(focusedWindowProvider: (@Sendable (pid_t) throws -> AXWindow)? = nil,
-         focusedWindowValidator: (@Sendable (AXWindow) throws -> Void)? = nil,
-         frontmostPIDProvider: (@Sendable () -> pid_t?)? = nil,
-         accessibilityTrustedProvider: (@Sendable () -> Bool)? = nil) {
-        self.focusedWindowProvider = focusedWindowProvider ?? { pid in
-            try WindowRepository(messagingTimeout: 0.5).focusedWindow(applicationPID: pid)
-        }
-        self.focusedWindowValidator = focusedWindowValidator ?? { window in
-            try WindowFilter(ownPID: ProcessInfo.processInfo.processIdentifier).validate(window)
-        }
-        self.frontmostPIDProvider = frontmostPIDProvider ?? { NSWorkspace.shared.frontmostApplication?.processIdentifier }
-        self.accessibilityTrustedProvider = accessibilityTrustedProvider ?? { AXIsProcessTrusted() }
-    }
 }
 
 extension AccessibilityWindowRuntime {
@@ -353,9 +412,17 @@ extension AccessibilityWindowRuntime {
         record.ownership.retainDrag(lease)
         let tracker = record.revisionTracker
         let hadObserverRegistration = record.observerRegistration != nil
-        if record.observerRegistration == nil {
-            record.observerRegistration = AXObserverRegistration(pid: hit.pid, element: window.element,
-                                                                 tracker: tracker, deadline: deadline)
+        if record.observerRegistration?.mode != .full {
+            let previousRegistration = record.observerRegistration
+            let upgradedRegistration = AXObserverRegistration(pid: hit.pid, element: window.element,
+                                                               tracker: tracker, deadline: deadline)
+            if upgradedRegistration?.mode == .full, upgradedRegistration?.notificationsVerified == true {
+                previousRegistration?.invalidate()
+                record.observerRegistration = upgradedRegistration
+            } else {
+                upgradedRegistration?.invalidate()
+                record.observerRegistration = previousRegistration
+            }
         }
         if DispatchTime.now().uptimeNanoseconds >= deadline {
             if !hadObserverRegistration {
@@ -367,7 +434,8 @@ extension AccessibilityWindowRuntime {
             if !Self.isOwned(record) { records.removeValue(forKey: token.id) }
             throw WindowManagementError.operationFailed
         }
-        let notificationsVerified = record.observerRegistration?.notificationsVerified ?? false
+        let notificationsVerified = record.observerRegistration?.mode == .full &&
+            (record.observerRegistration?.notificationsVerified ?? false)
         records[token.id] = record
         let revision = tracker.snapshot(since: downTimestamp)
         guard !revision.destroyed else {

@@ -243,3 +243,24 @@ struct LayoutHotkeySettings: Equatable, Sendable {
         return output
     }
 }
+
+struct AppHistorySettings: Equatable, Sendable {
+    var monitorNewWindows = false
+    var restoreNewWindows = false
+
+    static let managedKeys: Set<String> = ["appHistory.monitor", "appHistory.restore"]
+
+    static func decode(from values: [String: PersistedSetting]) -> AppHistorySettings {
+        var result = AppHistorySettings()
+        if case .bool(let value) = values["appHistory.monitor"] { result.monitorNewWindows = value }
+        if case .bool(let value) = values["appHistory.restore"] { result.restoreNewWindows = value }
+        return result
+    }
+
+    func applying(to values: [String: PersistedSetting]) -> [String: PersistedSetting] {
+        var result = values
+        result["appHistory.monitor"] = .bool(monitorNewWindows)
+        result["appHistory.restore"] = .bool(restoreNewWindows)
+        return result
+    }
+}

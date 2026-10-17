@@ -76,6 +76,10 @@ actor FakeDragReader: DragWindowReading, DragCommitOperating, KeyboardWindowOper
     private var token = RuntimeWindowToken(id: UUID(), pid: 2)
     private var focusedToken: RuntimeWindowToken?
     private var leases = Set<DragLeaseID>()
+    private var historyLeases = Set<RuntimeHistoryLeaseID>()
+    private var pauseHistoryRetain = false
+    private var historyRetainBarrier: CheckedContinuation<Void, Never>?
+    private var historyRetainArrival: CheckedContinuation<Void, Never>?
     private var currentFrame = CGRect(x: 0, y: 0, width: 400, height: 300)
     private var capturedAt: UInt64 = 1
     private var verified = true
@@ -102,11 +106,19 @@ actor FakeDragReader: DragWindowReading, DragCommitOperating, KeyboardWindowOper
     var captureBlocked: Bool { captureBarrier != nil }
     var frameBlocked: Bool { frameBarrier != nil }
     var releaseBlocked: Bool { releaseBarrier != nil }
+    var historyRetainBlocked: Bool { historyRetainBarrier != nil }
+    var historyLeaseCount: Int { historyLeases.count }
     var commitBlocked: Bool { commitBarrier != nil }
     var leaseCount: Int { leases.count }
     func blockCapture() { pauseCapture = true }
     func blockFrame() { pauseFrame = true }
     func blockRelease() { pauseRelease = true }
+    func blockHistoryRetain() { pauseHistoryRetain = true }
+    func waitForHistoryRetain() async {
+        if !pauseHistoryRetain { return }
+        await withCheckedContinuation { historyRetainArrival = $0 }
+    }
+    func releaseHistoryRetain() { historyRetainBarrier?.resume(); historyRetainBarrier = nil }
     func resumeCapture() { captureBarrier?.resume(); captureBarrier = nil }
     func resumeFrame() { frameBarrier?.resume(); frameBarrier = nil }
     func resumeRelease() { releaseBarrier?.resume(); releaseBarrier = nil }
@@ -126,6 +138,19 @@ actor FakeDragReader: DragWindowReading, DragCommitOperating, KeyboardWindowOper
     func setHit(verified: Bool, fail: Bool) { self.verified = verified; hitFails = fail }
     func failFrame() { frameFails = true; resumeFrame() }
     func isWriteInProgress() async -> Bool { false }
+    func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async -> Bool {
+        if pauseHistoryRetain {
+            pauseHistoryRetain = false
+            historyRetainArrival?.resume()
+            historyRetainArrival = nil
+            await withCheckedContinuation { historyRetainBarrier = $0 }
+        }
+        historyLeases.insert(lease)
+        return true
+    }
+    func releaseHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async {
+        historyLeases.remove(lease)
+    }
     func tokenValue() -> RuntimeWindowToken { token }
     func currentFrameValue() -> CGRect { currentFrame }
     func retainFakeLease(_ lease: DragLeaseID) { leases.insert(lease); ownership.retainDrag(lease) }
