@@ -32,6 +32,8 @@ final class DisplayConfigurationControllerTests: XCTestCase {
     func testSleepThenDisplayAndCGCompletionBeforeDeliveryStaysClosedUntilWake() async throws {
         let fixture = makeFixture()
         fixture.controller.start()
+        var permissionPollingStates: [Bool] = []
+        fixture.controller.historyPermissionPollingSuspendedChanged = { permissionPollingStates.append($0) }
         let pointer = try XCTUnwrap(fixture.registeredPointer.pointer)
         let asleep = expectation(description: "sleep remains pending after display notifications")
         fixture.effects.gateExpectations[true] = asleep
@@ -49,6 +51,7 @@ final class DisplayConfigurationControllerTests: XCTestCase {
         XCTAssertNil(fixture.layout.appliedDragLayoutSnapshot(at: CGPoint(x: 10, y: 10)))
 
         await fulfillment(of: [asleep], timeout: 2)
+        XCTAssertEqual(permissionPollingStates, [true], "Sleep stops the history permission timer synchronously.")
         XCTAssertFalse(fixture.validity.isAccepting)
         XCTAssertEqual(fixture.provider.snapshot, fixture.snapshotA)
         XCTAssertNil(fixture.layout.appliedLayoutSnapshot(for: fixture.snapshotA.displays[0].frame))
@@ -59,6 +62,7 @@ final class DisplayConfigurationControllerTests: XCTestCase {
         fixture.effects.gateExpectations[false] = awake
         fixture.workspace.post(name: NSWorkspace.didWakeNotification, object: nil)
         await fulfillment(of: [awake], timeout: 2)
+        XCTAssertEqual(permissionPollingStates, [true, false], "Wake resumes lifecycle through the current settings gate.")
         XCTAssertEqual(fixture.provider.snapshot, fixture.snapshotB)
         XCTAssertTrue(fixture.validity.isAccepting)
         fixture.controller.dispose()

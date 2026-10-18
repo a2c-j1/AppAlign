@@ -40,7 +40,7 @@ struct DragCommitContext: Sendable {
     let displayFingerprint: String
 }
 
-protocol DragCommitOperating: Sendable {
+protocol DragCommitOperating: WindowHistoryLeaseOperating {
     func handoffDragLease(token: RuntimeWindowToken, sourceLease: DragLeaseID, commitID: DragCommitID, ticket: DragCommitTicket) async -> Bool
     func commitDrag(_ offer: DragCommitOffer, preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect
     func releaseDragLease(_ lease: DragLeaseID) async
@@ -56,6 +56,7 @@ final class DragSnapController: ObservableObject {
     private let layoutController: LayoutController
     private let validity: PlacementValidity
     private let runtime: any DragCommitOperating
+    private let bundleIdentifierProvider: @MainActor (pid_t) -> String?
     private var activeOffer: DragCommitOffer?
     private var task: Task<Void, Never>?
     private var deadlineTask: Task<Void, Never>?
@@ -71,11 +72,15 @@ final class DragSnapController: ObservableObject {
     private var lastModifierFlags: UInt64?
 
     init(layoutController: LayoutController, runtime: any DragCommitOperating,
-         overlay: any ZoneOverlayPresenting = ZoneOverlayManager()) {
+         overlay: any ZoneOverlayPresenting = ZoneOverlayManager(),
+         bundleIdentifierProvider: @escaping @MainActor (pid_t) -> String? = {
+             NSRunningApplication(processIdentifier: $0)?.bundleIdentifier
+         }) {
         self.layoutController = layoutController
         validity = layoutController.placementValidity
         self.runtime = runtime
         self.overlay = overlay
+        self.bundleIdentifierProvider = bundleIdentifierProvider
     }
 
     var settings: DragSettings { layoutController.dragSettings }
@@ -112,10 +117,14 @@ final class DragSnapController: ObservableObject {
         }
         if gestureActive { renderOverlay(point: event.location, flags: event.flags) }
     }
+}
 
+@MainActor
+extension DragSnapController {
     func accept(_ offer: DragCommitOffer) -> Bool {
         guard activeOffer == nil, !isCommitting,
               offer.ticket.state == .pending else { return false }
+        layoutController.cancelAutomaticRestores?()
         activeOffer = offer
         isCommitting = true
         gateChanged?(true)
@@ -130,6 +139,13 @@ final class DragSnapController: ObservableObject {
             await runtime.releaseDragCommit(token: offer.token, commitID: offer.id)
         }
         task = Task { @MainActor [self, runtime] in
+            await performCommit(offer, generation: generation, runtime: runtime)
+        }
+        return true
+    }
+
+    private func performCommit(_ offer: DragCommitOffer, generation: UInt64,
+                               runtime: any DragCommitOperating) async {
             defer {
                 offer.ticket.finish()
                 if self.activeOffer?.id == offer.id {
@@ -141,6 +157,25 @@ final class DragSnapController: ObservableObject {
                     self.task = nil
                 }
             }
+            let reservedHistoryLease = self.layoutController.reserveAppPlacement(
+                token: offer.token,
+                bundleID: self.bundleIdentifierProvider(offer.token.pid),
+                display: offer.layoutSnapshot.display,
+                layout: offer.layoutSnapshot.layout
+            )
+            let historyLease = await self.layoutController.acquireAppPlacement(reservedHistoryLease, using: runtime)
+            guard self.generation == generation, self.activeOffer?.id == offer.id,
+                  self.layoutController.appliedDragLayoutSnapshot(at: offer.point) == offer.layoutSnapshot,
+                  offer.ticket.state == .pending else {
+                self.layoutController.releaseAppPlacement(historyLease)
+                if let historyLease {
+                    await runtime.releaseHistoryLease(historyLease.token, lease: historyLease.runtimeLeaseID)
+                }
+                await runtime.releaseDragLease(offer.sourceLease)
+                await runtime.releaseDragCommit(token: offer.token, commitID: offer.id)
+                return
+            }
+            defer { self.layoutController.releaseAppPlacement(historyLease) }
             do {
                 guard await runtime.handoffDragLease(token: offer.token, sourceLease: offer.sourceLease,
                                                      commitID: offer.id, ticket: offer.ticket) else {
@@ -154,7 +189,7 @@ final class DragSnapController: ObservableObject {
                     await runtime.releaseDragCommit(token: offer.token, commitID: offer.id)
                     return
                 }
-                _ = try await runtime.commitDrag(offer) { [weak self] in
+                let actualFrame = try await runtime.commitDrag(offer) { [weak self] in
                     guard let self, self.generation == generation,
                           self.activeOffer?.id == offer.id,
                           self.layoutController.appliedDragLayoutSnapshot(at: offer.point) == offer.layoutSnapshot,
@@ -162,12 +197,16 @@ final class DragSnapController: ObservableObject {
                           offer.ticket.state == .pending else { return false }
                     return true
                 }
-                guard self.generation == generation, self.activeOffer?.id == offer.id,
+                guard Self.framesMatch(actualFrame, offer.targetFrame),
+                      self.generation == generation, self.activeOffer?.id == offer.id,
                       self.layoutController.appliedDragLayoutSnapshot(at: offer.point) == offer.layoutSnapshot,
                       offer.layoutSnapshot.placementRevision == offer.ticket.revision,
                       offer.ticket.completeIfCurrent(now: DispatchTime.now().uptimeNanoseconds) else {
                     throw WindowManagementError.displayConfigurationChanged
                 }
+                self.layoutController.acceptSuccessfulAppPlacement(
+                    historyLease, zoneIDs: offer.zoneIDs.map(\.rawValue).sorted()
+                )
                 if self.generation == generation, self.activeOffer?.id == offer.id {
                     self.statusMessage = "Window placed in zone."
                 }
@@ -178,8 +217,13 @@ final class DragSnapController: ObservableObject {
             }
             await runtime.releaseDragLease(offer.sourceLease)
             await runtime.releaseDragCommit(token: offer.token, commitID: offer.id)
-        }
-        return true
+
+    }
+
+    private static func framesMatch(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+        DisplayGeometry.isFinite(lhs) && DisplayGeometry.isFinite(rhs) &&
+            abs(lhs.minX - rhs.minX) <= 2 && abs(lhs.minY - rhs.minY) <= 2 &&
+            abs(lhs.width - rhs.width) <= 2 && abs(lhs.height - rhs.height) <= 2
     }
 
     func prepareCommit(_ context: DragCommitContext) -> Bool {

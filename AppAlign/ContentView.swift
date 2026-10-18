@@ -67,10 +67,10 @@ struct ContentView: View {
 
                     HStack {
                         Button("Place Captured Window in Selected Zone") {
-                            layoutController.placeSelectedZone(using: placementController)
+                            Task { await layoutController.placeSelectedZone(using: placementController) }
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(!layoutController.canEdit || !placementController.hasCapturedWindow || layoutController.selectedZoneID == nil)
+                        .disabled(!layoutController.canEdit || !placementController.hasCapturedWindow || placementController.isBusy || layoutController.selectedZoneID == nil)
                         if let error = layoutController.persistenceErrorMessage ?? layoutController.errorMessage {
                             Text(error).font(.caption).foregroundStyle(.red)
                         }
@@ -195,14 +195,14 @@ struct ContentView: View {
 
                     HStack {
                         Button("Restore") {
-                            placementController.restoreCapturedWindow()
+                            Task { await placementController.restoreCapturedWindow() }
                         }
-                        .disabled(!placementController.canRestore)
+                        .disabled(!placementController.canRestore || placementController.isBusy)
 
                         Button("Forget Capture") {
                             placementController.clearCapture()
                         }
-                        .disabled(!placementController.hasCapturedWindow)
+                        .disabled(!placementController.hasCapturedWindow || placementController.isBusy)
                     }
 
                     Text(placementController.statusMessage)
@@ -226,6 +226,8 @@ struct ContentView: View {
                 .padding(.vertical, 4)
             }
 
+            newWindowHistorySection
+
                 Spacer(minLength: 12)
             }
             .padding(28)
@@ -239,6 +241,55 @@ struct ContentView: View {
             if let displayID = layoutController.selectedDisplayID {
                 LayoutEditorView(controller: layoutController, initialDisplayID: displayID)
             }
+        }
+    }
+}
+
+private extension ContentView {
+    var newWindowHistorySection: some View {
+        GroupBox("New-window history") {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle("Monitor newly opened windows", isOn: Binding(
+                    get: { layoutController.appHistorySettings.monitorNewWindows },
+                    set: { value in
+                        var updated = layoutController.appHistorySettings
+                        updated.monitorNewWindows = value
+                        layoutController.updateAppHistorySettings(updated)
+                    }
+                ))
+                .disabled(!layoutController.canEdit || !layoutController.appZoneHistoryAvailable)
+                Toggle("Restore matching windows automatically", isOn: Binding(
+                    get: { layoutController.appHistorySettings.restoreNewWindows },
+                    set: { value in
+                        var updated = layoutController.appHistorySettings
+                        updated.restoreNewWindows = value
+                        layoutController.updateAppHistorySettings(updated)
+                    }
+                ))
+                .disabled(!layoutController.canEdit || !layoutController.appZoneHistoryAvailable ||
+                          !layoutController.appHistorySettings.monitorNewWindows)
+                Text(layoutController.appZoneHistoryErrorMessage ??
+                     "History is learned after a successful placement. New-window monitoring and automatic restoration start off.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if placementController.historyPermissionRetryRequired {
+                    Button("Retry window monitoring") {
+                        placementController.retryAppHistoryPermission()
+                    }
+                    .disabled(!layoutController.canEdit)
+                }
+                if layoutController.appZoneHistoryErrorMessage != nil || layoutController.appHistorySettingsRetrySnapshot != nil {
+                    Button("Retry History Save") {
+                        Task {
+                            _ = await layoutController.retryAppZoneHistorySaves()
+                            _ = await layoutController.retryAppHistorySettingsSave()
+                        }
+                    }
+                    .disabled(!layoutController.canEdit)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
         }
     }
 }

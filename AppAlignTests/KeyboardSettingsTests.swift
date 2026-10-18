@@ -95,4 +95,34 @@ final class KeyboardSettingsTests: XCTestCase {
         XCTAssertEqual(saved["keyboard.future.setting"], .string("preserve"))
         XCTAssertEqual(saved["other.feature.flag"], .bool(true))
     }
+
+    @MainActor
+    func testAppHistorySettingsPersistAcrossCategoryUpdatesAndKeepUnknownValues() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("AppAlignHistorySettings-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersistentStoreCoordinator(directory: directory)
+        try await store.saveLayouts([PersistentStoreCoordinator.defaultLayout()])
+        try await store.saveSettings(["appHistory.future.option": .string("keep")])
+        let layout = LayoutController(storeCoordinator: store)
+        await layout.loadPersistentState()
+        XCTAssertFalse(layout.appHistorySettings.monitorNewWindows)
+        XCTAssertFalse(layout.appHistorySettings.restoreNewWindows)
+
+        var history = layout.appHistorySettings
+        history.monitorNewWindows = true
+        history.restoreNewWindows = true
+        layout.updateAppHistorySettings(history)
+        var keyboard = layout.keyboardSettings
+        keyboard.isEnabled = true
+        layout.updateKeyboardSettings(keyboard)
+        let flushed = await layout.flush()
+        XCTAssertTrue(flushed)
+
+        let reloaded = LayoutController(storeCoordinator: PersistentStoreCoordinator(directory: directory))
+        await reloaded.loadPersistentState()
+        XCTAssertTrue(reloaded.appHistorySettings.monitorNewWindows)
+        XCTAssertTrue(reloaded.appHistorySettings.restoreNewWindows)
+        XCTAssertTrue(reloaded.keyboardSettings.isEnabled)
+        XCTAssertEqual(reloaded.settings["appHistory.future.option"], .string("keep"))
+    }
 }

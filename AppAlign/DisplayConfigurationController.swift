@@ -36,6 +36,7 @@ final class DisplayConfigurationController {
     private let callbackContext: DisplayCallbackContext
     private var registeredWithCoreGraphics = false
     private(set) var monitoringDiagnostics: [String] = []
+    var historyPermissionPollingSuspendedChanged: (@MainActor (Bool) -> Void)?
     var callbackContextIdentityForTesting: ObjectIdentifier { ObjectIdentifier(callbackContext) }
     var callbackEpochForTesting: UInt64 { callbackEpoch }
 
@@ -142,12 +143,14 @@ final class DisplayConfigurationController {
 
     func cancelQuit() {
         sleeping = false
+        historyPermissionPollingSuspendedChanged?(false)
         start()
         refreshAfterSignal()
     }
 
     private func beginInvalidation(revision: UInt64? = nil) -> UInt64 {
         let revision = revision ?? validity.invalidateForConfigurationChange()
+        layout.cancelAutomaticRestores?()
         pendingRevision = revision
         effects.setConfigurationPending(true)
         effects.invalidateKeyboard()
@@ -219,10 +222,12 @@ final class DisplayConfigurationController {
             handledSleepTransition = state.sleepTransition
             sleeping = state.sleeping
             if sleeping {
+                historyPermissionPollingSuspendedChanged?(true)
                 pollingTimer?.invalidate()
                 pollingTimer = nil
                 return
             }
+            historyPermissionPollingSuspendedChanged?(false)
             refreshAfterSignal(revision: currentRevision)
             startPolling()
             return

@@ -105,19 +105,40 @@ struct PlacementResult {
     let actualFrame: CGRect
 }
 
-struct WindowMover {
+protocol WindowPlacementOperating: Sendable {
+    func movePlacement(_ window: AXWindow, to requestedFrame: CGRect,
+                       ticket: PlacementCommitTicket) throws -> PlacementResult
+    func moveDrag(_ window: AXWindow, to requestedFrame: CGRect, ticket: DragCommitTicket) throws -> PlacementResult
+}
+
+protocol WindowPlacementEffects: Sendable {
+    func setPosition(_ point: CGPoint, on window: AXWindow) throws
+    func setSize(_ size: CGSize, on window: AXWindow) throws
+    func readFrame(on window: AXWindow) throws -> CGRect
+}
+
+struct AccessibilityWindowPlacementEffects: WindowPlacementEffects {
+    func setPosition(_ point: CGPoint, on window: AXWindow) throws { try window.setPosition(point) }
+    func setSize(_ size: CGSize, on window: AXWindow) throws { try window.setSize(size) }
+    func readFrame(on window: AXWindow) throws -> CGRect { try window.stableFrame() }
+}
+
+struct WindowMover: WindowPlacementOperating, Sendable {
     let messagingTimeout: Float
     let retryLimit: Int
     let frameTolerance: CGFloat
+    let effects: any WindowPlacementEffects
 
     init(
         messagingTimeout: Float = 0.5,
         retryLimit: Int = 1,
-        frameTolerance: CGFloat = 2
+        frameTolerance: CGFloat = 2,
+        effects: any WindowPlacementEffects = AccessibilityWindowPlacementEffects()
     ) {
         self.messagingTimeout = messagingTimeout
         self.retryLimit = max(0, retryLimit)
         self.frameTolerance = max(0, frameTolerance)
+        self.effects = effects
     }
 
     func move(_ window: AXWindow, to requestedFrame: CGRect) throws -> PlacementResult {
@@ -179,7 +200,7 @@ struct WindowMover {
             guard ticket.mayContinueWrite(now: now), now < ticket.totalDeadline else {
                 throw WindowManagementError.operationFailed
             }
-            let timeout = Float(min(0.5, Double(ticket.totalDeadline - now) / 1_000_000_000))
+            let timeout = Float(min(Double(messagingTimeout), Double(ticket.totalDeadline - now) / 1_000_000_000))
             guard timeout > 0.01 else { throw WindowManagementError.operationFailed }
             return AXWindow(applicationElement: window.applicationElement, element: window.element,
                             pid: window.pid, messagingTimeout: timeout,
@@ -208,7 +229,7 @@ struct WindowMover {
             guard ticket.mayContinueWrite(now: now), now < ticket.totalDeadline else {
                 throw WindowManagementError.displayConfigurationChanged
             }
-            let timeout = Float(min(0.5, Double(ticket.totalDeadline - now) / 1_000_000_000))
+            let timeout = Float(min(Double(messagingTimeout), Double(ticket.totalDeadline - now) / 1_000_000_000))
             guard timeout > 0.01 else { throw WindowManagementError.operationFailed }
             return AXWindow(applicationElement: window.applicationElement, element: window.element,
                             pid: window.pid, messagingTimeout: timeout,
@@ -218,10 +239,10 @@ struct WindowMover {
         var lastError: WindowManagementError = .operationFailed
         for attempt in 0 ... retryLimit {
             do {
-                try permitted().setPosition(requestedFrame.origin)
-                try permitted().setSize(requestedFrame.size)
-                try permitted().setPosition(requestedFrame.origin)
-                let actualFrame = try permitted().stableFrame()
+                try effects.setPosition(requestedFrame.origin, on: permitted())
+                try effects.setSize(requestedFrame.size, on: permitted())
+                try effects.setPosition(requestedFrame.origin, on: permitted())
+                let actualFrame = try effects.readFrame(on: permitted())
                 guard framesMatch(requestedFrame, actualFrame) else {
                     throw WindowManagementError.frameMismatch(requested: requestedFrame, actual: actualFrame)
                 }

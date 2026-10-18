@@ -1,6 +1,96 @@
 import XCTest
 
 final class RuntimeWindowOwnershipTests: XCTestCase {
+    func testRuntimeHistoryCapacityCountsUniqueTokensAndAllowsOneReplacementLease() async throws {
+        let runtime = AccessibilityWindowRuntime(
+            focusedWindowValidator: { _ in },
+            accessibilityTrustedProvider: { true },
+            historyObserverProvider: { _, _, _, _ in true }
+        )
+        var tokens: [RuntimeWindowToken] = []
+        for index in 0 ..< 65 {
+            let pid = pid_t(98_000 + index)
+            let element = AXUIElementCreateApplication(pid)
+            tokens.append(try await runtime.token(for: AXWindow(applicationElement: element, element: element, pid: pid)))
+        }
+
+        let firstLease = RuntimeHistoryLeaseID()
+        let firstRetained = await runtime.retainHistoryLease(tokens[0], lease: firstLease)
+        XCTAssertTrue(firstRetained)
+        var leases = [firstLease]
+        for index in 1 ..< 64 {
+            let lease = RuntimeHistoryLeaseID()
+            leases.append(lease)
+            let retained = await runtime.retainHistoryLease(tokens[index], lease: lease)
+            XCTAssertTrue(retained)
+        }
+        let replacement = RuntimeHistoryLeaseID()
+        let replacementRetained = await runtime.retainHistoryLease(tokens[0], lease: replacement)
+        XCTAssertTrue(replacementRetained)
+        let replacementCount = await runtime.historyLeaseCount(for: tokens[0])
+        XCTAssertEqual(replacementCount, 2)
+        let thirdRetained = await runtime.retainHistoryLease(tokens[0], lease: RuntimeHistoryLeaseID())
+        XCTAssertFalse(thirdRetained)
+        let sixtyFifthRetained = await runtime.retainHistoryLease(tokens[64], lease: RuntimeHistoryLeaseID())
+        XCTAssertFalse(sixtyFifthRetained)
+
+        await runtime.releaseHistoryLease(tokens[0], lease: replacement)
+        let remainingCount = await runtime.historyLeaseCount(for: tokens[0])
+        XCTAssertEqual(remainingCount, 1)
+        await runtime.releaseHistoryLease(tokens[63], lease: leases[63])
+    }
+
+    func testRuntimeMonitorSeenLeasesRetainRecordsAndReleaseOnlyTheirOwnSlot() async throws {
+        let runtime = AccessibilityWindowRuntime(focusedWindowValidator: { _ in }, accessibilityTrustedProvider: { true })
+        var tokens: [RuntimeWindowToken] = []
+        for index in 0 ..< 65 {
+            let pid = pid_t(97_000 + index)
+            let element = AXUIElementCreateApplication(pid)
+            tokens.append(try await runtime.token(for: AXWindow(applicationElement: element, element: element, pid: pid)))
+        }
+        var leases: [RuntimeMonitorSeenLeaseID] = []
+        for token in tokens.prefix(64) {
+            let lease = RuntimeMonitorSeenLeaseID()
+            leases.append(lease)
+            let retained = await runtime.retainMonitorSeenLease(token, lease: lease)
+            XCTAssertTrue(retained)
+        }
+        let sixtyFifthRetained = await runtime.retainMonitorSeenLease(tokens[64], lease: RuntimeMonitorSeenLeaseID())
+        XCTAssertFalse(sixtyFifthRetained)
+        let trackedCount = await runtime.retainedMonitorSeenTokenCount
+        XCTAssertEqual(trackedCount, 64)
+        let replacementLease = RuntimeMonitorSeenLeaseID()
+        let replacementRetained = await runtime.retainMonitorSeenLease(tokens[1], lease: replacementLease)
+        XCTAssertTrue(replacementRetained, "An already-seen token may temporarily retain its replacement lease at capacity.")
+        let extraLeaseRetained = await runtime.retainMonitorSeenLease(tokens[1], lease: RuntimeMonitorSeenLeaseID())
+        XCTAssertFalse(extraLeaseRetained, "A token may hold at most two monitor leases.")
+        await runtime.releaseMonitorSeenLease(tokens[0], lease: leases[0])
+        let firstCount = await runtime.monitorSeenLeaseCount(for: tokens[0])
+        XCTAssertEqual(firstCount, 0)
+        let reusedSlot = await runtime.retainMonitorSeenLease(tokens[64], lease: RuntimeMonitorSeenLeaseID())
+        XCTAssertTrue(reusedSlot)
+        let unrelatedCount = await runtime.monitorSeenLeaseCount(for: tokens[1])
+        XCTAssertEqual(unrelatedCount, 2)
+    }
+
+    func testManualLeaseProtectsWindowAndReleasesIndependentlyFromKeyboardAndDragOwners() {
+        let manual = ManualWindowLeaseID()
+        let drag = DragLeaseID(rawValue: UUID())
+        var ownership = RuntimeWindowOwnership()
+        ownership.retainKeyboard()
+        ownership.retainManual(manual)
+        ownership.retainDrag(drag)
+        ownership.releaseManual(manual)
+        XCTAssertTrue(ownership.isOwned)
+        XCTAssertTrue(ownership.manualLeases.isEmpty)
+        XCTAssertTrue(ownership.dragLeases.contains(drag))
+        XCTAssertTrue(ownership.keyboardRetained)
+        ownership.releaseDrag(drag)
+        XCTAssertTrue(ownership.isOwned)
+        ownership.discardKeyboard()
+        XCTAssertFalse(ownership.isOwned)
+    }
+
     func testActualFocusedWindowPathRechecksOwnershipAfterPreflightAwait() async throws {
         for teardown in [RuntimeTeardown.discard, .shutdown] {
             let pid: pid_t = 99001
@@ -142,6 +232,9 @@ final class RuntimeWindowOwnershipTests: XCTestCase {
         await runtime.shutdown()
     }
 
+}
+
+extension RuntimeWindowOwnershipTests {
     func testKeyboardDiscardKeepsRecordWhileDragLeaseIsActive() {
         var ownership = RuntimeWindowOwnership()
         let lease = DragLeaseID(rawValue: UUID())

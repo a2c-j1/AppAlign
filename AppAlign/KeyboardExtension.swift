@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -171,6 +172,20 @@ extension KeyboardSnapController {
                                attempt: KeyboardExtensionAttempt) async {
         guard let targetFrame = ZoneSelectionEngine.union(of: selection.map(\.frame)),
               layoutController.isCurrent(snapshot, for: focused.frame), frontmostPID == focused.token.pid else { return }
+        let reservedHistoryLease = layoutController.reserveAppPlacement(
+            token: focused.token,
+            bundleID: environment.bundleIdentifier(focused.token.pid),
+            display: snapshot.display,
+            layout: snapshot.layout
+        )
+        let historyLease = await layoutController.acquireAppPlacement(reservedHistoryLease, using: backend)
+        guard isRunning, lifecycleGeneration == attempt.lifecycleGeneration,
+              extensionHistoryGeneration == attempt.historyGeneration,
+              layoutController.isCurrent(snapshot, for: focused.frame), frontmostPID == focused.token.pid else {
+            layoutController.releaseAppPlacement(historyLease)
+            return
+        }
+        defer { layoutController.releaseAppPlacement(historyLease) }
         var session = endpoint.session
         session.extensionAnchor = session.extensionAnchor ?? endpoint.address
         session.extensionEndpoint = endpoint.address
@@ -210,6 +225,8 @@ extension KeyboardSnapController {
             guard preflight(), ticket.completeIfCurrent(now: DispatchTime.now().uptimeNanoseconds) else {
                 throw WindowManagementError.displayConfigurationChanged
             }
+            layoutController.acceptSuccessfulAppPlacement(historyLease,
+                                                          zoneIDs: selection.map { $0.id.rawValue })
             session.activeAddress = endpoint.address
             session.extensionEndpoint = endpoint.address
             session.extensionLayoutID = snapshot.layout.id

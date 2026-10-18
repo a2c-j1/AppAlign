@@ -1,7 +1,8 @@
 import CoreGraphics
+import Darwin
 import Foundation
 
-enum PersistedSpaceScope: String, Codable, Sendable {
+enum PersistedSpaceScope: String, Codable, Hashable, Sendable {
     case common
 }
 
@@ -193,6 +194,37 @@ struct AssignmentStore: Codable, Sendable {
     var assignments: [PersistedAssignment]
 }
 
+/// A stable, privacy-preserving key for a window's last successful zone assignment.
+/// Process identifiers, accessibility handles, titles, and transient display IDs are
+/// deliberately absent so a record survives launches without identifying a window.
+struct AppZoneHistoryKey: Codable, Hashable, Sendable {
+    let bundleID: String
+    let displayUUID: UUID
+    let spaceScope: PersistedSpaceScope
+    let layoutID: UUID
+}
+
+struct AppZoneHistoryRecord: Codable, Equatable, Sendable {
+    let key: AppZoneHistoryKey
+    let zoneIDs: [Int]
+    let revision: UInt64
+
+    init(key: AppZoneHistoryKey, zoneIDs: [Int], revision: UInt64) {
+        self.key = key
+        self.zoneIDs = Self.normalized(zoneIDs)
+        self.revision = revision
+    }
+
+    static func normalized(_ zoneIDs: [Int]) -> [Int] {
+        var seen = Set<Int>()
+        return zoneIDs.filter { seen.insert($0).inserted }.sorted()
+    }
+}
+
+struct AppZoneHistoryStore: Codable, Sendable {
+    var records: [AppZoneHistoryRecord]
+}
+
 struct SettingsStore: Codable, Sendable {
     var values: [String: PersistedSetting]
 }
@@ -210,6 +242,23 @@ enum PersistenceError: LocalizedError {
         case .backupFailed(let url): "Could not safely back up damaged data at \(url.path)."
         case .storeUnavailable(let name): "The \(name) store is unavailable."
         }
+    }
+}
+
+enum AppZoneHistoryWriterProcessLock {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var claimedPaths = Set<String>()
+
+    static func claim(_ path: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return claimedPaths.insert(path).inserted
+    }
+
+    static func release(_ path: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        claimedPaths.remove(path)
     }
 }
 
@@ -237,11 +286,13 @@ struct StoreURLs: Sendable {
     let layouts: URL
     let assignments: URL
     let settings: URL
+    let appZoneHistory: URL
 
     init(directory: URL) {
         layouts = directory.appendingPathComponent("layouts.json")
         assignments = directory.appendingPathComponent("assignments.json")
         settings = directory.appendingPathComponent("settings.json")
+        appZoneHistory = directory.appendingPathComponent("app-zone-history.json")
     }
 }
 
@@ -249,16 +300,25 @@ struct LoadedPersistentState: Sendable {
     var layouts: [UUID: PersistedLayout]
     var assignments: [UUID: PersistedAssignment]
     var settings: [String: PersistedSetting]
+    var appZoneHistory: [AppZoneHistoryKey: AppZoneHistoryRecord]
+    var appZoneHistoryAvailable: Bool
+    var maxAppZoneHistoryRevision: UInt64
     var layoutStoreNeedsRepair: Bool
 }
 
 actor PersistentStoreCoordinator {
     static let defaultLayoutID = UUID(uuid: (0xA1, 0x10, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04))
-    private let urls: StoreURLs
-    private let fileAccess: any AtomicFileAccess
-    private let encoder: JSONEncoder
+    let urls: StoreURLs
+    let fileAccess: any AtomicFileAccess
+    let encoder: JSONEncoder
     private let decoder = JSONDecoder()
-    private var protectedStores = Set<String>()
+    var protectedStores = Set<String>()
+    var appZoneHistoryWriterFD: Int32?
+    var appZoneHistoryWriterPath: String?
+    var appZoneHistoryWriterUnavailable = false
+    var appZoneHistoryLoadAttempted = false
+    var appZoneHistoryAvailable = false
+    var appZoneHistoryNeedsPrune = false
 
     init(directory: URL, fileAccess: any AtomicFileAccess = LocalAtomicFileAccess()) {
         urls = StoreURLs(directory: directory)
@@ -267,16 +327,43 @@ actor PersistentStoreCoordinator {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     }
 
+    deinit {
+        if let appZoneHistoryWriterFD {
+            _ = Darwin.lockf(appZoneHistoryWriterFD, F_ULOCK, 0)
+            _ = Darwin.close(appZoneHistoryWriterFD)
+        }
+        if let appZoneHistoryWriterPath { AppZoneHistoryWriterProcessLock.release(appZoneHistoryWriterPath) }
+    }
+
     static func applicationSupportDirectory(fileManager: FileManager = .default) throws -> URL {
         try fileManager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             .appendingPathComponent("jp.a2c.AppAlign", isDirectory: true)
     }
 
     func load() throws -> LoadedPersistentState {
+        appZoneHistoryLoadAttempted = true
         let layoutFile = try loadStore(LayoutStore.self, at: urls.layouts, name: "layouts", default: LayoutStore(layouts: [Self.defaultLayout()]), validate: Self.validateLayouts)
         let assignmentFile = try loadStore(AssignmentStore.self, at: urls.assignments, name: "assignments", default: AssignmentStore(assignments: []), validate: Self.validateAssignments)
         let settingsFile = try loadStore(SettingsStore.self, at: urls.settings, name: "settings", default: SettingsStore(values: [:]), validate: Self.validateSettings)
         let layouts = Dictionary(uniqueKeysWithValues: layoutFile.value.layouts.map { ($0.id, $0) })
+        let historyFile: LoadedStore<AppZoneHistoryStore>?
+        if (try? ensureAppZoneHistoryWriter()) != nil {
+            historyFile = try? loadStore(AppZoneHistoryStore.self, at: urls.appZoneHistory, name: "app-zone-history",
+                                         default: AppZoneHistoryStore(records: []), validate: Self.validateAppZoneHistory)
+            appZoneHistoryAvailable = historyFile != nil
+        } else {
+            historyFile = nil
+            appZoneHistoryAvailable = false
+        }
+        let history: [AppZoneHistoryKey: AppZoneHistoryRecord] = Dictionary(
+            (historyFile?.value.records ?? []).compactMap { record in
+                guard Self.isValid(record, layouts: layouts) else { return nil }
+                return (record.key, record)
+            }, uniquingKeysWith: { existing, incoming in
+                existing.revision >= incoming.revision ? existing : incoming
+            })
+        let maxHistoryRevision = historyFile?.value.records.map(\.revision).max() ?? 0
+        if let historyFile, history.count != historyFile.value.records.count { appZoneHistoryNeedsPrune = true }
         var assignments: [UUID: PersistedAssignment] = [:]
         var repaired = false
         for assignment in assignmentFile.value.assignments {
@@ -292,7 +379,10 @@ actor PersistentStoreCoordinator {
                 throw PersistenceError.storeUnavailable("assignments")
             }
         }
-        return LoadedPersistentState(layouts: layouts, assignments: assignments, settings: settingsFile.value.values, layoutStoreNeedsRepair: layoutFile.wasRecovered)
+        return LoadedPersistentState(layouts: layouts, assignments: assignments, settings: settingsFile.value.values,
+                                     appZoneHistory: history, appZoneHistoryAvailable: appZoneHistoryAvailable,
+                                     maxAppZoneHistoryRevision: maxHistoryRevision,
+                                     layoutStoreNeedsRepair: layoutFile.wasRecovered)
     }
 
     func saveLayouts(_ layouts: [PersistedLayout]) throws {
@@ -300,6 +390,17 @@ actor PersistentStoreCoordinator {
         let ordered = layouts.sorted { $0.id.uuidString < $1.id.uuidString }
         try Self.validateLayouts(LayoutStore(layouts: ordered))
         try save(LayoutStore(layouts: ordered), to: urls.layouts)
+        // Layout persistence remains authoritative if history cleanup fails. Loads
+        // and future upserts validate against the saved catalog and cannot revive it.
+        if appZoneHistoryAvailable {
+            appZoneHistoryNeedsPrune = true
+            do {
+                try pruneAppZoneHistory(validLayouts: Dictionary(uniqueKeysWithValues: ordered.map { ($0.id, $0) }))
+            } catch {
+                // The history-specific pending flag is retried by flush without turning
+                // a successfully saved layout catalog into a failed layout transaction.
+            }
+        }
     }
 
     func saveAssignments(_ assignments: [PersistedAssignment]) throws {
@@ -328,9 +429,15 @@ actor PersistentStoreCoordinator {
         try saveLayouts(layouts)
     }
 
-    func flush() throws {}
+    func flush() throws {
+        guard appZoneHistoryNeedsPrune else { return }
+        let loaded = try loadStore(LayoutStore.self, at: urls.layouts, name: "layouts",
+                                   default: LayoutStore(layouts: [Self.defaultLayout()]), validate: Self.validateLayouts)
+        let layouts = Dictionary(uniqueKeysWithValues: loaded.value.layouts.map { ($0.id, $0) })
+        try pruneAppZoneHistory(validLayouts: layouts)
+    }
 
-    private func loadStore<Value: Codable & Sendable>(
+    func loadStore<Value: Codable & Sendable>(
         _ type: Value.Type,
         at url: URL,
         name: String,
@@ -383,7 +490,7 @@ actor PersistentStoreCoordinator {
         }
     }
 
-    private func ensureWritable(_ name: String) throws {
+    func ensureWritable(_ name: String) throws {
         guard !protectedStores.contains(name) else { throw PersistenceError.storeUnavailable(name) }
     }
 
@@ -398,11 +505,11 @@ actor PersistentStoreCoordinator {
         }
     }
 
-    private func save<Value: Codable & Sendable>(_ value: Value, to url: URL) throws {
+    func save<Value: Codable & Sendable>(_ value: Value, to url: URL) throws {
         try fileAccess.writeAtomically(encoder.encode(VersionedStore(schemaVersion: 1, value: value)), to: url)
     }
 
-    private static func validateLayouts(_ store: LayoutStore) throws {
+    static func validateLayouts(_ store: LayoutStore) throws {
         guard Set(store.layouts.map(\.id)).count == store.layouts.count else { throw PersistenceError.invalidData("duplicate layout IDs") }
         for layout in store.layouts { try layout.validate() }
     }
@@ -432,7 +539,7 @@ private struct StoreHeader: Decodable {
     let schemaVersion: Int
 }
 
-private struct LoadedStore<Value: Sendable> {
+struct LoadedStore<Value: Sendable> {
     let value: Value
     let wasRecovered: Bool
     let sourceBytes: Data

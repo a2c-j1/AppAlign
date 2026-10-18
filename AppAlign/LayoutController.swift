@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import CoreGraphics
 import Foundation
@@ -11,6 +12,123 @@ struct EditorOperationIdentity: Equatable, Sendable {
 struct EditorCatalogSnapshot: Sendable {
     let layouts: [PersistedLayout]
     let appliedLayoutID: UUID
+}
+
+@MainActor
+final class AppHistoryCoordinator {
+    struct Lease: Equatable {
+        let id: UUID
+        let key: AppZoneHistoryKey
+        let token: RuntimeWindowToken
+        let expectedLayout: PersistedLayout
+        let runtimeLeaseID: RuntimeHistoryLeaseID
+    }
+
+    private struct Assignment {
+        let token: RuntimeWindowToken
+        let sequence: UInt64
+        let runtimeLeaseID: RuntimeHistoryLeaseID
+    }
+
+    private var owners: [AppZoneHistoryKey: RuntimeWindowToken] = [:]
+    private var assignments: [AppZoneHistoryKey: [Assignment]] = [:]
+    private var currentKeys: [RuntimeWindowToken: AppZoneHistoryKey] = [:]
+    private var pendingLeases: [UUID: Lease] = [:]
+    private var nextSequence: UInt64 = 0
+    var releaseRuntimeLease: (@MainActor (RuntimeWindowToken, RuntimeHistoryLeaseID) -> Void)?
+    var assignedTokenCount: Int { currentKeys.count }
+    func isAssigned(token: RuntimeWindowToken) -> Bool { currentKeys[token] != nil }
+
+    func reservePlacement(token: RuntimeWindowToken, bundleID: String, displayUUID: UUID,
+                          expectedLayout: PersistedLayout,
+                          spaceScope: PersistedSpaceScope = .common) -> Lease? {
+        guard !bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !bundleID.contains("\n") else { return nil }
+        let key = AppZoneHistoryKey(bundleID: bundleID, displayUUID: displayUUID,
+                                    spaceScope: spaceScope, layoutID: expectedLayout.id)
+        let pendingNewTokens = Set(pendingLeases.values.map(\.token)).subtracting(currentKeys.keys)
+        guard pendingLeases.count < 64,
+              currentKeys[token] != nil || currentKeys.count + pendingNewTokens.count < 64 else {
+            return nil
+        }
+        let lease = Lease(id: UUID(), key: key, token: token, expectedLayout: expectedLayout,
+                          runtimeLeaseID: RuntimeHistoryLeaseID())
+        pendingLeases[lease.id] = lease
+        return lease
+    }
+
+    func release(_ lease: Lease) -> Bool {
+        pendingLeases.removeValue(forKey: lease.id) != nil
+    }
+
+    func isPending(_ lease: Lease) -> Bool { pendingLeases[lease.id] == lease }
+
+    func acceptSuccessfulPlacement(_ lease: Lease) -> Bool? {
+        guard pendingLeases.removeValue(forKey: lease.id) == lease else { return nil }
+        let alreadyAssigned = assignments[lease.key]?.contains(where: { $0.token == lease.token }) == true
+        guard alreadyAssigned || nextSequence < UInt64.max else { return nil }
+        if alreadyAssigned {
+            releaseRuntimeLease?(lease.token, lease.runtimeLeaseID)
+            return owners[lease.key] == lease.token
+        }
+        if currentKeys[lease.token] != lease.key { removeAssignments(for: lease.token) }
+        var entries = assignments[lease.key] ?? []
+        if !entries.contains(where: { $0.token == lease.token }) {
+            guard currentKeys.count < 64 || currentKeys[lease.token] == lease.key else { return nil }
+            nextSequence += 1
+            entries.append(Assignment(token: lease.token, sequence: nextSequence,
+                                      runtimeLeaseID: lease.runtimeLeaseID))
+            assignments[lease.key] = entries
+            currentKeys[lease.token] = lease.key
+        }
+        if owners[lease.key] == nil { owners[lease.key] = lease.token }
+        return owners[lease.key] == lease.token
+    }
+
+    func windowDestroyed(_ token: RuntimeWindowToken) {
+        removeAssignments(where: { $0.token == token })
+    }
+
+    func processTerminated(_ token: RuntimeWindowToken) {
+        removeAssignments(where: { $0.token.pid == token.pid && $0.token.processGeneration == token.processGeneration })
+    }
+
+    func restoreSucceeded(_ token: RuntimeWindowToken) {
+        removeAssignments(for: token)
+    }
+
+    private func removeAssignments(for token: RuntimeWindowToken) {
+        removeAssignments(where: { $0.token == token })
+        currentKeys.removeValue(forKey: token)
+    }
+
+    private func removeAssignments(where shouldRemove: (Assignment) -> Bool) {
+        for key in Array(assignments.keys) {
+            let removed = (assignments[key] ?? []).filter(shouldRemove)
+            for assignment in removed {
+                releaseRuntimeLease?(assignment.token, assignment.runtimeLeaseID)
+            }
+            let remaining = (assignments[key] ?? []).filter { !shouldRemove($0) }
+            if remaining.isEmpty {
+                assignments.removeValue(forKey: key)
+                owners.removeValue(forKey: key)
+            } else {
+                assignments[key] = remaining
+                if owners[key].map({ token in remaining.contains(where: { $0.token == token }) }) != true {
+                    owners[key] = remaining.min(by: { $0.sequence < $1.sequence })?.token
+                }
+            }
+        }
+        for token in Array(currentKeys.keys) where shouldRemove(Assignment(token: token, sequence: 0,
+                                                                           runtimeLeaseID: RuntimeHistoryLeaseID(rawValue: UUID()))) {
+            currentKeys.removeValue(forKey: token)
+        }
+        for (id, lease) in Array(pendingLeases) where shouldRemove(Assignment(token: lease.token, sequence: 0,
+                                                                               runtimeLeaseID: lease.runtimeLeaseID)) {
+            pendingLeases.removeValue(forKey: id)
+            releaseRuntimeLease?(lease.token, lease.runtimeLeaseID)
+        }
+    }
 }
 
 enum EditorOperationResult: Sendable {
@@ -34,9 +152,15 @@ final class LayoutController: ObservableObject {
     @Published var canEdit = false
     @Published var keyboardSettings = KeyboardSettings()
     @Published var layoutHotkeySettings = LayoutHotkeySettings()
+    @Published var appHistorySettings = AppHistorySettings()
     @Published var keyboardSettingsErrorMessage: String?
+    @Published var appZoneHistory: [AppZoneHistoryKey: AppZoneHistoryRecord] = [:]
+    @Published private(set) var appZoneHistoryAvailable = false
+    @Published var appZoneHistoryErrorMessage: String?
+    var cancelAutomaticRestores: (@MainActor () -> Void)?
 
     let storeCoordinator: PersistentStoreCoordinator?
+    let appHistoryCoordinator = AppHistoryCoordinator()
     var savedLayouts: [UUID: PersistedLayout] = [:] {
         didSet {
             if oldValue != savedLayouts, !isApplyingQuickLayout {
@@ -78,6 +202,9 @@ final class LayoutController: ObservableObject {
     var lastFailedOperation: (@MainActor (PersistentStoreCoordinator) async throws -> Void)?
     var lastFailedQuickMutationRevision: UInt64?
     var hasPendingQuickAssignmentSave = false
+    var appZoneHistoryRetryRecords: [AppZoneHistoryKey: AppZoneHistoryRecord] = [:]
+    var appZoneHistoryRetryLayouts: [AppZoneHistoryKey: PersistedLayout] = [:]
+    var nextAppZoneHistoryRevision: UInt64 = 0
     var isRetryingSave = false
     var editorOperationTargets: [UUID: DisplaySelectionID] = [:]
     var editorOperationRevisions: [UUID: UInt64] = [:]
@@ -85,8 +212,11 @@ final class LayoutController: ObservableObject {
     var keyboardSettingsRetrySnapshot: [String: PersistedSetting]?
     var layoutHotkeySettingsRevision: UInt64 = 0
     var layoutHotkeySettingsRetrySnapshot: [String: PersistedSetting]?
+    var appHistorySettingsRevision: UInt64 = 0
+    var appHistorySettingsRetrySnapshot: [String: PersistedSetting]?
     var dragLayoutRevision: UInt64 = 0
     let placementValidity: PlacementValidity
+    let bundleIdentifierProvider: @MainActor (pid_t) -> String?
     var dragSettings = DragSettings()
     var dragSettingsRetrySnapshot: [String: PersistedSetting]?
     var dragSettingsRevision: UInt64 = 0
@@ -99,9 +229,13 @@ final class LayoutController: ObservableObject {
     var quickLayoutOverrides: [DisplaySelectionID: PersistedLayout] = [:]
 
     init(displayProvider: DisplayProvider = DisplayProvider(), storeCoordinator: PersistentStoreCoordinator? = nil,
-         placementValidity: PlacementValidity = PlacementValidity()) {
+         placementValidity: PlacementValidity = PlacementValidity(),
+         bundleIdentifierProvider: @escaping @MainActor (pid_t) -> String? = {
+             NSRunningApplication(processIdentifier: $0)?.bundleIdentifier
+         }) {
         self.displayProvider = displayProvider
         self.placementValidity = placementValidity
+        self.bundleIdentifierProvider = bundleIdentifierProvider
         if let storeCoordinator {
             self.storeCoordinator = storeCoordinator
         } else if let directory = Self.applicationStoreDirectory() {
@@ -114,7 +248,10 @@ final class LayoutController: ObservableObject {
         selectedDisplayID = displayProvider.snapshot.displays.first(where: \.isPrimary)?.id
         recalculate()
     }
+}
 
+@MainActor
+extension LayoutController {
     func loadPersistentState() async {
         guard !persistenceReady, !loadInProgress else { return }
         guard let storeCoordinator else {
@@ -128,6 +265,12 @@ final class LayoutController: ObservableObject {
             let state = try await storeCoordinator.load()
             guard revision == requestedLoadRevision else { return }
             adoptPersistedStatePreservingQuickSwitches(state)
+            appZoneHistory = state.appZoneHistory
+            appZoneHistoryAvailable = state.appZoneHistoryAvailable
+            nextAppZoneHistoryRevision = state.maxAppZoneHistoryRevision
+            if !state.appZoneHistoryAvailable {
+                appZoneHistoryErrorMessage = "App window history storage is unavailable. Layouts can still be used."
+            }
             adoptSettings(state.settings)
             persistenceReady = true
             canEdit = acceptsChanges
@@ -199,6 +342,8 @@ final class LayoutController: ObservableObject {
             if keyboardSettingsRetrySnapshot != nil, !(await retryKeyboardSettingsSave()) { return false }
             if dragSettingsRetrySnapshot != nil, !(await retryDragSettingsSave()) { return false }
             if layoutHotkeySettingsRetrySnapshot != nil, !(await retryLayoutHotkeySettingsSave()) { return false }
+            if appHistorySettingsRetrySnapshot != nil, !(await retryAppHistorySettingsSave()) { return false }
+            if !(await retryAppZoneHistorySaves()) { return false }
             try await storeCoordinator?.flush()
             return persistenceReady && lastSaveSucceeded
         } catch {
@@ -218,8 +363,9 @@ final class LayoutController: ObservableObject {
         return success
     }
 
-    func placeSelectedZone(using placementController: PlacementController) {
+    func placeSelectedZone(using placementController: PlacementController) async {
         guard canEdit else { return }
+        cancelAutomaticRestores?()
         guard let zone = zones.first(where: { $0.id == selectedZoneID }) else { return }
         let zonesFingerprint = zonesDisplayFingerprint
         _ = refreshDisplays()
@@ -229,11 +375,46 @@ final class LayoutController: ObservableObject {
             return
         }
         do {
-            try placementController.placeCapturedWindow(in: zone.frame, displayFingerprint: zonesFingerprint ?? "")
+            guard let display = selectedDisplay else { return }
+            let token = placementController.capturedRuntimeToken
+            let manualCaptureIdentity = placementController.manualCaptureIdentity
+            let placementRevision = placementValidity.revision
+            let quickLayoutRevision = quickLayoutMutationRevision
+            let targetLayout = currentLayout
+            let targetZoneID = zone.id
+            let targetDisplayID = display.id
+            let bundleID = token.flatMap { bundleIdentifierProvider($0.pid) }
+            let reservedHistoryLease = token.flatMap {
+                reserveAppPlacement(token: $0, bundleID: bundleID, display: display, layout: targetLayout)
+            }
+            let historyLease: AppHistoryCoordinator.Lease?
+            if let historyRuntime = placementController.historyRuntime {
+                historyLease = await acquireAppPlacement(reservedHistoryLease, using: historyRuntime)
+            } else {
+                releaseAppPlacement(reservedHistoryLease)
+                historyLease = nil
+            }
+            guard token == placementController.capturedRuntimeToken,
+                  manualCaptureIdentity == placementController.manualCaptureIdentity,
+                  placementRevision == placementValidity.revision,
+                  quickLayoutRevision == quickLayoutMutationRevision,
+                  currentLayout == targetLayout, selectedZoneID == targetZoneID,
+                  selectedDisplay?.id == targetDisplayID, canEdit, acceptsChanges else {
+                releaseAppPlacement(historyLease)
+                return
+            }
+            defer { releaseAppPlacement(historyLease) }
+            let context = PlacementHistoryContext(display: display, layout: targetLayout,
+                                                  zoneIDs: [targetZoneID.rawValue], historyLease: historyLease,
+                                                  expectedToken: token)
+            try await placementController.placeCapturedWindowAsync(in: zone.frame,
+                                                                   displayFingerprint: zonesFingerprint ?? "",
+                                                                   historyContext: context)
         } catch {
             errorMessage = error.localizedDescription
         }
     }
+
     func enqueueSave(isQuickAssignmentSave: Bool = false, acknowledgesQuickAssignment: Bool = false,
                      _ operation: @escaping @MainActor (PersistentStoreCoordinator) async throws -> Void) {
         guard acceptsChanges, let storeCoordinator else { return }

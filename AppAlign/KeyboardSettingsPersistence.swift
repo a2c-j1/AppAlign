@@ -39,6 +39,15 @@ extension LayoutController {
         enqueueSettingsSave(category: .drag, revision: dragSettingsRevision)
     }
 
+    func updateAppHistorySettings(_ updated: AppHistorySettings) {
+        guard acceptsChanges, persistenceReady else { return }
+        appHistorySettings = updated
+        settings = updated.applying(to: settings)
+        appHistorySettingsRevision &+= 1
+        appHistorySettingsRetrySnapshot = settings
+        enqueueSettingsSave(category: .appHistory, revision: appHistorySettingsRevision)
+    }
+
     func retryKeyboardSettingsSave() async -> Bool {
         await retrySettingsSave(category: .keyboard)
     }
@@ -49,6 +58,10 @@ extension LayoutController {
 
     func retryLayoutHotkeySettingsSave() async -> Bool {
         await retrySettingsSave(category: .layoutHotkey)
+    }
+
+    func retryAppHistorySettingsSave() async -> Bool {
+        await retrySettingsSave(category: .appHistory)
     }
 
     func adoptSettings(_ loaded: [String: PersistedSetting]) {
@@ -67,13 +80,18 @@ extension LayoutController {
             for key in keys { merged.removeValue(forKey: key) }
             merged.merge(snapshot.filter { keys.contains($0.key) }) { _, pending in pending }
         }
+        if let snapshot = appHistorySettingsRetrySnapshot {
+            for key in AppHistorySettings.managedKeys { merged.removeValue(forKey: key) }
+            merged.merge(snapshot.filter { AppHistorySettings.managedKeys.contains($0.key) }) { _, pending in pending }
+        }
         settings = merged
         keyboardSettings = KeyboardSettings.decode(from: merged)
         dragSettings = DragSettings.decode(from: merged)
         layoutHotkeySettings = LayoutHotkeySettings.decode(from: merged)
+        appHistorySettings = AppHistorySettings.decode(from: merged)
     }
 
-    private enum SettingsCategory: Equatable { case keyboard, drag, layoutHotkey }
+    private enum SettingsCategory: Equatable { case keyboard, drag, layoutHotkey, appHistory }
 
     private func enqueueSettingsSave(category: SettingsCategory, revision: UInt64) {
         guard let storeCoordinator else {
@@ -128,6 +146,7 @@ extension LayoutController {
         let layoutKeys = LayoutHotkeySettings.managedKeys(in: settings)
             .union(LayoutHotkeySettings.managedKeys(in: layoutHotkeySettingsRetrySnapshot ?? [:]))
         mergePending(layoutHotkeySettingsRetrySnapshot, keys: layoutKeys, into: &result)
+        mergePending(appHistorySettingsRetrySnapshot, keys: AppHistorySettings.managedKeys, into: &result)
         return result
     }
 
@@ -142,6 +161,7 @@ extension LayoutController {
         case .keyboard: keyboardSettingsRevision
         case .drag: dragSettingsRevision
         case .layoutHotkey: layoutHotkeySettingsRevision
+        case .appHistory: appHistorySettingsRevision
         }
     }
 
@@ -154,6 +174,7 @@ extension LayoutController {
         case .keyboard: keyboardSettingsRetrySnapshot != nil
         case .drag: dragSettingsRetrySnapshot != nil
         case .layoutHotkey: layoutHotkeySettingsRetrySnapshot != nil
+        case .appHistory: appHistorySettingsRetrySnapshot != nil
         }
     }
 
@@ -162,6 +183,7 @@ extension LayoutController {
         case .keyboard: keyboardSettingsRetrySnapshot = settings
         case .drag: dragSettingsRetrySnapshot = settings
         case .layoutHotkey: layoutHotkeySettingsRetrySnapshot = settings
+        case .appHistory: appHistorySettingsRetrySnapshot = settings
         }
     }
 
@@ -170,6 +192,7 @@ extension LayoutController {
         case .keyboard: keyboardSettingsRetrySnapshot = nil
         case .drag: dragSettingsRetrySnapshot = nil
         case .layoutHotkey: layoutHotkeySettingsRetrySnapshot = nil
+        case .appHistory: appHistorySettingsRetrySnapshot = nil
         }
     }
 }

@@ -86,6 +86,60 @@ final class DragSnapTests: XCTestCase {
     }
 
     @MainActor
+    func testInvalidationDuringHistoryLeaseAcquireAlwaysFinishesCommitAndReleasesSource() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("AppAlignDragHistoryAcquire-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersistentStoreCoordinator(directory: directory)
+        try await store.saveLayouts([PersistentStoreCoordinator.defaultLayout()])
+        let display = makeDisplay()
+        let layout = LayoutController(
+            displayProvider: DisplayProvider(snapshot: DisplaySnapshot(displays: [display], primaryFrame: display.frame)),
+            storeCoordinator: store
+        )
+        await layout.loadPersistentState()
+        let runtime = FakeDragReader()
+        let overlay = FakeZoneOverlay()
+        let snap = DragSnapController(layoutController: layout, runtime: runtime, overlay: overlay,
+                                      bundleIdentifierProvider: { _ in "com.example.DragHistory" })
+        var gateState: [Bool] = []
+        snap.gateChanged = { gateState.append($0) }
+        let point = CGPoint(x: 20, y: 20)
+        let snapshot = try XCTUnwrap(layout.appliedDragLayoutSnapshot(at: point))
+        let zone = try XCTUnwrap(snapshot.zones.first)
+        let sourceLease = DragLeaseID(rawValue: UUID())
+        await runtime.retainFakeLease(sourceLease)
+        let now = DispatchTime.now().uptimeNanoseconds
+        let ticket = try XCTUnwrap(layout.placementValidity.reserve(startDeadline: now + 2_000_000_000,
+                                                                    totalDeadline: now + 5_000_000_000))
+        let offer = DragCommitOffer(id: DragCommitID(), run: 1, session: 1, inputEpoch: 1, gesture: 1,
+                                    token: await runtime.tokenValue(), sourceLease: sourceLease,
+                                    originalFrame: CGRect(x: 0, y: 0, width: 400, height: 300),
+                                    targetFrame: zone.frame, point: point, flags: 0, timestamp: 1, sequence: 1,
+                                    displayFingerprint: snapshot.fingerprint, layoutRevision: snapshot.revision,
+                                    workAreaKey: snapshot.workAreaKey, zoneID: zone.id,
+                                    layoutSnapshot: snapshot, ticket: ticket)
+        await runtime.blockHistoryRetain()
+        XCTAssertTrue(snap.accept(offer))
+        try await spin { await runtime.historyRetainBlocked }
+        snap.cancel(reason: "Layout changed while history lease was pending.")
+        await runtime.releaseHistoryRetain()
+        try await spin { !snap.isCommitting }
+
+        let owners = await runtime.ownerSnapshot
+        let historyLeaseCount = await runtime.historyLeaseCount
+        XCTAssertFalse(snap.isCommitting)
+        XCTAssertFalse(gateState.last ?? true)
+        XCTAssertTrue(owners.dragLeases.isEmpty)
+        XCTAssertTrue(owners.dragCommits.isEmpty)
+        XCTAssertEqual(historyLeaseCount, 0)
+        let nextTicket = try XCTUnwrap(layout.placementValidity.reserve(
+            startDeadline: DispatchTime.now().uptimeNanoseconds + 2_000_000_000,
+            totalDeadline: DispatchTime.now().uptimeNanoseconds + 5_000_000_000
+        ))
+        nextTicket.finish()
+    }
+
+    @MainActor
     func testExpiredBeforeHandoffReleasesClaimedSourceAndNeverWrites() async throws {
         let display = makeDisplay()
         let layout = LayoutController(displayProvider: DisplayProvider(snapshot: DisplaySnapshot(displays: [display], primaryFrame: display.frame)))
@@ -178,6 +232,14 @@ final class DragSnapTests: XCTestCase {
         XCTAssertTrue(owners.dragCommits.isEmpty)
     }
 
+    private func makeDisplay() -> Display {
+        Display(runtimeID: RuntimeDisplayID(rawValue: 1), persistentID: PersistentDisplayID(uuid: UUID()),
+                sessionID: UUID(), name: "Test", frame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+                workArea: CGRect(x: 0, y: 0, width: 1_000, height: 800), isPrimary: true, backingScaleFactor: 1)
+    }
+}
+
+extension DragSnapTests {
     @MainActor
     func testEnvironmentChangeCancelsGestureAndLateInputCannotReshowOverlayOrCommit() async throws {
         let fixture = DragFixture()
@@ -209,12 +271,6 @@ final class DragSnapTests: XCTestCase {
         XCTAssertFalse(overlay.isVisible)
         XCTAssertEqual(writes, 0)
         fixture.stop()
-    }
-
-    private func makeDisplay() -> Display {
-        Display(runtimeID: RuntimeDisplayID(rawValue: 1), persistentID: PersistentDisplayID(uuid: UUID()),
-                sessionID: UUID(), name: "Test", frame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
-                workArea: CGRect(x: 0, y: 0, width: 1_000, height: 800), isPrimary: true, backingScaleFactor: 1)
     }
 }
 

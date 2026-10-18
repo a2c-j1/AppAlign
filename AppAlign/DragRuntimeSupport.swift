@@ -3,15 +3,46 @@ import CoreGraphics
 import Dispatch
 import Foundation
 
+protocol WindowHistoryLeaseOperating: Sendable {
+    func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async -> Bool
+    func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID,
+                            deadline: UInt64) async -> Bool
+    func releaseHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async
+}
+
+struct RuntimeMonitorSeenLeaseID: Hashable, Sendable {
+    let rawValue: UUID
+
+    init(rawValue: UUID = UUID()) { self.rawValue = rawValue }
+}
+
+extension WindowHistoryLeaseOperating {
+    func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async -> Bool { false }
+    func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID,
+                            deadline: UInt64) async -> Bool {
+        false
+    }
+    func releaseHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async {}
+}
+
 struct RuntimeWindowOwnership: Sendable {
     private(set) var keyboardRetained = false
+    private(set) var manualLeases = Set<ManualWindowLeaseID>()
+    private(set) var historyLeases = Set<RuntimeHistoryLeaseID>()
+    private(set) var monitorSeenLeases = Set<RuntimeMonitorSeenLeaseID>()
     private(set) var dragLeases = Set<DragLeaseID>()
     private(set) var dragCommits = Set<DragCommitID>()
 
-    var isOwned: Bool { keyboardRetained || !dragLeases.isEmpty || !dragCommits.isEmpty }
+    var isOwned: Bool { keyboardRetained || !manualLeases.isEmpty || !historyLeases.isEmpty || !monitorSeenLeases.isEmpty || !dragLeases.isEmpty || !dragCommits.isEmpty }
 
     mutating func retainKeyboard() { keyboardRetained = true }
     mutating func discardKeyboard() { keyboardRetained = false }
+    mutating func retainManual(_ lease: ManualWindowLeaseID) { manualLeases.insert(lease) }
+    mutating func releaseManual(_ lease: ManualWindowLeaseID) { manualLeases.remove(lease) }
+    mutating func retainHistory(_ lease: RuntimeHistoryLeaseID) { historyLeases.insert(lease) }
+    mutating func releaseHistory(_ lease: RuntimeHistoryLeaseID) { historyLeases.remove(lease) }
+    mutating func retainMonitorSeen(_ lease: RuntimeMonitorSeenLeaseID) { monitorSeenLeases.insert(lease) }
+    mutating func releaseMonitorSeen(_ lease: RuntimeMonitorSeenLeaseID) { monitorSeenLeases.remove(lease) }
     mutating func retainDrag(_ lease: DragLeaseID) { dragLeases.insert(lease) }
     mutating func releaseDrag(_ lease: DragLeaseID) { dragLeases.remove(lease) }
     mutating func retainDragCommit(_ commit: DragCommitID) { dragCommits.insert(commit) }
@@ -94,6 +125,15 @@ final class AXRevisionTracker: @unchecked Sendable {
     private var lastResizeAt: UInt64 = 0
     private var isDestroyed = false
     private var changes: [WindowRevisionChange] = []
+    private var onDestroyed: (@Sendable () -> Void)?
+
+    func setDestroyedHandler(_ handler: (@Sendable () -> Void)?) {
+        lock.lock()
+        onDestroyed = handler
+        let destroyed = isDestroyed
+        lock.unlock()
+        if destroyed { handler?() }
+    }
 
     func record(_ notification: String) {
         let kind: WindowRevisionChangeKind
@@ -113,13 +153,16 @@ final class AXRevisionTracker: @unchecked Sendable {
 
     private func record(_ kind: WindowRevisionChangeKind, at timestamp: UInt64) {
         lock.lock()
+        let firstDestroy = kind == .destroyed && !isDestroyed
         value &+= 1
         changedAt = timestamp
         if kind == .resized { lastResizeAt = timestamp }
         isDestroyed = isDestroyed || kind == .destroyed
         changes.append(WindowRevisionChange(revision: value, timestamp: timestamp, kind: kind))
         if changes.count > 16 { changes.removeFirst(changes.count - 16) }
+        let destroyHandler = firstDestroy ? onDestroyed : nil
         lock.unlock()
+        destroyHandler?()
     }
 
     func snapshot(since timestamp: UInt64) -> AXRevisionSnapshot {
@@ -152,17 +195,20 @@ final class AXRevisionCallbackContext: @unchecked Sendable {
 }
 
 final class AXObserverRegistration: @unchecked Sendable {
+    enum Mode: Equatable { case destroyOnly, full }
     let observer: AXObserver
     let source: CFRunLoopSource
     let element: AXUIElement
     let tracker: AXRevisionTracker
     let notificationsVerified: Bool
+    let mode: Mode
     private let registeredNotifications: [String]
     private let context: AXRevisionCallbackContext
     private let callbackContext: UnsafeMutableRawPointer
     private var invalidated = false
 
-    init?(pid: pid_t, element: AXUIElement, tracker: AXRevisionTracker, deadline: UInt64) {
+    init?(pid: pid_t, element: AXUIElement, tracker: AXRevisionTracker, deadline: UInt64,
+          mode: Mode = .full) {
         var observer: AXObserver?
         guard AXObserverCreate(pid, axRevisionCallback, &observer) == .success,
               let observer else { return nil }
@@ -170,26 +216,29 @@ final class AXObserverRegistration: @unchecked Sendable {
         source = AXObserverGetRunLoopSource(observer)
         self.element = element
         self.tracker = tracker
+        self.mode = mode
         context = AXRevisionCallbackContext(tracker: tracker)
         callbackContext = Unmanaged.passRetained(context).toOpaque()
 
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        let moveNotification = Self.add(ObserverNotificationRequest(
+        let moveNotification = mode == .full ? Self.add(ObserverNotificationRequest(
             notification: kAXMovedNotification as String,
             fallback: kAXWindowMovedNotification as String,
             observer: observer, element: element, context: callbackContext, deadline: deadline
-        ))
-        let resizeNotification = Self.add(ObserverNotificationRequest(
+        )) : nil
+        let resizeNotification = mode == .full ? Self.add(ObserverNotificationRequest(
             notification: kAXResizedNotification as String,
             fallback: kAXWindowResizedNotification as String,
             observer: observer, element: element, context: callbackContext, deadline: deadline
-        ))
+        )) : nil
         let destroyNotification = Self.add(ObserverNotificationRequest(
             notification: kAXUIElementDestroyedNotification as String,
             fallback: nil, observer: observer, element: element, context: callbackContext, deadline: deadline
         ))
         registeredNotifications = [moveNotification, resizeNotification, destroyNotification].compactMap { $0 }
-        notificationsVerified = moveNotification != nil && resizeNotification != nil && destroyNotification != nil
+        notificationsVerified = mode == .destroyOnly
+            ? destroyNotification != nil
+            : moveNotification != nil && resizeNotification != nil && destroyNotification != nil
         if !notificationsVerified {
             for notification in registeredNotifications {
                 _ = configureAXMessagingTimeout(element, timeout: 0.05)
