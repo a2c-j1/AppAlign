@@ -22,6 +22,7 @@ HELPER_BINARY = ROOT / "build" / "issue-12-probe" / "space-probe"
 ALLOWED_OS_MAJOR = 27
 CHILD_TIMEOUT_SECONDS = 2.0
 MAX_CHILD_STDOUT = 2048
+MAX_LIST_CHILD_STDOUT = 16 * 1024
 ERROR_CODES = {
     "skylight_unavailable",
     "main_connection_symbol_missing",
@@ -43,6 +44,10 @@ ERROR_CODES = {
     "invalid_space_uuid",
     "space_changed_during_probe",
     "unsupported_space_type",
+    "too_many_displays",
+    "too_many_spaces",
+    "duplicate_space_uuid",
+    "managed_space_set_changed",
 }
 
 
@@ -55,8 +60,9 @@ def result_record(
     error: str | None,
     raw_space_type: int | None = None,
     space_uuid_candidate: str | None = None,
+    spaces: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    record = {
         "osMajor": os_major,
         "build": build,
         "displayUUID": display_uuid,
@@ -67,6 +73,9 @@ def result_record(
         "rawSpaceType": raw_space_type,
         "spaceUUIDCandidate": space_uuid_candidate,
     }
+    if spaces is not None:
+        record["spaces"] = spaces
+    return record
 
 
 def emit_result(record: dict[str, Any]) -> None:
@@ -168,7 +177,7 @@ class ChildResult:
         self.returncode = returncode
 
 
-def run_child(argv: list[str], timeout: float = CHILD_TIMEOUT_SECONDS) -> ChildResult:
+def run_child(argv: list[str], timeout: float = CHILD_TIMEOUT_SECONDS, max_stdout: int = MAX_CHILD_STDOUT) -> ChildResult:
     """Capture bounded stdout, discard stderr, and kill/reap only the direct child on timeout."""
     try:
         child = subprocess.Popen(
@@ -215,7 +224,7 @@ def run_child(argv: list[str], timeout: float = CHILD_TIMEOUT_SECONDS) -> ChildR
                 selector.unregister(key.fileobj)
                 stream_open = False
                 break
-            if len(output) + len(chunk) > MAX_CHILD_STDOUT:
+            if len(output) + len(chunk) > max_stdout:
                 if child.poll() is None:
                     child.kill()
                 child.wait()
@@ -245,6 +254,7 @@ def validate_helper_payload(
     os_major: int,
     build: str,
     display_uuid: str,
+    list_mode: bool = False,
 ) -> dict[str, Any]:
     try:
         candidate = json.loads(payload.decode("utf-8"))
@@ -262,7 +272,10 @@ def validate_helper_payload(
         "rawSpaceType",
         "spaceUUIDCandidate",
     }
-    if not isinstance(candidate, dict) or set(candidate) != expected_keys:
+    if not isinstance(candidate, dict) or set(candidate) not in (expected_keys, expected_keys | {"spaces"}):
+        return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+    has_spaces = "spaces" in candidate
+    if (has_spaces and not list_mode) or (list_mode and returncode == 0 and not has_spaces):
         return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
     if type(candidate["osMajor"]) is not int or candidate["osMajor"] != os_major or type(candidate["build"]) is not str or candidate["build"] != build:
         return result_record(os_major, build, display_uuid, None, "unknown", "helper_identity_mismatch")
@@ -285,7 +298,10 @@ def validate_helper_payload(
     if expected_kind is None:
         if raw_space_type is None and candidate["kind"] != "unknown":
             return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
-        if raw_space_type is not None and (candidate["kind"] != "unknown" or error != "unsupported_space_type"):
+        if raw_space_type is not None and (
+            candidate["kind"] != "unknown"
+            or (error != "unsupported_space_type" and not (list_mode and has_spaces))
+        ):
             return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
     elif candidate["kind"] != expected_kind:
         return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
@@ -311,11 +327,72 @@ def validate_helper_payload(
         or space_uuid_candidate is None
     ):
         return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+    spaces: list[dict[str, Any]] | None = None
+    if has_spaces:
+        raw_spaces = candidate["spaces"]
+        if not isinstance(raw_spaces, list) or not 1 <= len(raw_spaces) <= 64:
+            return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+        spaces = []
+        seen_ids: set[str] = set()
+        seen_uuids: set[str] = set()
+        item_errors: list[str] = []
+        current_match = False
+        for item in raw_spaces:
+            if not isinstance(item, dict) or set(item) != {
+                "rawSpaceID", "rawSpaceType", "kind", "spaceUUIDCandidate", "error"
+            }:
+                return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+            item_id, item_type = item["rawSpaceID"], item["rawSpaceType"]
+            item_kind, item_uuid = item["kind"], item["spaceUUIDCandidate"]
+            item_error = item["error"]
+            if type(item_id) is not str or not re.fullmatch(r"[1-9][0-9]{0,19}", item_id) or int(item_id) > 2**64 - 1:
+                return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+            if type(item_type) is not int or item_type < -(2**31) or item_type > 2**31 - 1:
+                return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+            expected_item_kind = {0: "user", 2: "system", 4: "fullscreen"}.get(item_type)
+            if type(item_kind) is not str or (expected_item_kind is not None and item_kind != expected_item_kind):
+                return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+            if item_error is not None and (type(item_error) is not str or item_error not in {
+                "invalid_space_uuid", "unsupported_space_type"
+            }):
+                return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+            if expected_item_kind is None:
+                if item_kind != "unknown" or item_error != "unsupported_space_type" or item_uuid is not None:
+                    return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+            elif item_error == "unsupported_space_type":
+                return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+            elif item_error == "invalid_space_uuid":
+                if item_uuid is not None:
+                    return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+            elif type(item_uuid) is not str or canonical_uuid(item_uuid) != item_uuid:
+                return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+            if item_id in seen_ids:
+                return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+            seen_ids.add(item_id)
+            if item_uuid is not None:
+                if item_uuid in seen_uuids:
+                    return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+                seen_uuids.add(item_uuid)
+            if item_id == raw_space_id:
+                current_match = (item_type == raw_space_type and item_kind == candidate["kind"]
+                                 and item_uuid == space_uuid_candidate)
+            if item_error is not None:
+                item_errors.append(item_error)
+            spaces.append({"rawSpaceID": item_id, "rawSpaceType": item_type,
+                           "kind": item_kind, "spaceUUIDCandidate": item_uuid, "error": item_error})
+        if not current_match:
+            return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+        if item_errors:
+            if returncode == 0 or error != item_errors[0]:
+                return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+        elif returncode != 0 or error is not None:
+            return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
     return result_record(os_major, build, display_uuid, raw_space_id, candidate["kind"], error,
-                         raw_space_type, space_uuid_candidate)
+                         raw_space_type, space_uuid_candidate, spaces)
 
 
-def run_probe(expected_major: int, expected_build: str, display_uuid: str) -> tuple[dict[str, Any], int]:
+def run_probe(expected_major: int, expected_build: str, display_uuid: str,
+              list_spaces: bool = False) -> tuple[dict[str, Any], int]:
     actual_major, actual_build = read_running_os()
     guard_error = evaluate_os_guard(actual_major, actual_build, expected_major, expected_build)
     if guard_error:
@@ -326,8 +403,7 @@ def run_probe(expected_major: int, expected_build: str, display_uuid: str) -> tu
     except (OSError, subprocess.SubprocessError):
         return result_record(actual_major, actual_build, display_uuid, None, "unknown", "helper_build_failed"), 3
 
-    child_result = run_child(
-        [
+    command = [
             str(helper),
             "--expected-os-major",
             str(expected_major),
@@ -336,10 +412,13 @@ def run_probe(expected_major: int, expected_build: str, display_uuid: str) -> tu
             "--display-uuid",
             display_uuid,
         ]
-    )
+    if list_spaces:
+        command.append("--list-spaces")
+    child_result = run_child(command, max_stdout=MAX_LIST_CHILD_STDOUT if list_spaces else MAX_CHILD_STDOUT)
     if child_result.error:
         return result_record(actual_major, actual_build, display_uuid, None, "unknown", child_result.error), 3
-    record = validate_helper_payload(child_result.payload, child_result.returncode, actual_major, actual_build, display_uuid)
+    record = validate_helper_payload(child_result.payload, child_result.returncode, actual_major, actual_build,
+                                     display_uuid, list_mode=list_spaces)
     return record, 0 if child_result.returncode == 0 and record["error"] is None else 3
 
 
@@ -354,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-os-major", type=int)
     parser.add_argument("--expected-build")
     parser.add_argument("--display-uuid")
+    parser.add_argument("--list-spaces", action="store_true")
     try:
         args = parser.parse_args(argv)
     except ValueError:
@@ -361,7 +441,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.help:
-        print("Usage: space-probe.py --expected-os-major 27 --expected-build BUILD --display-uuid UUID")
+        print("Usage: space-probe.py --expected-os-major 27 --expected-build BUILD --display-uuid UUID [--list-spaces]")
         print("Read-only isolated Space ID probe; output adoption is always false.")
         return 0
 
@@ -375,7 +455,8 @@ def main(argv: list[str] | None = None) -> int:
     if normalized_uuid is None:
         emit_result(result_record(None, None, None, None, "unknown", "invalid_display_uuid"))
         return 2
-    record, exit_code = run_probe(args.expected_os_major, args.expected_build, normalized_uuid)
+    record, exit_code = run_probe(args.expected_os_major, args.expected_build, normalized_uuid,
+                                  list_spaces=args.list_spaces)
     emit_result(record)
     return exit_code
 

@@ -31,6 +31,26 @@ CLIは`--expected-os-major 27 --expected-build 26A434 --display-uuid UUID`を必
 
 ## 環境と検証
 
+### 対象displayの有限列挙baseline
+
+2026-10-18T13:04:04Zに、上記CLIへ`--list-spaces`を付け、対象displayの実metadata由来IDだけを照会した。再起動前の生JSONを[`evidence/issue-12-space-baseline-26A434.json`](evidence/issue-12-space-baseline-26A434.json)へ保存した。対象display UUIDは`D16814E6-E4F8-4D8F-0857-D6964E3302DB`、現在IDは`41`。同じdisplayに次の3件が存在し、いずれもtype 0 / kind userだった。
+
+| raw ID | UUID候補 | 項目error |
+| --- | --- | --- |
+| 58 | `5EA7DC96-5689-1D28-6AF8-DB244D30E11E` | null |
+| 41 | `06497333-89E6-B6A1-90A2-D67FCC9F9348` | null |
+| 1 | null | `invalid_space_uuid` |
+
+raw 1と41が同じdisplayの通常desktopであることは確認できたが、raw 1はCopyNameのUUID文法検査を満たさなかった。nil、空値、非UUID文字列のどれかは、この出力では区別していない。両Spaceの異なるUUID候補は証明できず、任意IDへの補完はしない。全体は`invalid_space_uuid` / exit 3で、adoption falseを維持する。A→B→Aと再起動安定性も未証明である。
+
+列挙はmanaged display entryと対象Spacesを各64件に制限し、超過・重複ID・既知UUID重複・型不正を失敗とする。前後のcurrent IDと対象ID集合が一致した時だけ表を返す。各項目はID/type/kind/UUID候補/errorの5 keysを持ち、候補欠落はnullで記録する。未知typeやUUID欠落を含む表は成功扱いしない。通常モードは9 fields/2KB、列挙成功または項目失敗の診断モードはspacesを加えた10 fields/16KB。専用childの2秒timeoutとkill/reap、strict OS/build、stderr破棄を維持する。
+
+拡張中、最初の列挙はUUID欠落で全表なしの失敗、診断追加後はtimeoutと出力検証失敗を各1回観測した。後者はSwiftのnil key省略を明示nullへ修正し、実生成型を使ったserialization fixtureで検証した。最終実測は上記の全3件を返した。最終実測前の自動承認レビューは一度期限切れでコマンド未開始となり、許可された再試行で取得した。これらの失敗を有効なSpace対応表としては扱わない。
+
+固定yabai revisionの`display.c`、`space.c`、`space_manager.c`、`view.c`、`misc/extern.h`の確認範囲では、Space辞書の別UUID keyを読むcallsiteは見つからず、推測したmetadata keyは追加していない。確認範囲外を含む不存在は断定しない。
+
+列挙版のSwift 6 helper/純粋fixtureのcompileと実行、`python3 scripts/test_space_probe.py`の10 testsが成功した。64/65件、前後集合変化、重複UUID、固定schema、既知項目失敗の非成功扱い、実生成型のnull保持を含む。ログは`/private/tmp/issue12-space-probe-null-encoding-tests.log`。親レビューは97/100点、重大不具合0件。
+
 - ローカル環境: macOS 27.0.1 (build 26A434)、arm64 M1 + Dell、Xcode 26.5。テストbuildはXcode付属MacOSX 26.5 SDKを使用する。
 - Probe Swift 6 compile: `"$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc" -swift-version 6 -sdk "$(xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk" -target arm64-apple-macosx26.0 scripts/space-probe-core.swift scripts/space-probe.swift -o build/issue-12-probe/space-probe` 成功。buildはgitignore対象。
 - `python3 scripts/test_space_probe.py`: 8 tests成功。内容はpure OS guard、wrapper guard、CLI help/引数、2秒timeout childとstdout-close childのkill/reap、過大stdout、native CF metadata/type/UUID/current-ID fixtures、wrapper exact-key/type-kind/UUID検証。実private queryは上記の拡張probe2回のみ。A-B-AおよびOS再起動照合は未実行。
@@ -39,6 +59,14 @@ CLIは`--expected-os-major 27 --expected-build 26A434 --display-uuid UUID`を必
 - `swiftlint lint --config .swiftlint.yml`: 93 files、0 violations / 0 serious。
 - `/Users/a2c/.local/bin/semgrep scan --config .semgrep.yml --error AppAlign AppAlignTests scripts/space-probe.swift scripts/space-probe.py scripts/test_space_probe.py`: 4 rules、56 applicable targets、0 findings。probe pathsも明示指定した。既存ruleのpath filterは`AppAlign/**/*.swift`なので、実際にrule適用されたのはその範囲。
 - `git diff --check`: 成功。新規Swift source/test filesは`AppAlign.xcodeproj/project.pbxproj`のapp/test sourcesへ登録し、公式suiteでcompile・実行した。
+
+## 製品backendへの非同期接続案（未実装）
+
+現行の`SpaceProvider.refresh(displays:)`はMainActorで同期backendを呼ぶため、private IPCや子process待機を直接追加しない。`DisplayConfigurationController`が既存の`beginInvalidation`後に取得を要求し、専用の直列workerと有限timeoutで取得したSendable結果をMainActorへ返す。実行中1件と最新要求1件に集約する。
+
+要求には`callbackEpoch`、`pendingRevision`、display snapshotを固定する。結果到着時にepoch、`validity.revision.configuration`とのrevision一致、sleep/構成変更待ち状態、再採取displayとの一致を確認し、古い結果はcache更新前に破棄する。合格時だけawaitなしでSpace cache、`DisplayProvider.publish`、`layout.displaysDidPublish`を更新し、最後に`validity.publishConfiguration(revision:)`でgateを開く。取得中の同期呼出しは最後にpublish済みのdisplayを返す。
+
+最新要求の失敗は同revisionのdisplayと`degradedScoped`を一括反映し、古い失敗で新しい成功を上書きしない。通知callbackによる同期ticket無効化、shutdown時のepoch無効化、cancelQuit時の再取得を維持する。起動時は`startAfterPersistentLoad`の構成gate初期化を履歴監視・hotkey受付より先に置く。変更境界は`SpaceProvider.swift`、`DisplayConfigurationController.swift`、`AppAlignApp.swift`と関連テスト。遅延fake backendで応答中のMainActor応答性、A→B→Aの遅い結果拒否、fallback、lifecycle、display変化、polling集約を検証する。今回は設計記録のみで製品sourceを変更していない。
 
 ## 実機で必要な確認
 

@@ -8,7 +8,8 @@ private struct SpaceProbeFixtureTests {
         let other = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
         let valid = display(target, spaces: [space(NSNumber(value: 41)), space(NSNumber(value: 42))])
         let snapshot = try decodeManagedDisplaySpaces(array([valid]), displayUUID: target, currentSpaceID: 41)
-        check(snapshot == ManagedDisplaySpaceSnapshot(matchingDisplayCount: 1, matchingCurrentSpaceCount: 1),
+        check(snapshot == ManagedDisplaySpaceSnapshot(matchingDisplayCount: 1, matchingCurrentSpaceCount: 1,
+                                                      spaceIDs: [41, 42]),
               "target display/current ID decodes")
         try check(decodeManagedDisplaySpaces(array([display(target, spaces: [space(NSNumber(value: UInt64.max))])]),
                                              displayUUID: target, currentSpaceID: UInt64.max).matchingCurrentSpaceCount == 1,
@@ -62,6 +63,31 @@ private struct SpaceProbeFixtureTests {
                                            displayUUID: target, currentSpaceID: 41)
         }
 
+        let sixtyFour = (1...64).map { space(NSNumber(value: $0)) }
+        try check(decodeManagedDisplaySpaces(array([display(target, spaces: sixtyFour)]), displayUUID: target,
+                                             currentSpaceID: 1).spaceIDs.count == 64,
+                  "64 target Spaces are accepted")
+        expectFailure(.tooManySpaces) {
+            try decodeManagedDisplaySpaces(array([display(target, spaces: (1...65).map { space(NSNumber(value: $0)) })]),
+                                           displayUUID: target, currentSpaceID: 1)
+        }
+        expectFailure(.tooManyDisplays) {
+            try decodeManagedDisplaySpaces(array((0...64).map { display(String(format: "%08d-0000-0000-0000-000000000000", $0), spaces: []) }),
+                                           displayUUID: target, currentSpaceID: 1)
+        }
+        let sixtyFourDisplays = (0..<63).map {
+            display(String(format: "%08d-0000-0000-0000-000000000000", $0), spaces: [])
+        } + [display(target, spaces: [space(NSNumber(value: 1))])]
+        try check(decodeManagedDisplaySpaces(array(sixtyFourDisplays), displayUUID: target,
+                                             currentSpaceID: 1).matchingDisplayCount == 1,
+                  "64 managed display entries are accepted")
+        try verifyManagedSpaceIDs(before: [41, 42], after: [42, 41])
+        expectFailure(.managedSpaceSetChanged) { try verifyManagedSpaceIDs(before: [41, 42], after: [41, 43]) }
+        expectFailure(.duplicateSpaceUUID) {
+            try verifyUniqueSpaceUUIDs([target, target])
+        }
+        try verifyUniqueSpaceUUIDs([target, other])
+
         check(kindForSpaceType(0) == "user", "type 0 maps to user")
         check(kindForSpaceType(2) == "system", "type 2 maps to system")
         check(kindForSpaceType(4) == "fullscreen", "type 4 maps to fullscreen")
@@ -69,6 +95,25 @@ private struct SpaceProbeFixtureTests {
         check(spaceUUIDCandidate(from: target as CFString) == target, "UUID-shaped name becomes candidate")
         check(spaceUUIDCandidate(from: "Personal Space" as CFString) == nil, "user Space name is suppressed")
         check(spaceUUIDCandidate(from: NSNumber(value: 3)) == nil, "non-string name is suppressed")
+
+        let listItemJSONCases = [
+            SpaceProbeSpaceItem(rawSpaceID: "41", rawSpaceType: 0, kind: "user",
+                                spaceUUIDCandidate: target, error: nil),
+            SpaceProbeSpaceItem(rawSpaceID: "42", rawSpaceType: 0, kind: "user",
+                                spaceUUIDCandidate: nil, error: "invalid_space_uuid"),
+        ]
+        for item in listItemJSONCases {
+            let encoded = try JSONEncoder().encode(item)
+            let decoded = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+            check(Set(decoded.keys) == Set(["rawSpaceID", "rawSpaceType", "kind", "spaceUUIDCandidate", "error"]),
+                  "list item always has the exact five fields")
+            if item.spaceUUIDCandidate == nil {
+                check(decoded["spaceUUIDCandidate"] is NSNull, "missing UUID candidate is encoded as JSON null")
+            }
+            if item.error == nil {
+                check(decoded["error"] is NSNull, "successful item error is encoded as JSON null")
+            }
+        }
 
         try check(verifyCurrentSpaceIDs(before: 41, after: 41) == 41, "stable before/after ID accepted")
         expectFailure(.spaceChangedDuringProbe) { try verifyCurrentSpaceIDs(before: 41, after: 42) }

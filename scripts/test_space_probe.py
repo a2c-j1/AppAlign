@@ -165,6 +165,16 @@ class SpaceProbeGuardTests(unittest.TestCase):
         self.assertIsNotNone(result.returncode)
         self.assertEqual(result.payload, b"")
 
+    def test_list_child_output_limit_is_larger_but_bounded(self) -> None:
+        accepted = probe.run_child([sys.executable, "-c", "import sys; sys.stdout.write('x' * 8000)"],
+                                   max_stdout=probe.MAX_LIST_CHILD_STDOUT)
+        self.assertIsNone(accepted.error)
+        self.assertEqual(len(accepted.payload), 8000)
+        rejected = probe.run_child([sys.executable, "-c", "import sys; sys.stdout.write('x' * 17000)"],
+                                   max_stdout=probe.MAX_LIST_CHILD_STDOUT)
+        self.assertEqual(rejected.error, "helper_output_too_large")
+        self.assertEqual(rejected.payload, b"")
+
     def test_wrapper_validates_type_kind_uuid_and_exact_fields(self) -> None:
         expected_uuid = "D16814E6-E4F8-4D8F-0857-D6964E3302DB"
 
@@ -212,6 +222,117 @@ class SpaceProbeGuardTests(unittest.TestCase):
                 self.assertEqual(record["error"], "invalid_helper_response")
                 self.assertIsNone(record["spaceUUIDCandidate"])
                 self.assertFalse(record["adoption"])
+
+    def test_wrapper_validates_complete_list_schema_membership_and_uniqueness(self) -> None:
+        display_uuid = "D16814E6-E4F8-4D8F-0857-D6964E3302DB"
+        candidate_a = "06497333-89E6-B6A1-90A2-D67FCC9F9348"
+        candidate_b = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+        base = {
+            "osMajor": 27, "build": "26A434", "displayUUID": display_uuid,
+            "rawSpaceID": "41", "kind": "user", "error": None, "adoption": False,
+            "rawSpaceType": 0, "spaceUUIDCandidate": candidate_a,
+            "spaces": [
+                {"rawSpaceID": "41", "rawSpaceType": 0, "kind": "user", "spaceUUIDCandidate": candidate_a, "error": None},
+                {"rawSpaceID": "42", "rawSpaceType": 2, "kind": "system", "spaceUUIDCandidate": candidate_b, "error": None},
+            ],
+        }
+        valid = probe.validate_helper_payload(json.dumps(base).encode(), 0, 27, "26A434", display_uuid,
+                                              list_mode=True)
+        self.assertIsNone(valid["error"])
+        self.assertEqual(len(valid["spaces"]), 2)
+        self.assertFalse(valid["adoption"])
+
+        sixty_four = json.loads(json.dumps(base))
+        sixty_four["spaces"] = []
+        for index in range(64):
+            item_id = str(41 + index)
+            item_uuid = f"00000000-0000-0000-0000-{index + 1:012X}"
+            item_type, item_kind = (0, "user") if index == 0 else (2, "system")
+            sixty_four["spaces"].append({"rawSpaceID": item_id, "rawSpaceType": item_type,
+                                          "kind": item_kind, "spaceUUIDCandidate": item_uuid, "error": None})
+        sixty_four["spaceUUIDCandidate"] = sixty_four["spaces"][0]["spaceUUIDCandidate"]
+        full = probe.validate_helper_payload(json.dumps(sixty_four).encode(), 0, 27, "26A434", display_uuid,
+                                             list_mode=True)
+        self.assertIsNone(full["error"])
+        self.assertEqual(len(full["spaces"]), 64)
+
+        variants = []
+        duplicate_id = json.loads(json.dumps(base))
+        duplicate_id["spaces"][1]["rawSpaceID"] = "41"
+        variants.append(duplicate_id)
+        duplicate_uuid = json.loads(json.dumps(base))
+        duplicate_uuid["spaces"][1]["spaceUUIDCandidate"] = candidate_a
+        variants.append(duplicate_uuid)
+        wrong_kind = json.loads(json.dumps(base))
+        wrong_kind["spaces"][1]["kind"] = "user"
+        variants.append(wrong_kind)
+        missing_current = json.loads(json.dumps(base))
+        missing_current["spaces"][0]["rawSpaceID"] = "43"
+        variants.append(missing_current)
+        current_type_mismatch = json.loads(json.dumps(base))
+        current_type_mismatch["spaces"][0]["rawSpaceType"] = 2
+        current_type_mismatch["spaces"][0]["kind"] = "system"
+        variants.append(current_type_mismatch)
+        current_uuid_mismatch = json.loads(json.dumps(base))
+        current_uuid_mismatch["spaces"][0]["spaceUUIDCandidate"] = "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"
+        variants.append(current_uuid_mismatch)
+        extra_item_key = json.loads(json.dumps(base))
+        extra_item_key["spaces"][0]["secret"] = "must not pass"
+        variants.append(extra_item_key)
+        too_many = json.loads(json.dumps(base))
+        too_many["spaces"] = [dict(base["spaces"][0]) for _ in range(65)]
+        variants.append(too_many)
+        missing_spaces = dict(base)
+        del missing_spaces["spaces"]
+        variants.append(missing_spaces)
+        for invalid in variants:
+            with self.subTest(payload=invalid):
+                record = probe.validate_helper_payload(json.dumps(invalid).encode(), 0, 27, "26A434",
+                                                       display_uuid, list_mode=True)
+                self.assertEqual(record["error"], "invalid_helper_response")
+                self.assertFalse(record["adoption"])
+
+        known_item_failure = json.loads(json.dumps(base))
+        known_item_failure["spaces"][1]["spaceUUIDCandidate"] = None
+        known_item_failure["spaces"][1]["error"] = "invalid_space_uuid"
+        known_item_failure["error"] = "invalid_space_uuid"
+        known_failure = probe.validate_helper_payload(json.dumps(known_item_failure).encode(), 3, 27, "26A434",
+                                                      display_uuid, list_mode=True)
+        self.assertEqual(known_failure["error"], "invalid_space_uuid")
+        self.assertIsNone(known_failure["spaces"][1]["spaceUUIDCandidate"])
+
+        current_item_failure = json.loads(json.dumps(base))
+        current_item_failure["spaces"][0]["spaceUUIDCandidate"] = None
+        current_item_failure["spaces"][0]["error"] = "invalid_space_uuid"
+        current_item_failure["spaceUUIDCandidate"] = None
+        current_item_failure["error"] = "invalid_space_uuid"
+        current_failure = probe.validate_helper_payload(json.dumps(current_item_failure).encode(), 3, 27, "26A434",
+                                                        display_uuid, list_mode=True)
+        self.assertEqual(current_failure["error"], "invalid_space_uuid")
+        self.assertIsNone(current_failure["spaceUUIDCandidate"])
+
+        unknown_type = json.loads(json.dumps(base))
+        unknown_type["spaces"][1].update({"rawSpaceType": 3, "kind": "unknown",
+                                          "spaceUUIDCandidate": None, "error": "unsupported_space_type"})
+        unknown_type["error"] = "unsupported_space_type"
+        unknown_failure = probe.validate_helper_payload(json.dumps(unknown_type).encode(), 3, 27, "26A434",
+                                                        display_uuid, list_mode=True)
+        self.assertEqual(unknown_failure["error"], "unsupported_space_type")
+        self.assertEqual(unknown_failure["spaces"][1]["kind"], "unknown")
+
+        false_success = json.loads(json.dumps(known_item_failure))
+        self.assertEqual(probe.validate_helper_payload(json.dumps(false_success).encode(), 0, 27, "26A434",
+                                                       display_uuid, list_mode=True)["error"],
+                         "invalid_helper_response")
+        wrong_aggregate = json.loads(json.dumps(known_item_failure))
+        wrong_aggregate["error"] = "unsupported_space_type"
+        self.assertEqual(probe.validate_helper_payload(json.dumps(wrong_aggregate).encode(), 3, 27, "26A434",
+                                                       display_uuid, list_mode=True)["error"],
+                         "invalid_helper_response")
+
+        rejected_in_normal_mode = probe.validate_helper_payload(json.dumps(base).encode(), 0, 27, "26A434",
+                                                                display_uuid, list_mode=False)
+        self.assertEqual(rejected_in_normal_mode["error"], "invalid_helper_response")
 
 
 if __name__ == "__main__":

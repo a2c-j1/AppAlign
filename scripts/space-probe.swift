@@ -19,9 +19,11 @@ private struct ProbeOutput: Encodable {
     let adoption: Bool
     let rawSpaceType: Int?
     let spaceUUIDCandidate: String?
+    let spaces: [SpaceProbeSpaceItem]?
 
     init(osMajor: Int?, build: String?, displayUUID: String?, rawSpaceID: String?, kind: String,
-         error: String?, adoption: Bool, rawSpaceType: Int? = nil, spaceUUIDCandidate: String? = nil) {
+         error: String?, adoption: Bool, rawSpaceType: Int? = nil, spaceUUIDCandidate: String? = nil,
+         spaces: [SpaceProbeSpaceItem]? = nil) {
         self.osMajor = osMajor
         self.build = build
         self.displayUUID = displayUUID
@@ -31,6 +33,7 @@ private struct ProbeOutput: Encodable {
         self.adoption = adoption
         self.rawSpaceType = rawSpaceType
         self.spaceUUIDCandidate = spaceUUIDCandidate
+        self.spaces = spaces
     }
 
     enum CodingKeys: String, CodingKey {
@@ -43,6 +46,7 @@ private struct ProbeOutput: Encodable {
         case adoption
         case rawSpaceType
         case spaceUUIDCandidate
+        case spaces
     }
 
     func encode(to encoder: Encoder) throws {
@@ -56,6 +60,7 @@ private struct ProbeOutput: Encodable {
         try container.encode(adoption, forKey: .adoption)
         if let rawSpaceType { try container.encode(rawSpaceType, forKey: .rawSpaceType) } else { try container.encodeNil(forKey: .rawSpaceType) }
         if let spaceUUIDCandidate { try container.encode(spaceUUIDCandidate, forKey: .spaceUUIDCandidate) } else { try container.encodeNil(forKey: .spaceUUIDCandidate) }
+        if let spaces { try container.encode(spaces, forKey: .spaces) }
     }
 }
 
@@ -97,26 +102,28 @@ private func uuidString(_ value: String) -> String? {
 private func run() -> Never {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
-        print("Usage: space-probe --expected-os-major 27 --expected-build BUILD --display-uuid UUID")
+        print("Usage: space-probe --expected-os-major 27 --expected-build BUILD --display-uuid UUID [--list-spaces]")
         print("Read-only isolated Space ID probe; adoption is always false.")
         exit(0)
     }
 
-    guard arguments.count == 6,
-          arguments[0] == "--expected-os-major",
-          arguments[2] == "--expected-build",
-          arguments[4] == "--display-uuid"
+    let listSpaces = arguments.last == "--list-spaces"
+    let optionArguments = listSpaces ? Array(arguments.dropLast()) : arguments
+    guard optionArguments.count == 6,
+          optionArguments[0] == "--expected-os-major",
+          optionArguments[2] == "--expected-build",
+          optionArguments[4] == "--display-uuid"
     else {
         emit(ProbeOutput(osMajor: nil, build: currentBuild(), displayUUID: nil, rawSpaceID: nil,
                          kind: "unknown", error: "invalid_arguments", adoption: false), exitCode: 2)
     }
 
-    guard let expectedOSMajor = Int(arguments[1]) else {
+    guard let expectedOSMajor = Int(optionArguments[1]) else {
         emit(ProbeOutput(osMajor: nil, build: currentBuild(), displayUUID: nil, rawSpaceID: nil,
                          kind: "unknown", error: "invalid_expected_os_major", adoption: false), exitCode: 2)
     }
-    let expectedBuild = arguments[3]
-    let suppliedUUID = arguments[5]
+    let expectedBuild = optionArguments[3]
+    let suppliedUUID = optionArguments[5]
     let version = ProcessInfo.processInfo.operatingSystemVersion
     let build = currentBuild()
     let canonicalUUID = uuidString(suppliedUUID)
@@ -185,13 +192,14 @@ private func run() -> Never {
                          kind: "unknown", error: "zero_space_id", adoption: false), exitCode: 3)
     }
 
+    let initialIDs: [UInt64]
     do {
         let displayMetadata = managedDisplaySpaces(connection)
         guard let displayMetadata else { throw SpaceProbeFailure.managedDisplaySpacesUnavailable }
         // The +1 Copy result is consumed exactly once; all array/dictionary children
         // are borrowed and remain owned by this array.
         let metadata = displayMetadata.takeRetainedValue()
-        _ = try decodeManagedDisplaySpaces(metadata, displayUUID: canonicalUUID, currentSpaceID: rawSpaceID)
+        initialIDs = try decodeManagedDisplaySpaces(metadata, displayUUID: canonicalUUID, currentSpaceID: rawSpaceID).spaceIDs
     } catch let failure as SpaceProbeFailure {
         dlclose(framework)
         emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
@@ -202,53 +210,119 @@ private func run() -> Never {
                          rawSpaceID: String(rawSpaceID), kind: "unknown", error: "invalid_display_metadata", adoption: false), exitCode: 3)
     }
 
+    var listResults: [SpaceProbeSpaceItem]?
+    var duplicateUUIDs = false
+    if listSpaces {
+        var items: [SpaceProbeSpaceItem] = []
+        for spaceID in initialIDs {
+            let type = spaceType(connection, spaceID)
+            guard let itemKind = kindForSpaceType(type) else {
+                items.append(SpaceProbeSpaceItem(rawSpaceID: String(spaceID), rawSpaceType: Int(type), kind: "unknown",
+                                                 spaceUUIDCandidate: nil, error: "unsupported_space_type"))
+                continue
+            }
+            guard let copied = spaceCopyName(connection, spaceID) else {
+                items.append(SpaceProbeSpaceItem(rawSpaceID: String(spaceID), rawSpaceType: Int(type), kind: itemKind,
+                                                 spaceUUIDCandidate: nil, error: "invalid_space_uuid"))
+                continue
+            }
+            let candidate: String? = { spaceUUIDCandidate(from: copied.takeRetainedValue()) }()
+            guard let candidate else {
+                items.append(SpaceProbeSpaceItem(rawSpaceID: String(spaceID), rawSpaceType: Int(type), kind: itemKind,
+                                                 spaceUUIDCandidate: nil, error: "invalid_space_uuid"))
+                continue
+            }
+            items.append(SpaceProbeSpaceItem(rawSpaceID: String(spaceID), rawSpaceType: Int(type), kind: itemKind,
+                                             spaceUUIDCandidate: candidate, error: nil))
+        }
+        do {
+            try verifyUniqueSpaceUUIDs(items.compactMap(\.spaceUUIDCandidate))
+        } catch let failure as SpaceProbeFailure {
+            duplicateUUIDs = failure == .duplicateSpaceUUID
+        } catch {
+            duplicateUUIDs = true
+        }
+        listResults = items
+    }
+
     let rawSpaceType = spaceType(connection, rawSpaceID)
     let kind = kindForSpaceType(rawSpaceType)
-    guard let kind else {
+    var candidate: String?
+    var currentItemError: String?
+    if kind != nil {
+        if let nameResult = spaceCopyName(connection, rawSpaceID) {
+            // SLSSpaceCopyName is a Copy result; expose only UUID-shaped strings.
+            let copiedName = nameResult.takeRetainedValue()
+            candidate = spaceUUIDCandidate(from: copiedName)
+            if candidate == nil { currentItemError = "invalid_space_uuid" }
+        } else {
+            currentItemError = "invalid_space_uuid"
+        }
+    } else {
+        currentItemError = "unsupported_space_type"
+    }
+
+    if !listSpaces, let currentItemError {
         dlclose(framework)
         emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
-                         rawSpaceID: String(rawSpaceID), kind: "unknown", error: "unsupported_space_type",
+                         rawSpaceID: String(rawSpaceID), kind: kind ?? "unknown", error: currentItemError,
                          adoption: false, rawSpaceType: Int(rawSpaceType)), exitCode: 3)
     }
-    let nameResult = spaceCopyName(connection, rawSpaceID)
-    guard let nameResult else {
+    if listSpaces, let currentItem = listResults?.first(where: { $0.rawSpaceID == String(rawSpaceID) }),
+       currentItem.rawSpaceType != Int(rawSpaceType) || currentItem.kind != (kind ?? "unknown") ||
+       currentItem.spaceUUIDCandidate != candidate || currentItem.error != currentItemError {
         dlclose(framework)
         emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
-                         rawSpaceID: String(rawSpaceID), kind: kind, error: "invalid_space_uuid",
-                         adoption: false, rawSpaceType: Int(rawSpaceType)), exitCode: 3)
-    }
-    // SLSSpaceCopyName is a Copy result. Consume/release it in this scope and expose
-    // only UUID-shaped strings; arbitrary user Space names are never emitted.
-    let candidate: String? = {
-        let copiedName = nameResult.takeRetainedValue()
-        return spaceUUIDCandidate(from: copiedName)
-    }()
-    guard let candidate else {
-        dlclose(framework)
-        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
-                         rawSpaceID: String(rawSpaceID), kind: kind, error: "invalid_space_uuid",
-                         adoption: false, rawSpaceType: Int(rawSpaceType)), exitCode: 3)
+                         rawSpaceID: String(rawSpaceID), kind: "unknown", error: "space_changed_during_probe",
+                         adoption: false), exitCode: 3)
     }
     let secondSpaceID = currentSpace(connection, canonicalUUID as CFString)
     do {
         _ = try verifyCurrentSpaceIDs(before: rawSpaceID, after: secondSpaceID)
+        if listSpaces {
+            guard let managedAgain = managedDisplaySpaces(connection)?.takeRetainedValue() else {
+                throw SpaceProbeFailure.managedDisplaySpacesUnavailable
+            }
+            let afterIDs = try decodeManagedDisplaySpaces(managedAgain, displayUUID: canonicalUUID,
+                                                          currentSpaceID: secondSpaceID).spaceIDs
+            try verifyManagedSpaceIDs(before: initialIDs, after: afterIDs)
+        }
     } catch let failure as SpaceProbeFailure {
         dlclose(framework)
         emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
-                         rawSpaceID: String(rawSpaceID), kind: kind, error: failure.rawValue,
+                         rawSpaceID: String(rawSpaceID), kind: kind ?? "unknown", error: failure.rawValue,
                          adoption: false, rawSpaceType: Int(rawSpaceType), spaceUUIDCandidate: candidate), exitCode: 3)
     } catch {
         dlclose(framework)
         emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
-                         rawSpaceID: String(rawSpaceID), kind: kind, error: "space_changed_during_probe",
+                         rawSpaceID: String(rawSpaceID), kind: kind ?? "unknown", error: "space_changed_during_probe",
                          adoption: false, rawSpaceType: Int(rawSpaceType), spaceUUIDCandidate: candidate), exitCode: 3)
+    }
+    if duplicateUUIDs {
+        dlclose(framework)
+        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
+                         rawSpaceID: String(rawSpaceID), kind: "unknown", error: "duplicate_space_uuid",
+                         adoption: false), exitCode: 3)
     }
     dlclose(framework)
 
+    if let listError = listResults?.first(where: { $0.error != nil })?.error {
+        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
+                         rawSpaceID: String(rawSpaceID), kind: kind ?? "unknown", error: listError,
+                         adoption: false, rawSpaceType: Int(rawSpaceType), spaceUUIDCandidate: candidate,
+                         spaces: listResults), exitCode: 3)
+    }
+    if let currentItemError {
+        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
+                         rawSpaceID: String(rawSpaceID), kind: kind ?? "unknown", error: currentItemError,
+                         adoption: false, rawSpaceType: Int(rawSpaceType), spaceUUIDCandidate: candidate,
+                         spaces: listResults), exitCode: 3)
+    }
+
     emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
-                     rawSpaceID: String(rawSpaceID), kind: kind,
+                     rawSpaceID: String(rawSpaceID), kind: kind ?? "unknown",
                      error: nil, adoption: false, rawSpaceType: Int(rawSpaceType),
-                     spaceUUIDCandidate: candidate), exitCode: 0)
+                     spaceUUIDCandidate: candidate, spaces: listResults), exitCode: 0)
 }
 
 @main

@@ -15,6 +15,10 @@ enum SpaceProbeFailure: String, Error {
     case spaceChangedDuringProbe = "space_changed_during_probe"
     case zeroSpaceID = "zero_space_id"
     case unsupportedSpaceType = "unsupported_space_type"
+    case tooManyDisplays = "too_many_displays"
+    case tooManySpaces = "too_many_spaces"
+    case duplicateSpaceUUID = "duplicate_space_uuid"
+    case managedSpaceSetChanged = "managed_space_set_changed"
 }
 
 func verifyCurrentSpaceIDs(before: UInt64, after: UInt64) throws -> UInt64 {
@@ -26,6 +30,53 @@ func verifyCurrentSpaceIDs(before: UInt64, after: UInt64) throws -> UInt64 {
 struct ManagedDisplaySpaceSnapshot: Equatable {
     let matchingDisplayCount: Int
     let matchingCurrentSpaceCount: Int
+    let spaceIDs: [UInt64]
+}
+
+struct SpaceProbeSpaceItem: Encodable {
+    let rawSpaceID: String
+    let rawSpaceType: Int
+    let kind: String
+    let spaceUUIDCandidate: String?
+    let error: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case rawSpaceID
+        case rawSpaceType
+        case kind
+        case spaceUUIDCandidate
+        case error
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(rawSpaceID, forKey: .rawSpaceID)
+        try container.encode(rawSpaceType, forKey: .rawSpaceType)
+        try container.encode(kind, forKey: .kind)
+        if let spaceUUIDCandidate {
+            try container.encode(spaceUUIDCandidate, forKey: .spaceUUIDCandidate)
+        } else {
+            try container.encodeNil(forKey: .spaceUUIDCandidate)
+        }
+        if let error {
+            try container.encode(error, forKey: .error)
+        } else {
+            try container.encodeNil(forKey: .error)
+        }
+    }
+}
+
+let maximumManagedDisplays = 64
+let maximumManagedSpaces = 64
+
+func verifyManagedSpaceIDs(before: [UInt64], after: [UInt64]) throws {
+    guard Set(before) == Set(after), before.count == after.count else {
+        throw SpaceProbeFailure.managedSpaceSetChanged
+    }
+}
+
+func verifyUniqueSpaceUUIDs(_ values: [String]) throws {
+    guard Set(values).count == values.count else { throw SpaceProbeFailure.duplicateSpaceUUID }
 }
 
 func kindForSpaceType(_ rawType: Int32) -> String? {
@@ -55,8 +106,10 @@ func decodeManagedDisplaySpaces(
         throw SpaceProbeFailure.managedDisplaySpacesUnavailable
     }
     let displays = unsafeDowncast(value, to: CFArray.self)
+    guard CFArrayGetCount(displays) <= maximumManagedDisplays else { throw SpaceProbeFailure.tooManyDisplays }
     var matchingDisplays = 0
     var matchingCurrentSpaces = 0
+    var matchingIDs: [UInt64] = []
 
     for displayIndex in 0..<CFArrayGetCount(displays) {
         guard let displayPointer = CFArrayGetValueAtIndex(displays, displayIndex) else {
@@ -78,6 +131,7 @@ func decodeManagedDisplaySpaces(
               CFGetTypeID(spacesValue) == CFArrayGetTypeID()
         else { throw SpaceProbeFailure.invalidSpacesMetadata }
         let spaces = unsafeDowncast(spacesValue, to: CFArray.self)
+        guard CFArrayGetCount(spaces) <= maximumManagedSpaces else { throw SpaceProbeFailure.tooManySpaces }
         var foundIDs = Set<UInt64>()
         for spaceIndex in 0..<CFArrayGetCount(spaces) {
             guard let spacePointer = CFArrayGetValueAtIndex(spaces, spaceIndex) else {
@@ -99,6 +153,7 @@ func decodeManagedDisplaySpaces(
                 throw SpaceProbeFailure.invalidSpaceID
             }
             guard foundIDs.insert(spaceID).inserted else { throw SpaceProbeFailure.duplicateSpaceID }
+            matchingIDs.append(spaceID)
             if spaceID == currentSpaceID { matchingCurrentSpaces += 1 }
         }
     }
@@ -108,7 +163,8 @@ func decodeManagedDisplaySpaces(
     guard matchingCurrentSpaces > 0 else { throw SpaceProbeFailure.currentSpaceNotFound }
     guard matchingCurrentSpaces == 1 else { throw SpaceProbeFailure.ambiguousCurrentSpaceID }
     return ManagedDisplaySpaceSnapshot(matchingDisplayCount: matchingDisplays,
-                                        matchingCurrentSpaceCount: matchingCurrentSpaces)
+                                        matchingCurrentSpaceCount: matchingCurrentSpaces,
+                                        spaceIDs: matchingIDs)
 }
 
 private func dictionaryValue(_ dictionary: CFDictionary, key: String) -> CFTypeRef? {
