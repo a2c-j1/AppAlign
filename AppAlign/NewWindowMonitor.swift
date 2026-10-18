@@ -64,7 +64,7 @@ private final class NewWindowBaselineGate: @unchecked Sendable {
 }
 
 final class NewWindowSignalInbox: @unchecked Sendable {
-    private let ticketRegistry: AutoRestoreTicketRegistry
+    let ticketRegistry: AutoRestoreTicketRegistry
     private let lock = NSLock()
     private var signals: [NewWindowSignal] = []
     private var drainScheduled = false
@@ -157,18 +157,18 @@ final class NewWindowMonitor {
     private let processProvider: any NewWindowProcessProviding
     private let ownPID: pid_t
     private let workspace: NSWorkspace
-    private let ticketRegistry: AutoRestoreTicketRegistry
+    let ticketRegistry: AutoRestoreTicketRegistry
     private let inbox: NewWindowSignalInbox
     private var observers: [NSObjectProtocol] = []
     private var processes: [pid_t: ProcessState] = [:]
     private var epoch: UInt64 = 0
     private var enabled = false
     private var drainRunning = false
-    private var drainTask: Task<Void, Never>?
+    var drainTask: Task<Void, Never>?
     private var cleanupTasks: [UUID: Task<Void, Never>] = [:]
     private var needsReconcile = false
     private var monitoringStartedAt = Date()
-    private(set) var diagnostics: [String] = []
+    internal(set) var diagnostics: [String] = []
     private(set) var completedReconcileCount = 0
     private var restoreWasEnabled = false
     var onNewWindow: (@MainActor (WindowObservationCandidate, String) -> Void)?
@@ -301,7 +301,10 @@ extension NewWindowMonitor {
                     }
                 }
             }
-            if !inbox.finishDrain() { break }
+            if !inbox.finishDrain() {
+                if enabled && needsReconcile { continue }
+                break
+            }
         }
         drainRunning = false
         drainTask = nil
@@ -358,11 +361,6 @@ extension NewWindowMonitor {
             ticketRegistry.invalidateAll()
             Task { @MainActor [weak self] in self?.onEnvironmentChanged?() }
         })
-    }
-
-    func spaceChanged() {
-        ticketRegistry.invalidateAll()
-        onEnvironmentChanged?()
     }
 
     private func beginMonitoring(pid: pid_t, epoch expectedEpoch: UInt64, expectedLaunchDate: Date? = nil) async {
@@ -440,8 +438,8 @@ extension NewWindowMonitor {
         let now = DispatchTime.now().uptimeNanoseconds
         let deadline = now + 5_000_000_000
         do {
-            let result = try await runtime.observedWindows(applicationPID: pid, processGeneration: generation,
-                                                           ownPID: ownPID, deadline: deadline)
+            var result = try await runtime.observedWindows(applicationPID: pid, processGeneration: generation,
+                                                            ownPID: ownPID, deadline: deadline)
             guard enabled, epoch == expectedEpoch, var current = processes[pid], current.generation == generation else { return }
             if !result.isComplete {
                 recordDiagnostic("A partial window snapshot was retained without treating missing windows as closed.")
@@ -453,6 +451,17 @@ extension NewWindowMonitor {
                 guard let updated = await removeClosedTokens(current.seen.subtracting(snapshotTokens),
                                                              from: current, operation: operation) else { return }
                 current = updated
+            }
+            if result.isComplete, result.hasUntrackedWindowsDueToCapacity,
+               DispatchTime.now().uptimeNanoseconds < deadline {
+                result = try await runtime.observedWindows(applicationPID: pid, processGeneration: generation,
+                                                           ownPID: ownPID, deadline: deadline)
+                guard enabled, epoch == expectedEpoch,
+                      let latest = processes[pid], latest.generation == generation else { return }
+                current = latest
+                if result.hasUntrackedWindowsDueToCapacity {
+                    recordDiagnostic("Runtime window capacity remained full after one bounded same-cycle rescan.")
+                }
             }
             let operation = ProcessOperation(pid: pid, generation: generation, epoch: expectedEpoch)
             guard let updated = await admitCandidates(result.candidates, to: current,
@@ -581,11 +590,4 @@ extension NewWindowMonitor {
         }
     }
 
-    func cancelPendingAutoRestoreTickets() { ticketRegistry.invalidateAll() }
-
-    private func recordDiagnostic(_ message: String) {
-        guard !diagnostics.contains(message) else { return }
-        if diagnostics.count == 8 { diagnostics.removeFirst() }
-        diagnostics.append(message)
-    }
 }

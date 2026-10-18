@@ -75,6 +75,17 @@ extension AccessibilityWindowRuntime {
     }
 
     func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async -> Bool {
+        await retainHistoryLease(token, lease: lease, observerDeadline: nil)
+    }
+
+    func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID,
+                            deadline: UInt64) async -> Bool {
+        guard DispatchTime.now().uptimeNanoseconds < deadline else { return false }
+        return await retainHistoryLease(token, lease: lease, observerDeadline: deadline)
+    }
+
+    private func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID,
+                                    observerDeadline: UInt64?) async -> Bool {
         guard processLaunchGenerations[token.pid] == token.processGeneration,
               var record = records[token.id], record.window.pid == token.pid,
               !record.revisionTracker.snapshot(since: 0).destroyed else { return false }
@@ -91,12 +102,12 @@ extension AccessibilityWindowRuntime {
               alreadyTracked || retainedHistoryTokens.count < 64 else { return false }
         if record.observerRegistration == nil, !record.historyObserverVerified,
            let historyObserverProvider {
-            let deadline = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
+            guard let deadline = Self.historyObserverDeadline(limit: observerDeadline) else { return false }
             guard historyObserverProvider(token.pid, record.window.element, record.revisionTracker, deadline) else { return false }
             record.historyObserverVerified = true
         }
         if record.observerRegistration == nil, !record.historyObserverVerified {
-            let deadline = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
+            guard let deadline = Self.historyObserverDeadline(limit: observerDeadline) else { return false }
             guard let registration = AXObserverRegistration(pid: token.pid, element: record.window.element,
                                                                tracker: record.revisionTracker, deadline: deadline,
                                                                mode: .destroyOnly),
@@ -111,6 +122,14 @@ extension AccessibilityWindowRuntime {
         records[token.id] = record
         installHistoryDestroySink(token, tracker: record.revisionTracker)
         return true
+    }
+
+    private static func historyObserverDeadline(limit: UInt64?) -> UInt64? {
+        let now = DispatchTime.now().uptimeNanoseconds
+        let ordinaryDeadline = now + 1_000_000_000
+        guard let limit else { return ordinaryDeadline }
+        guard now < limit else { return nil }
+        return min(ordinaryDeadline, limit)
     }
 
     func retainMonitorSeenLease(_ token: RuntimeWindowToken, lease: RuntimeMonitorSeenLeaseID) async -> Bool {
@@ -310,49 +329,6 @@ extension AccessibilityWindowRuntime {
         guard let observation = processObservations[pid], observation.generation == generation else { return }
         processObservations.removeValue(forKey: pid)
         observation.registration.invalidate()
-    }
-
-    func observedWindows(applicationPID pid: pid_t, processGeneration generation: UUID,
-                         ownPID: pid_t, deadline: UInt64) async throws -> WindowObservationResult {
-        guard processLaunchGenerations[pid] == generation, pid != ownPID,
-              accessibilityTrustedProvider() else {
-            throw accessibilityTrustedProvider() ? WindowManagementError.excludedWindow(reason: "ineligible process")
-                : WindowManagementError.accessibilityPermissionRequired
-        }
-        guard DispatchTime.now().uptimeNanoseconds < deadline else {
-            return WindowObservationResult(candidates: [], isComplete: false)
-        }
-        let remaining = Float(deadline - DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
-        let windows = try repository.applicationWindows(applicationPID: pid, timeout: min(0.2, remaining), deadline: deadline)
-        var candidates: [WindowObservationCandidate] = []
-        var isComplete = windows.count <= 64
-        for window in windows.prefix(64) {
-            guard DispatchTime.now().uptimeNanoseconds < deadline else { isComplete = false; break }
-            let runtimeToken: RuntimeWindowToken
-            do { runtimeToken = try token(for: window) } catch { continue }
-            guard runtimeToken.processGeneration == generation else { continue }
-            do {
-                try focusedWindowValidator(window)
-                let frame = try window.stableFrame()
-                guard Self.isFinite(frame), frame.width > 0, frame.height > 0 else {
-                    candidates.append(WindowObservationCandidate(token: runtimeToken, readiness: .terminal))
-                    continue
-                }
-                candidates.append(WindowObservationCandidate(token: runtimeToken, readiness: .ready(frame)))
-            } catch let error as WindowManagementError {
-                if case .accessibilityPermissionRequired = error { throw error }
-                let readiness: WindowObservationReadiness = Self.isTemporaryObservationError(error) ? .temporarilyUnavailable : .terminal
-                candidates.append(WindowObservationCandidate(token: runtimeToken, readiness: readiness))
-            } catch {
-                candidates.append(WindowObservationCandidate(token: runtimeToken, readiness: .terminal))
-            }
-        }
-        return WindowObservationResult(candidates: candidates, isComplete: isComplete)
-    }
-
-    private static func isTemporaryObservationError(_ error: WindowManagementError) -> Bool {
-        guard case let .readFailed(_, code) = error else { return false }
-        return code == AXError.cannotComplete.rawValue || code == AXError.noValue.rawValue
     }
 
     func discardProcess(_ pid: pid_t) async {

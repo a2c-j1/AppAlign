@@ -316,6 +316,8 @@ actor RetryReadinessRuntime: AutomaticWindowOperating {
     func retainMonitorSeenLease(_ token: RuntimeWindowToken, lease: RuntimeMonitorSeenLeaseID) async -> Bool { true }
     func releaseMonitorSeenLease(_ token: RuntimeWindowToken, lease: RuntimeMonitorSeenLeaseID) async {}
     func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async -> Bool { true }
+    func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID,
+                            deadline: UInt64) async -> Bool { clock.now() < deadline }
     func releaseHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async {}
     func moveHistoryWindow(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID, to frame: CGRect,
                            ticket: PlacementCommitTicket,

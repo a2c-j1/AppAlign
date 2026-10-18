@@ -1,6 +1,95 @@
 import XCTest
 
 extension NewWindowMonitorTests {
+    @MainActor
+    func testDrainCarriesNewEpochBaselineAfterOffOnDuringSnapshotAwait() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("AppAlignR24Restart-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersistentStoreCoordinator(directory: directory)
+        try await store.saveLayouts([PersistentStoreCoordinator.defaultLayout()])
+        let layout = LayoutController(displayProvider: DisplayProvider(snapshot: DisplaySnapshot(displays: [], primaryFrame: .zero)),
+                                      storeCoordinator: store)
+        await layout.loadPersistentState()
+        var settings = layout.appHistorySettings
+        settings.monitorNewWindows = true
+        settings.restoreNewWindows = true
+        layout.appHistorySettings = settings
+        let app = MonitoredApplication(pid: 32041, bundleID: "com.example.R24", launchDate: Date(timeIntervalSince1970: 41), isTerminated: false)
+        let provider = MonitorProcessProvider(applications: [app])
+        let runtime = MonitorRuntime()
+        let generation = await runtime.generation(for: app.pid)
+        let existing = RuntimeWindowToken(id: UUID(), pid: app.pid, processGeneration: generation)
+        let newWindow = RuntimeWindowToken(id: UUID(), pid: app.pid, processGeneration: generation)
+        await runtime.setSnapshot([WindowObservationCandidate(token: existing, readiness: .ready(.zero))], pid: app.pid)
+        await runtime.pauseNextSnapshot()
+        let monitor = NewWindowMonitor(layout: layout, runtime: runtime, processProvider: provider, ownPID: -1)
+        var candidates: [RuntimeWindowToken] = []
+        monitor.onNewWindow = { candidate, _ in candidates.append(candidate.token) }
+        monitor.update(settings: settings, accessibilityAllowed: true)
+        await runtime.waitForPausedSnapshot()
+
+        var disabled = settings
+        disabled.monitorNewWindows = false
+        monitor.update(settings: disabled, accessibilityAllowed: true)
+        try await eventually { await runtime.observationCount() == 0 }
+        monitor.update(settings: settings, accessibilityAllowed: true)
+        await runtime.releasePausedSnapshot()
+
+        try await eventually { await runtime.snapshotCount() == 2 && monitor.completedReconcileCount == 1 }
+        let restartedObservationCount = await runtime.observationCount()
+        XCTAssertEqual(restartedObservationCount, 1)
+        XCTAssertEqual(monitor.observedWindowCount, 1)
+        XCTAssertTrue(candidates.isEmpty, "The new epoch baseline records existing windows without restoring them.")
+
+        await runtime.setSnapshot([
+            WindowObservationCandidate(token: existing, readiness: .ready(.zero)),
+            WindowObservationCandidate(token: newWindow, readiness: .ready(CGRect(x: 10, y: 20, width: 200, height: 100)))
+        ], pid: app.pid)
+        monitor.receive(NewWindowSignal(kind: .created, pid: app.pid, generation: generation, launchDate: nil,
+                                        bundleID: nil, duringBaseline: false, afterBaseline: true, epoch: 3))
+        try await eventually { candidates == [newWindow] && monitor.completedReconcileCount == 2 }
+        monitor.receive(NewWindowSignal(kind: .created, pid: app.pid, generation: generation, launchDate: nil,
+                                        bundleID: nil, duringBaseline: false, afterBaseline: true, epoch: 3))
+        try await eventually {
+            let reads = await runtime.snapshotCount()
+            return monitor.completedReconcileCount == 3 && reads == 4
+        }
+        XCTAssertEqual(candidates, [newWindow])
+        monitor.stop()
+        await monitor.drainForShutdown()
+    }
+
+    @MainActor
+    func testStopDuringPausedBaselineDoesNotRestartDrain() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("AppAlignR24Stop-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersistentStoreCoordinator(directory: directory)
+        try await store.saveLayouts([PersistentStoreCoordinator.defaultLayout()])
+        let layout = LayoutController(displayProvider: DisplayProvider(snapshot: DisplaySnapshot(displays: [], primaryFrame: .zero)),
+                                      storeCoordinator: store)
+        await layout.loadPersistentState()
+        var settings = layout.appHistorySettings
+        settings.monitorNewWindows = true
+        layout.appHistorySettings = settings
+        let app = MonitoredApplication(pid: 32042, bundleID: "com.example.R24Stop", launchDate: Date(timeIntervalSince1970: 42), isTerminated: false)
+        let provider = MonitorProcessProvider(applications: [app])
+        let runtime = MonitorRuntime()
+        let token = RuntimeWindowToken(id: UUID(), pid: app.pid, processGeneration: await runtime.generation(for: app.pid))
+        await runtime.setSnapshot([WindowObservationCandidate(token: token, readiness: .ready(.zero))], pid: app.pid)
+        await runtime.pauseNextSnapshot()
+        let monitor = NewWindowMonitor(layout: layout, runtime: runtime, processProvider: provider, ownPID: -1)
+        monitor.start()
+        await runtime.waitForPausedSnapshot()
+        monitor.stop()
+        await runtime.releasePausedSnapshot()
+        await monitor.drainForShutdown()
+        let readsAfterStop = await runtime.snapshotCount()
+        let observersAfterStop = await runtime.observationCount()
+        XCTAssertEqual(readsAfterStop, 1)
+        XCTAssertEqual(observersAfterStop, 0)
+        XCTAssertEqual(monitor.observedProcessCount, 0)
+    }
+
 @MainActor
     func testStartupUnreadyWindowIsSeenAndNewLaunchInitialWindowCanRestore() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("AppAlignMonitor-\(UUID().uuidString)")

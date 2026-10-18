@@ -5,6 +5,8 @@ import Foundation
 
 protocol WindowHistoryLeaseOperating: Sendable {
     func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async -> Bool
+    func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID,
+                            deadline: UInt64) async -> Bool
     func releaseHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async
 }
 
@@ -16,6 +18,10 @@ struct RuntimeMonitorSeenLeaseID: Hashable, Sendable {
 
 extension WindowHistoryLeaseOperating {
     func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async -> Bool { false }
+    func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID,
+                            deadline: UInt64) async -> Bool {
+        false
+    }
     func releaseHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async {}
 }
 

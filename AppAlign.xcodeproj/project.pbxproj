@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+			X10000000000000000000001 /* WindowRuntimeObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = X20000000000000000000001 /* WindowRuntimeObservation.swift */; };
+			X10000000000000000000002 /* WindowRuntimeObservation.swift in Tests */ = {isa = PBXBuildFile; fileRef = X20000000000000000000001 /* WindowRuntimeObservation.swift */; };
+			X10000000000000000000003 /* NewWindowMonitorLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = X20000000000000000000002 /* NewWindowMonitorLifecycle.swift */; };
+			X10000000000000000000004 /* NewWindowMonitorLifecycle.swift in Tests */ = {isa = PBXBuildFile; fileRef = X20000000000000000000002 /* NewWindowMonitorLifecycle.swift */; };
 			I10000000000000000000001 /* AppZoneHistoryPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = I20000000000000000000001 /* AppZoneHistoryPersistence.swift */; };
 			I10000000000000000000002 /* AppZoneHistoryPersistence.swift in Tests */ = {isa = PBXBuildFile; fileRef = I20000000000000000000001 /* AppZoneHistoryPersistence.swift */; };
 			I10000000000000000000003 /* AppHistoryLayoutIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = I20000000000000000000002 /* AppHistoryLayoutIntegration.swift */; };
@@ -140,6 +144,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+			X20000000000000000000001 /* WindowRuntimeObservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowRuntimeObservation.swift; sourceTree = "<group>"; };
+			X20000000000000000000002 /* NewWindowMonitorLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewWindowMonitorLifecycle.swift; sourceTree = "<group>"; };
 			I20000000000000000000001 /* AppZoneHistoryPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppZoneHistoryPersistence.swift; sourceTree = "<group>"; };
 			I20000000000000000000002 /* AppHistoryLayoutIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppHistoryLayoutIntegration.swift; sourceTree = "<group>"; };
 			E20000000000000000000001 /* LayoutHotkeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutHotkeys.swift; sourceTree = "<group>"; };
@@ -297,6 +303,8 @@
 					D20000000000000000000004 /* ZoneOverlay.swift */,
 					D20000000000000000000005 /* WindowRuntimeOperations.swift */,
 					H20000000000000000000001 /* NewWindowMonitor.swift */,
+					X20000000000000000000001 /* WindowRuntimeObservation.swift */,
+					X20000000000000000000002 /* NewWindowMonitorLifecycle.swift */,
 					V20000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift */,
 					H20000000000000000000002 /* AutoRestoreController.swift */,
 					J20000000000000000000001 /* WindowRuntimeState.swift */,
@@ -371,6 +379,8 @@
 					D10000000000000000000003 /* DragSettings.swift in Sources */,
 					D10000000000000000000004 /* ZoneOverlay.swift in Sources */,
 					D10000000000000000000005 /* WindowRuntimeOperations.swift in Sources */,
+					X10000000000000000000001 /* WindowRuntimeObservation.swift in Sources */,
+					X10000000000000000000003 /* NewWindowMonitorLifecycle.swift in Sources */,
 					H10000000000000000000001 /* NewWindowMonitor.swift in Sources */,
 					H10000000000000000000002 /* AutoRestoreController.swift in Sources */,
 					J10000000000000000000001 /* WindowRuntimeState.swift in Sources */,
@@ -464,6 +474,8 @@
 					R10000000000000000000001 /* NewWindowMonitorAutoRestoreTests.swift in Tests */,
 					S10000000000000000000001 /* NewWindowMonitorTestSupport.swift in Tests */,
 					T10000000000000000000001 /* NewWindowMonitorRuntimeOwnerTests.swift in Tests */,
+					X10000000000000000000002 /* WindowRuntimeObservation.swift in Tests */,
+					X10000000000000000000004 /* NewWindowMonitorLifecycle.swift in Tests */,
 					V10000000000000000000002 /* WorkspaceNewWindowProcessProvider.swift in Tests */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;

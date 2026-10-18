@@ -39,6 +39,8 @@ actor AccessibilityWindowRuntime: KeyboardWindowOperating {
     let focusedWindowValidator: @Sendable (AXWindow) throws -> Void
     let frontmostPIDProvider: @Sendable () -> pid_t?
     let accessibilityTrustedProvider: @Sendable () -> Bool
+    let applicationWindowsProvider: @Sendable (pid_t, Float, UInt64) throws -> [AXWindow]
+    let observationFrameProvider: @Sendable (AXWindow) throws -> CGRect
 
     init(focusedWindowProvider: (@Sendable (pid_t) throws -> AXWindow)? = nil,
          focusedWindowValidator: (@Sendable (AXWindow) throws -> Void)? = nil,
@@ -47,13 +49,21 @@ actor AccessibilityWindowRuntime: KeyboardWindowOperating {
          mover: any WindowPlacementOperating = WindowMover(messagingTimeout: 0.5, retryLimit: 1),
          historyMover: (any WindowPlacementOperating)? = nil,
          settableAttributeProvider: (@Sendable (AXWindow, CFString) throws -> Bool)? = nil,
-         historyObserverProvider: (@Sendable (pid_t, AXUIElement, AXRevisionTracker, UInt64) -> Bool)? = nil) {
+         historyObserverProvider: (@Sendable (pid_t, AXUIElement, AXRevisionTracker, UInt64) -> Bool)? = nil,
+         applicationWindowsProvider: (@Sendable (pid_t, Float, UInt64) throws -> [AXWindow])? = nil,
+         observationFrameProvider: (@Sendable (AXWindow) throws -> CGRect)? = nil) {
         self.mover = mover
         self.historyMover = historyMover ?? WindowMover(messagingTimeout: 0.2, retryLimit: 0)
         self.settableAttributeProvider = settableAttributeProvider ?? { window, attribute in
             try window.isAttributeSettable(attribute)
         }
         self.historyObserverProvider = historyObserverProvider
+        self.applicationWindowsProvider = applicationWindowsProvider ?? { pid, timeout, deadline in
+            try WindowRepository(messagingTimeout: timeout).applicationWindows(applicationPID: pid,
+                                                                                timeout: timeout,
+                                                                                deadline: deadline)
+        }
+        self.observationFrameProvider = observationFrameProvider ?? { try $0.stableFrame() }
         self.focusedWindowProvider = focusedWindowProvider ?? { pid in
             try WindowRepository(messagingTimeout: 0.5).focusedWindow(applicationPID: pid)
         }

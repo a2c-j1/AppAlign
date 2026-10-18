@@ -30,12 +30,34 @@ extension LayoutController {
     }
 
     func acquireAppPlacement(_ lease: AppHistoryCoordinator.Lease?, using runtime: any WindowHistoryLeaseOperating) async -> AppHistoryCoordinator.Lease? {
+        await acquireAppPlacement(lease, using: runtime, retainDeadline: nil)
+    }
+
+    func acquireAppPlacement(_ lease: AppHistoryCoordinator.Lease?, using runtime: any WindowHistoryLeaseOperating,
+                             retainDeadline: UInt64) async -> AppHistoryCoordinator.Lease? {
+        await acquireAppPlacement(lease, using: runtime, retainDeadline: Optional(retainDeadline))
+    }
+
+    private func acquireAppPlacement(_ lease: AppHistoryCoordinator.Lease?, using runtime: any WindowHistoryLeaseOperating,
+                                     retainDeadline: UInt64?) async -> AppHistoryCoordinator.Lease? {
         guard let lease else { return nil }
-        guard await runtime.retainHistoryLease(lease.token, lease: lease.runtimeLeaseID) else {
+        let retained: Bool
+        if let retainDeadline {
+            guard DispatchTime.now().uptimeNanoseconds < retainDeadline else {
+                _ = appHistoryCoordinator.release(lease)
+                return nil
+            }
+            retained = await runtime.retainHistoryLease(lease.token, lease: lease.runtimeLeaseID,
+                                                        deadline: retainDeadline)
+        } else {
+            retained = await runtime.retainHistoryLease(lease.token, lease: lease.runtimeLeaseID)
+        }
+        guard retained else {
             _ = appHistoryCoordinator.release(lease)
             return nil
         }
-        guard appZoneHistoryAvailable, appHistoryCoordinator.isPending(lease) else {
+        guard (retainDeadline.map { DispatchTime.now().uptimeNanoseconds < $0 } ?? true),
+              appZoneHistoryAvailable, appHistoryCoordinator.isPending(lease) else {
             _ = appHistoryCoordinator.release(lease)
             await runtime.releaseHistoryLease(lease.token, lease: lease.runtimeLeaseID)
             return nil

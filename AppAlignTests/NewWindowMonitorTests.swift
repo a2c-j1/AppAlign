@@ -219,11 +219,12 @@ final class NewWindowMonitorTests: XCTestCase {
     }
 
     @MainActor
-    func eventually(_ predicate: () async -> Bool) async throws {
+    func eventually(_ predicate: () async -> Bool,
+                    file: StaticString = #filePath, line: UInt = #line) async throws {
         for _ in 0 ..< 200 {
             if await predicate() { return }
             try await Task.sleep(for: .milliseconds(5))
         }
-        XCTFail("The asynchronous monitor operation did not complete.")
+        XCTFail("The asynchronous monitor operation did not complete.", file: file, line: line)
     }
 }

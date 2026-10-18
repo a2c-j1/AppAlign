@@ -34,6 +34,16 @@ struct WindowObservationCandidate: Sendable {
 struct WindowObservationResult: Sendable {
     let candidates: [WindowObservationCandidate]
     let isComplete: Bool
+    /// True when the AX list was complete, but at least one identity could not be
+    /// represented because the runtime record table was at capacity.
+    let hasUntrackedWindowsDueToCapacity: Bool
+
+    init(candidates: [WindowObservationCandidate], isComplete: Bool,
+         hasUntrackedWindowsDueToCapacity: Bool = false) {
+        self.candidates = candidates
+        self.isComplete = isComplete
+        self.hasUntrackedWindowsDueToCapacity = hasUntrackedWindowsDueToCapacity
+    }
 }
 
 struct ManualWindowLeaseID: Hashable, Sendable {

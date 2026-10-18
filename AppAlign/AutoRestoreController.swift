@@ -189,7 +189,9 @@ final class AutoRestoreController {
         guard isCurrent(episode), let target = restoreTarget(bundleID: episode.bundleID, windowFrame: windowFrame) else { return false }
         let lease = layout.reserveAppPlacement(token: episode.token, bundleID: episode.bundleID,
                                                display: target.display, layout: target.snapshot.layout)
-        guard let acquired = await layout.acquireAppPlacement(lease, using: runtime), isCurrent(episode) else {
+        let retainDeadline = min(episode.deadline, clock.now() + 200_000_000)
+        guard let acquired = await layout.acquireAppPlacement(lease, using: runtime,
+                                                              retainDeadline: retainDeadline), isCurrent(episode) else {
             layout.releaseAppPlacement(lease)
             return false
         }
