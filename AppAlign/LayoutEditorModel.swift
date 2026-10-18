@@ -235,6 +235,16 @@ private struct EditorSnapshot {
     let selectedIDs: Set<Int>
 }
 
+enum PendingEditorSelection {
+    case display(DisplaySelectionID)
+    case scope(PersistedSpaceScope)
+    case layout(PersistedLayout)
+    case template(LayoutTemplate)
+    case canvas
+    case delete(UUID)
+    case duplicate(UUID)
+}
+
 private extension LayoutDefinition {
     var canvasValue: CanvasLayout? {
         switch self {

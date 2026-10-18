@@ -94,6 +94,25 @@ final class DisplayConfigurationControllerTests: XCTestCase {
         fixture.controller.dispose()
     }
 
+    func testSpaceCallbackInvalidatesTicketSynchronouslyAndMainActorPublishesAfterward() async throws {
+        let fixture = makeFixture()
+        fixture.controller.start()
+        let ticket = try XCTUnwrap(fixture.validity.reserve(startDeadline: .max, totalDeadline: .max))
+        let gateClosed = expectation(description: "Space delivery closes configuration gate")
+        fixture.effects.gateExpectations[true] = gateClosed
+
+        fixture.workspace.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        XCTAssertEqual(ticket.state, .invalidated, "The public callback must invalidate the ticket before its MainActor task runs.")
+        await fulfillment(of: [gateClosed], timeout: 2)
+        fixture.sampled.snapshot = fixture.snapshotB
+        let gateOpened = expectation(description: "sampled Space state is published")
+        fixture.effects.gateExpectations[false] = gateOpened
+        fixture.workspace.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        await fulfillment(of: [gateOpened], timeout: 2)
+        XCTAssertEqual(fixture.provider.snapshot, fixture.snapshotB)
+        fixture.controller.dispose()
+    }
+
     private func makeFixture(registrationResult: CGError = .success) -> DisplayControllerFixture {
         let displayID = DisplaySelectionID.persistent(PersistentDisplayID(uuid: UUID()))
         let sessionID = UUID()
@@ -106,10 +125,11 @@ final class DisplayConfigurationControllerTests: XCTestCase {
         let provider = DisplayProvider(snapshot: snapshotA)
         let sampled = DisplaySnapshotBox(snapshotB)
         let validity = PlacementValidity()
-        let layout = LayoutController(displayProvider: provider, placementValidity: validity)
-        let effects = DisplayEffectsRecorder()
         let appKit = NotificationCenter()
         let workspace = NotificationCenter()
+        let spaceProvider = SpaceProvider(notificationCenter: workspace)
+        let layout = LayoutController(displayProvider: provider, spaceProvider: spaceProvider, placementValidity: validity)
+        let effects = DisplayEffectsRecorder()
         let registeredPointer = DisplayCallbackPointer()
         let controller = DisplayConfigurationController(
             layout: layout,
@@ -117,6 +137,7 @@ final class DisplayConfigurationControllerTests: XCTestCase {
                 cancelDrag: { _ in effects.dragCancellationCount += 1 },
                 environmentChanged: { _ in effects.environmentChangeCount += 1 },
                 invalidateKeyboard: { effects.keyboardInvalidationCount += 1 },
+                invalidateManualCapture: {},
                 setConfigurationPending: { effects.setGate($0) }
             ),
             appKitNotificationCenter: appKit,

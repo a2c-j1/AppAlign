@@ -7,6 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+			Y10000000000000000000002 /* AppZoneHistoryPersistenceTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = L20000000000000000000001 /* AppZoneHistoryPersistenceTests.swift */; };
+			Y10000000000000000000001 /* SpaceProviderTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = Y20000000000000000000001 /* SpaceProviderTests.swift */; };
+			Z10000000000000000000001 /* SpaceProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = Z20000000000000000000001 /* SpaceProvider.swift */; };
+			Z10000000000000000000002 /* SpaceProvider.swift in Tests */ = {isa = PBXBuildFile; fileRef = Z20000000000000000000001 /* SpaceProvider.swift */; };
+			Z10000000000000000000003 /* PersistedSpaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = Z20000000000000000000002 /* PersistedSpaceModels.swift */; };
+			Z10000000000000000000004 /* PersistedSpaceModels.swift in Tests */ = {isa = PBXBuildFile; fileRef = Z20000000000000000000002 /* PersistedSpaceModels.swift */; };
+			Z10000000000000000000005 /* PersistentSpaceStoreValidation.swift in Sources */ = {isa = PBXBuildFile; fileRef = Z20000000000000000000003 /* PersistentSpaceStoreValidation.swift */; };
+			Z10000000000000000000006 /* PersistentSpaceStoreValidation.swift in Tests */ = {isa = PBXBuildFile; fileRef = Z20000000000000000000003 /* PersistentSpaceStoreValidation.swift */; };
 			X10000000000000000000001 /* WindowRuntimeObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = X20000000000000000000001 /* WindowRuntimeObservation.swift */; };
 			X10000000000000000000002 /* WindowRuntimeObservation.swift in Tests */ = {isa = PBXBuildFile; fileRef = X20000000000000000000001 /* WindowRuntimeObservation.swift */; };
 			X10000000000000000000003 /* NewWindowMonitorLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = X20000000000000000000002 /* NewWindowMonitorLifecycle.swift */; };
@@ -15,6 +23,8 @@
 			I10000000000000000000002 /* AppZoneHistoryPersistence.swift in Tests */ = {isa = PBXBuildFile; fileRef = I20000000000000000000001 /* AppZoneHistoryPersistence.swift */; };
 			I10000000000000000000003 /* AppHistoryLayoutIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = I20000000000000000000002 /* AppHistoryLayoutIntegration.swift */; };
 			I10000000000000000000004 /* AppHistoryLayoutIntegration.swift in Tests */ = {isa = PBXBuildFile; fileRef = I20000000000000000000002 /* AppHistoryLayoutIntegration.swift */; };
+			V10000000000000000000051 /* EditorDeltaPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = V20000000000000000000051 /* EditorDeltaPersistence.swift */; };
+			V10000000000000000000052 /* EditorDeltaPersistence.swift in Tests */ = {isa = PBXBuildFile; fileRef = V20000000000000000000051 /* EditorDeltaPersistence.swift */; };
 			E10000000000000000000001 /* LayoutHotkeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000001 /* LayoutHotkeys.swift */; };
 			E10000000000000000000002 /* OrderedInteractionInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000002 /* OrderedInteractionInbox.swift */; };
 			E10000000000000000000003 /* OrderedInteractionTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = E20000000000000000000003 /* OrderedInteractionTests.swift */; };
@@ -144,10 +154,15 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+			Y20000000000000000000001 /* SpaceProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceProviderTests.swift; sourceTree = "<group>"; };
+			Z20000000000000000000001 /* SpaceProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceProvider.swift; sourceTree = "<group>"; };
+			Z20000000000000000000002 /* PersistedSpaceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistedSpaceModels.swift; sourceTree = "<group>"; };
+			Z20000000000000000000003 /* PersistentSpaceStoreValidation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistentSpaceStoreValidation.swift; sourceTree = "<group>"; };
 			X20000000000000000000001 /* WindowRuntimeObservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowRuntimeObservation.swift; sourceTree = "<group>"; };
 			X20000000000000000000002 /* NewWindowMonitorLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewWindowMonitorLifecycle.swift; sourceTree = "<group>"; };
 			I20000000000000000000001 /* AppZoneHistoryPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppZoneHistoryPersistence.swift; sourceTree = "<group>"; };
 			I20000000000000000000002 /* AppHistoryLayoutIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppHistoryLayoutIntegration.swift; sourceTree = "<group>"; };
+			V20000000000000000000051 /* EditorDeltaPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDeltaPersistence.swift; sourceTree = "<group>"; };
 			E20000000000000000000001 /* LayoutHotkeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutHotkeys.swift; sourceTree = "<group>"; };
 			E20000000000000000000002 /* OrderedInteractionInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderedInteractionInbox.swift; sourceTree = "<group>"; };
 			E20000000000000000000003 /* OrderedInteractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderedInteractionTests.swift; sourceTree = "<group>"; };
@@ -270,10 +285,14 @@
 					B20000000000000000000005 /* LayoutEngine.swift */,
 					B20000000000000000000006 /* LayoutTemplates.swift */,
 					B20000000000000000000007 /* LayoutController.swift */,
+					Z20000000000000000000001 /* SpaceProvider.swift */,
+					Z20000000000000000000002 /* PersistedSpaceModels.swift */,
+					Z20000000000000000000003 /* PersistentSpaceStoreValidation.swift */,
 					B20000000000000000000008 /* LayoutPreview.swift */,
 					B2000000000000000000000C /* Persistence.swift */,
 					I20000000000000000000001 /* AppZoneHistoryPersistence.swift */,
 					I20000000000000000000002 /* AppHistoryLayoutIntegration.swift */,
+					V20000000000000000000051 /* EditorDeltaPersistence.swift */,
 					B20000000000000000000010 /* LayoutEditing.swift */,
 					B20000000000000000000011 /* LayoutEditorModel.swift */,
 					B20000000000000000000014 /* ZoneNavigator.swift */,
@@ -322,7 +341,7 @@
 			};
 			B40000000000000000000001 /* AppAlignTests */ = {
 				isa = PBXGroup;
-				children = (B20000000000000000000009 /* LayoutEngineTests.swift */, B2000000000000000000000D /* PersistenceTests.swift */, N20000000000000000000001 /* AppHistoryCoordinatorTests.swift */, M20000000000000000000001 /* LayoutPersistenceControllerTests.swift */, L20000000000000000000001 /* AppZoneHistoryPersistenceTests.swift */, B20000000000000000000012 /* LayoutEditorTests.swift */, B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */, B20000000000000000000015 /* ZoneNavigatorTests.swift */, B2000000000000000000001A /* KeyboardSettingsTests.swift */, B2000000000000000000001B /* KeyboardSnapControllerTests.swift */, P20000000000000000000001 /* KeyboardManualPlacementTests.swift */, O20000000000000000000001 /* KeyboardManualHistoryWaitTests.swift */, B2000000000000000000001F /* GlobalHotkeysTests.swift */, B20000000000000000000020 /* KeyboardIntegrationTests.swift */, B20000000000000000000021 /* KeyboardLifecycleTests.swift */, C40000000000000000000001 /* DragDetectionTests.swift */, C40000000000000000000002 /* RuntimeWindowOwnershipTests.swift */, C40000000000000000000003 /* DragTestSupport.swift */, C40000000000000000000004 /* InputMonitorLifecycleTests.swift */, C40000000000000000000005 /* DragSnapTests.swift */, C40000000000000000000006 /* DragDetectorSnapAcceptanceTests.swift */, C40000000000000000000007 /* PlacementValidityTests.swift */, C40000000000000000000008 /* MultiDisplayTests.swift */, C40000000000000000000009 /* DisplayConfigurationControllerTests.swift */, E20000000000000000000003 /* OrderedInteractionTests.swift */, E20000000000000000000004 /* LayoutHotkeysTests.swift */, E20000000000000000000005 /* FlagsSubscriptionTests.swift */, G20000000000000000000001 /* ZoneSelectionBoundaryTests.swift */, G20000000000000000000002 /* KeyboardExtensionRaceTests.swift */, G20000000000000000000003 /* KeyboardExtensionAwaitTests.swift */, H20000000000000000000003 /* NewWindowMonitorTests.swift */, Q20000000000000000000001 /* NewWindowMonitorCoreTests.swift */, R20000000000000000000001 /* NewWindowMonitorAutoRestoreTests.swift */, S20000000000000000000001 /* NewWindowMonitorTestSupport.swift */, T20000000000000000000001 /* NewWindowMonitorRuntimeOwnerTests.swift */, W20000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift */,  K20000000000000000000002 /* AccessibilityHistoryPermissionMonitorTests.swift */,);
+				children = (Y20000000000000000000001 /* SpaceProviderTests.swift */, B20000000000000000000009 /* LayoutEngineTests.swift */, B2000000000000000000000D /* PersistenceTests.swift */, N20000000000000000000001 /* AppHistoryCoordinatorTests.swift */, M20000000000000000000001 /* LayoutPersistenceControllerTests.swift */, L20000000000000000000001 /* AppZoneHistoryPersistenceTests.swift */, B20000000000000000000012 /* LayoutEditorTests.swift */, B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */, B20000000000000000000015 /* ZoneNavigatorTests.swift */, B2000000000000000000001A /* KeyboardSettingsTests.swift */, B2000000000000000000001B /* KeyboardSnapControllerTests.swift */, P20000000000000000000001 /* KeyboardManualPlacementTests.swift */, O20000000000000000000001 /* KeyboardManualHistoryWaitTests.swift */, B2000000000000000000001F /* GlobalHotkeysTests.swift */, B20000000000000000000020 /* KeyboardIntegrationTests.swift */, B20000000000000000000021 /* KeyboardLifecycleTests.swift */, C40000000000000000000001 /* DragDetectionTests.swift */, C40000000000000000000002 /* RuntimeWindowOwnershipTests.swift */, C40000000000000000000003 /* DragTestSupport.swift */, C40000000000000000000004 /* InputMonitorLifecycleTests.swift */, C40000000000000000000005 /* DragSnapTests.swift */, C40000000000000000000006 /* DragDetectorSnapAcceptanceTests.swift */, C40000000000000000000007 /* PlacementValidityTests.swift */, C40000000000000000000008 /* MultiDisplayTests.swift */, C40000000000000000000009 /* DisplayConfigurationControllerTests.swift */, E20000000000000000000003 /* OrderedInteractionTests.swift */, E20000000000000000000004 /* LayoutHotkeysTests.swift */, E20000000000000000000005 /* FlagsSubscriptionTests.swift */, G20000000000000000000001 /* ZoneSelectionBoundaryTests.swift */, G20000000000000000000002 /* KeyboardExtensionRaceTests.swift */, G20000000000000000000003 /* KeyboardExtensionAwaitTests.swift */, H20000000000000000000003 /* NewWindowMonitorTests.swift */, Q20000000000000000000001 /* NewWindowMonitorCoreTests.swift */, R20000000000000000000001 /* NewWindowMonitorAutoRestoreTests.swift */, S20000000000000000000001 /* NewWindowMonitorTestSupport.swift */, T20000000000000000000001 /* NewWindowMonitorRuntimeOwnerTests.swift */, W20000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift */,  K20000000000000000000002 /* AccessibilityHistoryPermissionMonitorTests.swift */,);
 				path = AppAlignTests;
 				sourceTree = "<group>";
 			};
@@ -345,11 +364,15 @@
 					B10000000000000000000005 /* LayoutEngine.swift in Sources */,
 					B10000000000000000000006 /* LayoutTemplates.swift in Sources */,
 					B10000000000000000000007 /* LayoutController.swift in Sources */,
+					Z10000000000000000000001 /* SpaceProvider.swift in Sources */,
+					Z10000000000000000000003 /* PersistedSpaceModels.swift in Sources */,
+					Z10000000000000000000005 /* PersistentSpaceStoreValidation.swift in Sources */,
 					B10000000000000000000008 /* LayoutPreview.swift in Sources */,
 					D1000000000000000000000D /* DisplayLayoutRefresh.swift in Sources */,
 					B10000000000000000000010 /* Persistence.swift in Sources */,
 					I10000000000000000000001 /* AppZoneHistoryPersistence.swift in Sources */,
 					I10000000000000000000003 /* AppHistoryLayoutIntegration.swift in Sources */,
+					V10000000000000000000051 /* EditorDeltaPersistence.swift in Sources */,
 					B10000000000000000000016 /* LayoutEditing.swift in Sources */,
 					B10000000000000000000017 /* LayoutEditorModel.swift in Sources */,
 					B1000000000000000000001C /* ZoneNavigator.swift in Sources */,
@@ -404,8 +427,13 @@
 					B10000000000000000000011 /* Persistence.swift in Tests */,
 					I10000000000000000000002 /* AppZoneHistoryPersistence.swift in Tests */,
 					I10000000000000000000004 /* AppHistoryLayoutIntegration.swift in Tests */,
+					V10000000000000000000052 /* EditorDeltaPersistence.swift in Tests */,
 					B10000000000000000000012 /* DisplayProvider.swift in Tests */,
 					B10000000000000000000013 /* LayoutController.swift in Tests */,
+					Z10000000000000000000002 /* SpaceProvider.swift in Tests */,
+					Z10000000000000000000004 /* PersistedSpaceModels.swift in Tests */,
+					Z10000000000000000000006 /* PersistentSpaceStoreValidation.swift in Tests */,
+					Y10000000000000000000001 /* SpaceProviderTests.swift in Tests */,
 					D1000000000000000000000E /* DisplayLayoutRefresh.swift in Tests */,
 					B10000000000000000000014 /* WindowManagement.swift in Tests */,
 					B10000000000000000000015 /* PersistenceTests.swift in Tests */,

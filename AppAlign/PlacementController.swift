@@ -197,6 +197,7 @@ extension PlacementController {
             throw WindowManagementError.noCapturedWindow
         }
         let generation = captureGeneration
+        let configurationRevision = validity.revision.configuration
         manualOperationGeneration &+= 1
         let operation = manualOperationGeneration
         isBusy = true
@@ -238,7 +239,8 @@ extension PlacementController {
         } catch {
             let observedFrame = try? await manualRuntime.readManualWindowFrame(capture.token, lease: capture.lease)
             guard captureGeneration == generation, manualOperationGeneration == operation,
-                  manualCapture?.token == capture.token, manualCapture?.lease == capture.lease else { throw error }
+                  manualCapture?.token == capture.token, manualCapture?.lease == capture.lease,
+                  validity.revision.configuration == configurationRevision else { throw error }
             actualFrame = observedFrame
             statusMessage = error.localizedDescription
             throw error
@@ -256,6 +258,7 @@ extension PlacementController {
         }
         isBusy = true
         let generation = captureGeneration
+        let configurationRevision = validity.revision.configuration
         manualOperationGeneration &+= 1
         let operation = manualOperationGeneration
         defer {
@@ -292,7 +295,8 @@ extension PlacementController {
         } catch {
             let observedFrame = try? await manualRuntime.readManualWindowFrame(capture.token, lease: capture.lease)
             guard captureGeneration == generation, manualOperationGeneration == operation,
-                  manualCapture?.token == capture.token, manualCapture?.lease == capture.lease else { return }
+                  manualCapture?.token == capture.token, manualCapture?.lease == capture.lease,
+                  validity.revision.configuration == configurationRevision else { return }
             actualFrame = observedFrame
             statusMessage = error.localizedDescription
         }

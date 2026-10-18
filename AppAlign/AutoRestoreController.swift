@@ -49,14 +49,17 @@ final class AutoRestoreController {
         let bundleID: String
         let startedAt: UInt64
         let deadline: UInt64
+        let configurationRevision: UInt64
         var ticket: PlacementCommitTicket?
         var task: Task<Void, Never>?
 
-        init(token: RuntimeWindowToken, bundleID: String, startedAt: UInt64, deadline: UInt64) {
+        init(token: RuntimeWindowToken, bundleID: String, startedAt: UInt64, deadline: UInt64,
+             configurationRevision: UInt64) {
             self.token = token
             self.bundleID = bundleID
             self.startedAt = startedAt
             self.deadline = deadline
+            self.configurationRevision = configurationRevision
         }
     }
 
@@ -89,7 +92,8 @@ final class AutoRestoreController {
               episodes[initial.token] == nil, inFlightEpisodes.count < 8 else { return }
         let startedAt = clock.now()
         let episode = Episode(token: initial.token, bundleID: bundleID, startedAt: startedAt,
-                              deadline: startedAt + 5_000_000_000)
+                              deadline: startedAt + 5_000_000_000,
+                              configurationRevision: layout.placementValidity.revision.configuration)
         episodes[initial.token] = episode
         inFlightEpisodes[episode.id] = episode
         episode.task = Task { @MainActor [weak self, weak episode] in
@@ -140,6 +144,7 @@ final class AutoRestoreController {
 
     private func isCurrent(_ episode: Episode) -> Bool {
         active && !Task.isCancelled && episodes[episode.token] === episode
+            && episode.configurationRevision == layout.placementValidity.revision.configuration
             && clock.now() < episode.deadline
             && layout.appHistorySettings.monitorNewWindows && layout.appHistorySettings.restoreNewWindows
             && layout.appZoneHistoryAvailable
@@ -187,16 +192,22 @@ final class AutoRestoreController {
 
     private func attemptPlacement(_ episode: Episode, windowFrame: CGRect) async -> Bool {
         guard isCurrent(episode), let target = restoreTarget(bundleID: episode.bundleID, windowFrame: windowFrame) else { return false }
+        guard target.snapshot.revision == layout.placementValidity.revision,
+              target.snapshot.spaceSnapshot.persistedScope == layout.spaceSnapshot(for: target.display).persistedScope else { return false }
         let lease = layout.reserveAppPlacement(token: episode.token, bundleID: episode.bundleID,
                                                display: target.display, layout: target.snapshot.layout)
         let retainDeadline = min(episode.deadline, clock.now() + 200_000_000)
         guard let acquired = await layout.acquireAppPlacement(lease, using: runtime,
-                                                              retainDeadline: retainDeadline), isCurrent(episode) else {
+                                                              retainDeadline: retainDeadline), isCurrent(episode),
+              target.snapshot.revision == layout.placementValidity.revision,
+              target.snapshot.spaceSnapshot.persistedScope == layout.spaceSnapshot(for: target.display).persistedScope else {
             layout.releaseAppPlacement(lease)
             return false
         }
         let now = clock.now()
-        guard now < episode.deadline,
+        guard now < episode.deadline, isCurrent(episode),
+              target.snapshot.revision == layout.placementValidity.revision,
+              target.snapshot.spaceSnapshot.persistedScope == layout.spaceSnapshot(for: target.display).persistedScope,
               let ticket = layout.placementValidity.reserve(startDeadline: min(episode.deadline, now + 200_000_000),
                                                             totalDeadline: episode.deadline) else {
             layout.releaseAppPlacement(acquired)
@@ -250,7 +261,8 @@ final class AutoRestoreController {
             guard let displayUUID = display.persistentID?.uuid,
                   let snapshot = layout.appliedLayoutSnapshot(for: display) else { continue }
             let key = AppZoneHistoryKey(bundleID: bundleID, displayUUID: displayUUID,
-                                        spaceScope: .common, layoutID: snapshot.layout.id)
+                                        spaceScope: snapshot.spaceSnapshot.persistedScope, layoutID: snapshot.layout.id)
+            guard snapshot.spaceSnapshot.allowsAutomaticRestore else { continue }
             guard let record = layout.appZoneHistory[key], !record.zoneIDs.isEmpty,
                   let zones = Optional(snapshot.zones.filter { record.zoneIDs.contains($0.id.rawValue) }),
                   Set(zones.map { $0.id.rawValue }) == Set(record.zoneIDs) else { continue }

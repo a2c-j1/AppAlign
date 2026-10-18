@@ -11,8 +11,7 @@ extension PersistentStoreCoordinator {
         }
         try ensureAppZoneHistoryWriter()
         guard appZoneHistoryAvailable else { throw PersistenceError.storeUnavailable("app-zone-history") }
-        guard proposed.key.spaceScope == .common,
-              !proposed.key.bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        guard !proposed.key.bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !proposed.zoneIDs.isEmpty,
               proposed.zoneIDs == AppZoneHistoryRecord.normalized(proposed.zoneIDs) else {
             throw PersistenceError.invalidData("app zone history record")
@@ -32,7 +31,9 @@ extension PersistentStoreCoordinator {
         }
         records[proposed.key] = proposed
         let ordered = records.values.sorted(by: Self.historyOrder)
+        try backupLegacyStoreIfNeeded(name: "app-zone-history", url: urls.appZoneHistory)
         try save(AppZoneHistoryStore(records: ordered), to: urls.appZoneHistory)
+        markLegacyStoreMigrated("app-zone-history")
     }
 
     func pruneAppZoneHistory(validLayouts: [UUID: PersistedLayout]) throws {
@@ -45,7 +46,9 @@ extension PersistentStoreCoordinator {
                                    default: AppZoneHistoryStore(records: []), validate: Self.validateAppZoneHistory)
         let remaining = loaded.value.records.filter { Self.isValid($0, layouts: validLayouts) }
         if remaining.count != loaded.value.records.count {
+            try backupLegacyStoreIfNeeded(name: "app-zone-history", url: urls.appZoneHistory)
             try save(AppZoneHistoryStore(records: remaining.sorted(by: Self.historyOrder)), to: urls.appZoneHistory)
+            markLegacyStoreMigrated("app-zone-history")
         }
         appZoneHistoryNeedsPrune = false
     }
@@ -84,14 +87,13 @@ extension PersistentStoreCoordinator {
     static func validateAppZoneHistory(_ store: AppZoneHistoryStore) throws {
         guard Set(store.records.map(\.key)).count == store.records.count,
               store.records.allSatisfy({
-                  $0.key.spaceScope == .common &&
-                      !$0.key.bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                  !$0.key.bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                       !$0.zoneIDs.isEmpty && $0.zoneIDs == AppZoneHistoryRecord.normalized($0.zoneIDs)
               }) else { throw PersistenceError.invalidData("app zone history") }
     }
 
     static func isValid(_ record: AppZoneHistoryRecord, layouts: [UUID: PersistedLayout]) -> Bool {
-        guard let layout = layouts[record.key.layoutID], record.key.spaceScope == .common,
+        guard let layout = layouts[record.key.layoutID],
               !record.key.bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !record.zoneIDs.isEmpty,
               record.zoneIDs == AppZoneHistoryRecord.normalized(record.zoneIDs) else { return false }

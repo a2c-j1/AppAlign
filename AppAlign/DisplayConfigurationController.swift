@@ -8,6 +8,7 @@ final class DisplayConfigurationController {
         let cancelDrag: @MainActor (String) -> Void
         let environmentChanged: @MainActor (String) -> Void
         let invalidateKeyboard: @MainActor () -> Void
+        let invalidateManualCapture: @MainActor () -> Void
         let setConfigurationPending: @MainActor (Bool) -> Void
     }
 
@@ -47,6 +48,7 @@ final class DisplayConfigurationController {
         effects = Effects(cancelDrag: { drag.cancel(reason: $0) },
                           environmentChanged: { detection.environmentChanged(reason: $0) },
                           invalidateKeyboard: { keyboard.invalidatePendingOperations() },
+                          invalidateManualCapture: { layout.invalidateManualCapture() },
                           setConfigurationPending: { gate.setConfigurationPending($0) })
         appKitNotificationCenter = .default
         workspaceNotificationCenter = NSWorkspace.shared.notificationCenter
@@ -109,6 +111,10 @@ final class DisplayConfigurationController {
             guard let signal = callbackContext.signal(event: .wake, expectedEpoch: epoch) else { return }
             Task { @MainActor in callbackContext.deliver(event: .wake, revision: signal.revision, epoch: signal.epoch) }
         }))
+        layout.spaceProvider.start { [callbackContext] in
+            guard let signal = callbackContext.signal(event: .spaceChange, expectedEpoch: epoch) else { return }
+            Task { @MainActor in callbackContext.deliver(event: .spaceChange, revision: signal.revision, epoch: signal.epoch) }
+        }
         if !registeredWithCoreGraphics {
             if registerCoreGraphics(Unmanaged.passUnretained(callbackContext).toOpaque()) != .success {
                 recordMonitoringDiagnostic("CoreGraphics display reconfiguration callback registration failed.")
@@ -126,6 +132,7 @@ final class DisplayConfigurationController {
         callbackContext.deactivate()
         for observer in observers { observer.center.removeObserver(observer.token) }
         observers.removeAll()
+        layout.spaceProvider.stop()
         _ = beginInvalidation()
     }
 
@@ -151,6 +158,7 @@ final class DisplayConfigurationController {
     private func beginInvalidation(revision: UInt64? = nil) -> UInt64 {
         let revision = revision ?? validity.invalidateForConfigurationChange()
         layout.cancelAutomaticRestores?()
+        effects.invalidateManualCapture()
         pendingRevision = revision
         effects.setConfigurationPending(true)
         effects.invalidateKeyboard()
@@ -182,6 +190,7 @@ final class DisplayConfigurationController {
     private func publishSample(_ sampled: DisplaySnapshot, revision: UInt64) {
         guard !callbackContext.isSleeping, !callbackContext.isAwaitingCompletion,
               pendingRevision == revision, validity.revision.configuration == revision else { return }
+        _ = layout.spaceProvider.refresh(displays: sampled.displays.compactMap { $0.persistentID?.uuid })
         layout.displayProvider.publish(sampled)
         layout.displaysDidPublish(sampled)
         guard pendingRevision == revision, validity.revision.configuration == revision,
@@ -236,7 +245,7 @@ final class DisplayConfigurationController {
         guard !state.sleeping else { return }
         switch event {
         case .begin: break
-        case .displayChange: refreshAfterSignal(revision: currentRevision)
+        case .displayChange, .spaceChange: refreshAfterSignal(revision: currentRevision)
         case .sleep: break
         case .wake: refreshAfterSignal(revision: currentRevision)
         case .complete: refreshAfterSignal(revision: currentRevision)
@@ -265,7 +274,7 @@ final class DisplayConfigurationController {
 }
 
 private final class DisplayCallbackContext: @unchecked Sendable {
-    enum Event: Sendable, Equatable { case begin, complete, displayChange, sleep, wake }
+    enum Event: Sendable, Equatable { case begin, complete, displayChange, spaceChange, sleep, wake }
     struct State {
         let epoch: UInt64
         let configurationRevision: UInt64

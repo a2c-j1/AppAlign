@@ -21,61 +21,59 @@ final class AppZoneHistoryPersistenceTests: XCTestCase {
         XCTAssertEqual(loaded.appZoneHistory[key]?.revision, 7)
     }
 
-    @MainActor
-    func testInvalidHistoryKeepsRawRevisionSeedAndMaxRevisionDoesNotBlockBaseFlush() async throws {
+    func testCommonAndSpaceHistoryUseIndependentKeysAndRoundTrip() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let layout = PersistentStoreCoordinator.defaultLayout()
-        let key = AppZoneHistoryKey(bundleID: "com.example.Editor", displayUUID: UUID(),
-                                    spaceScope: .common, layoutID: layout.id)
-        let urls = StoreURLs(directory: directory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let invalid = AppZoneHistoryRecord(key: key, zoneIDs: [Int.max], revision: 100)
-        let invalidBytes = try JSONEncoder().encode(VersionedStore(schemaVersion: 1,
-                                                                    value: AppZoneHistoryStore(records: [invalid])))
-        try invalidBytes.write(to: urls.appZoneHistory)
+        let display = UUID()
+        let commonKey = AppZoneHistoryKey(bundleID: "com.example.Scope", displayUUID: display,
+                                          spaceScope: .common, layoutID: layout.id)
+        let spaceID = try XCTUnwrap(PersistentSpaceID(backend: "validated-test", opaqueID: "space-a"))
+        let scopedKey = AppZoneHistoryKey(bundleID: "com.example.Scope", displayUUID: display,
+                                          spaceScope: .space(spaceID), layoutID: layout.id)
+        let coordinator = PersistentStoreCoordinator(directory: directory)
+        _ = try await coordinator.load()
+        try await coordinator.saveLayouts([layout])
+        try await coordinator.upsertAppZoneHistory(AppZoneHistoryRecord(key: commonKey, zoneIDs: [0], revision: 1), expectedLayout: layout)
+        try await coordinator.upsertAppZoneHistory(AppZoneHistoryRecord(key: scopedKey, zoneIDs: [1], revision: 2), expectedLayout: layout)
 
-        let loaded = try await loadHistoryStateAndReleaseWriter(directory: directory)
-        XCTAssertTrue(loaded.appZoneHistory.isEmpty)
-        XCTAssertEqual(loaded.maxAppZoneHistoryRevision, 100)
-        let layoutController = LayoutController(storeCoordinator: PersistentStoreCoordinator(directory: directory))
-        await layoutController.loadPersistentState()
-        layoutController.recordAppZoneHistory(key: key, expectedLayout: layout, zoneIDs: [0])
-        let historyFlushed = await layoutController.flush()
-        XCTAssertTrue(historyFlushed)
-        let recoveredRevision = layoutController.appZoneHistory[key]?.revision
-        XCTAssertEqual(recoveredRevision, 101,
-                       "The controller allocates above a filtered invalid record's persisted revision.")
-
-        let overflowDirectory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: overflowDirectory) }
-        let overflowURLs = StoreURLs(directory: overflowDirectory)
-        try FileManager.default.createDirectory(at: overflowDirectory, withIntermediateDirectories: true)
-        let exhausted = AppZoneHistoryRecord(key: key, zoneIDs: [Int.max], revision: .max)
-        let exhaustedBytes = try JSONEncoder().encode(VersionedStore(schemaVersion: 1,
-                                                                       value: AppZoneHistoryStore(records: [exhausted])))
-        try exhaustedBytes.write(to: overflowURLs.appZoneHistory)
-        let exhaustedController = LayoutController(
-            storeCoordinator: PersistentStoreCoordinator(directory: overflowDirectory)
-        )
-        await exhaustedController.loadPersistentState()
-        let exhaustedRevision = exhaustedController.nextAppZoneHistoryRevision
-        let exhaustedHistory = exhaustedController.appZoneHistory
-        XCTAssertEqual(exhaustedRevision, .max)
-        XCTAssertTrue(exhaustedHistory.isEmpty)
-        exhaustedController.recordAppZoneHistory(key: key, expectedLayout: layout, zoneIDs: [0])
-        var settings = exhaustedController.appHistorySettings
-        settings.monitorNewWindows = true
-        exhaustedController.updateAppHistorySettings(settings)
-        let exhaustedFlush = await exhaustedController.flush()
-        XCTAssertTrue(exhaustedFlush, "Revision exhaustion pauses history writes without blocking base settings or prune flush.")
-        let pendingHistory = exhaustedController.appZoneHistoryRetryRecords
-        XCTAssertTrue(pendingHistory.isEmpty)
-        let savedSettings = try JSONDecoder().decode(VersionedStore<SettingsStore>.self,
-                                                     from: Data(contentsOf: overflowURLs.settings))
-        XCTAssertFalse(savedSettings.value.values.isEmpty)
+        let loaded = try await coordinator.load()
+        XCTAssertEqual(loaded.appZoneHistory[commonKey]?.zoneIDs, [0])
+        XCTAssertEqual(loaded.appZoneHistory[scopedKey]?.zoneIDs, [1])
+        XCTAssertEqual(loaded.appZoneHistory.count, 2)
     }
 
+    func testLegacyCommonHistoryMigratesWithVerifiedBackupOnFirstScopedWrite() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = StoreURLs(directory: directory)
+        let layout = PersistentStoreCoordinator.defaultLayout()
+        let displayID = UUID()
+        try await PersistentStoreCoordinator(directory: directory).saveLayouts([layout])
+        let legacy = Data("""
+        {"schemaVersion":1,"value":{"records":[{"key":{"bundleID":"com.example.Legacy","displayUUID":"\(displayID.uuidString)","spaceScope":"common","layoutID":"\(layout.id.uuidString)"},"zoneIDs":[0],"revision":1}]}}
+        """.utf8)
+        try legacy.write(to: urls.appZoneHistory)
+
+        let coordinator = PersistentStoreCoordinator(directory: directory)
+        let loaded = try await coordinator.load()
+        let commonKey = AppZoneHistoryKey(bundleID: "com.example.Legacy", displayUUID: displayID,
+                                          spaceScope: .common, layoutID: layout.id)
+        XCTAssertEqual(loaded.appZoneHistory[commonKey]?.zoneIDs, [0])
+        XCTAssertEqual(try Data(contentsOf: urls.appZoneHistory), legacy)
+
+        let spaceID = try XCTUnwrap(PersistentSpaceID(backend: "validated-test", opaqueID: "space-a"))
+        let scopedKey = AppZoneHistoryKey(bundleID: "com.example.Legacy", displayUUID: displayID,
+                                          spaceScope: .space(spaceID), layoutID: layout.id)
+        try await coordinator.upsertAppZoneHistory(AppZoneHistoryRecord(key: scopedKey, zoneIDs: [1], revision: 2), expectedLayout: layout)
+        let backup = try XCTUnwrap(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .first { $0.lastPathComponent.contains("app-zone-history.json.") })
+        XCTAssertEqual(try Data(contentsOf: backup), legacy)
+        let migrated = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: urls.appZoneHistory)) as? [String: Any])
+        XCTAssertEqual(migrated["schemaVersion"] as? Int, 2)
+    }
+
+    @MainActor
     func testAppZoneHistoryWriteBeforeInitialLoadIsRejected() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -128,12 +126,10 @@ final class AppZoneHistoryPersistenceTests: XCTestCase {
         let damaged = Data("{broken".utf8)
         try damaged.write(to: urls.appZoneHistory)
         let state = try await coordinator.load()
-        XCTAssertTrue(state.appZoneHistoryAvailable, "Verified backup should allow the isolated history store to recover empty and remain usable.")
+        XCTAssertFalse(state.appZoneHistoryAvailable, "Malformed history is protected until it can be understood safely.")
         XCTAssertTrue(state.appZoneHistory.isEmpty)
         XCTAssertNotNil(state.layouts[PersistentStoreCoordinator.defaultLayoutID])
-        let backup = try XCTUnwrap(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-            .first { $0.lastPathComponent.contains("app-zone-history.json.") })
-        XCTAssertEqual(try Data(contentsOf: backup), damaged)
+        XCTAssertEqual(try Data(contentsOf: urls.appZoneHistory), damaged)
     }
 
     func testAppZoneHistoryValidatesSparseMergedGridZoneIDsFromDefinition() async throws {
@@ -264,4 +260,65 @@ final class AppZoneHistoryPersistenceTests: XCTestCase {
         let coordinator = PersistentStoreCoordinator(directory: directory)
         return try await coordinator.load()
     }
+}
+
+extension AppZoneHistoryPersistenceTests {
+    @MainActor
+    func testInvalidHistoryIsPrunedWithoutBlockingBaseFlushAndKeepsRevisionHighWatermark() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let layout = PersistentStoreCoordinator.defaultLayout()
+        let key = AppZoneHistoryKey(bundleID: "com.example.Editor", displayUUID: UUID(),
+                                    spaceScope: .common, layoutID: layout.id)
+        let urls = StoreURLs(directory: directory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let invalid = AppZoneHistoryRecord(key: key, zoneIDs: [Int.max], revision: 100)
+        let invalidBytes = try JSONEncoder().encode(VersionedStore(schemaVersion: 2,
+                                                                    value: AppZoneHistoryStore(records: [invalid])))
+        try invalidBytes.write(to: urls.appZoneHistory)
+
+        let loaded = try await loadHistoryStateAndReleaseWriter(directory: directory)
+        XCTAssertTrue(loaded.appZoneHistory.isEmpty)
+        XCTAssertTrue(loaded.appZoneHistoryAvailable)
+        let layoutController = LayoutController(storeCoordinator: PersistentStoreCoordinator(directory: directory))
+        await layoutController.loadPersistentState()
+        layoutController.recordAppZoneHistory(key: key, expectedLayout: layout, zoneIDs: [0])
+        let historyFlushed = await layoutController.flush()
+        XCTAssertTrue(historyFlushed)
+        XCTAssertTrue(layoutController.appZoneHistoryRetryRecords.isEmpty)
+        let prunedHistory = try JSONDecoder().decode(VersionedStore<AppZoneHistoryStore>.self,
+                                                     from: Data(contentsOf: urls.appZoneHistory))
+        XCTAssertEqual(prunedHistory.value.records.map(\.revision), [101], "The pruned catalog must keep the corrupt record's revision high-watermark.")
+        XCTAssertEqual(prunedHistory.value.records.map(\.zoneIDs), [[0]])
+        XCTAssertEqual(prunedHistory.schemaVersion, 2)
+
+        let overflowDirectory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: overflowDirectory) }
+        let overflowURLs = StoreURLs(directory: overflowDirectory)
+        try FileManager.default.createDirectory(at: overflowDirectory, withIntermediateDirectories: true)
+        let exhausted = AppZoneHistoryRecord(key: key, zoneIDs: [Int.max], revision: .max)
+        let exhaustedBytes = try JSONEncoder().encode(VersionedStore(schemaVersion: 2,
+                                                                       value: AppZoneHistoryStore(records: [exhausted])))
+        try exhaustedBytes.write(to: overflowURLs.appZoneHistory)
+        let exhaustedController = LayoutController(
+            storeCoordinator: PersistentStoreCoordinator(directory: overflowDirectory)
+        )
+        await exhaustedController.loadPersistentState()
+        let exhaustedRevision = exhaustedController.nextAppZoneHistoryRevision
+        let exhaustedHistory = exhaustedController.appZoneHistory
+        XCTAssertEqual(exhaustedRevision, .max)
+        XCTAssertTrue(exhaustedHistory.isEmpty)
+        exhaustedController.recordAppZoneHistory(key: key, expectedLayout: layout, zoneIDs: [0])
+        var settings = exhaustedController.appHistorySettings
+        settings.monitorNewWindows = true
+        exhaustedController.updateAppHistorySettings(settings)
+        let exhaustedFlush = await exhaustedController.flush()
+        XCTAssertTrue(exhaustedFlush, "Revision exhaustion pauses history writes without blocking base settings or prune flush.")
+        let pendingHistory = exhaustedController.appZoneHistoryRetryRecords
+        XCTAssertTrue(pendingHistory.isEmpty)
+        let savedSettings = try JSONDecoder().decode(VersionedStore<SettingsStore>.self,
+                                                     from: Data(contentsOf: overflowURLs.settings))
+        XCTAssertFalse(savedSettings.value.values.isEmpty)
+    }
+
 }

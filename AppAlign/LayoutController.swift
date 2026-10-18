@@ -7,6 +7,17 @@ struct EditorOperationIdentity: Equatable, Sendable {
     let token: UUID
     let targetDisplay: DisplaySelectionID
     let revision: UInt64
+    let targetScope: PersistedSpaceScope
+    let configurationRevision: UInt64
+
+    init(token: UUID, targetDisplay: DisplaySelectionID, revision: UInt64, targetScope: PersistedSpaceScope = .common,
+         configurationRevision: UInt64 = 0) {
+        self.token = token
+        self.targetDisplay = targetDisplay
+        self.revision = revision
+        self.targetScope = targetScope
+        self.configurationRevision = configurationRevision
+    }
 }
 
 struct EditorCatalogSnapshot: Sendable {
@@ -139,6 +150,7 @@ enum EditorOperationResult: Sendable {
 @MainActor
 final class LayoutController: ObservableObject {
     let displayProvider: DisplayProvider
+    let spaceProvider: SpaceProvider
     @Published var template: LayoutTemplate = .grid { didSet { userChangedDefinition() } }
     @Published var zoneCount = 4 { didSet { userChangedDefinition() } }
     @Published var spacing: Double = 10 { didSet { userChangedDefinition() } }
@@ -158,22 +170,23 @@ final class LayoutController: ObservableObject {
     @Published private(set) var appZoneHistoryAvailable = false
     @Published var appZoneHistoryErrorMessage: String?
     var cancelAutomaticRestores: (@MainActor () -> Void)?
+    var invalidateManualCapture: @MainActor () -> Void = {}
 
     let storeCoordinator: PersistentStoreCoordinator?
     let appHistoryCoordinator = AppHistoryCoordinator()
     var savedLayouts: [UUID: PersistedLayout] = [:] {
         didSet {
             if oldValue != savedLayouts, !isApplyingQuickLayout {
-                for (displayID, override) in Array(quickLayoutOverrides) {
+                for (overrideKey, override) in Array(quickLayoutOverrides) {
                     if savedLayouts[override.id] == nil || oldValue[override.id] != savedLayouts[override.id] {
-                        quickLayoutOverrides.removeValue(forKey: displayID)
+                        quickLayoutOverrides.removeValue(forKey: overrideKey)
                     }
                 }
                 invalidateAppliedDragLayout()
             }
         }
     }
-    var assignments: [UUID: PersistedAssignment] = [:] {
+    var assignments = PersistedAssignments() {
         didSet {
             if oldValue != assignments, !isApplyingQuickLayout {
                 quickLayoutOverrides.removeAll()
@@ -208,6 +221,7 @@ final class LayoutController: ObservableObject {
     var isRetryingSave = false
     var editorOperationTargets: [UUID: DisplaySelectionID] = [:]
     var editorOperationRevisions: [UUID: UInt64] = [:]
+    var editorOperationScopes: [UUID: PersistedSpaceScope] = [:]
     var keyboardSettingsRevision: UInt64 = 0
     var keyboardSettingsRetrySnapshot: [String: PersistedSetting]?
     var layoutHotkeySettingsRevision: UInt64 = 0
@@ -226,14 +240,18 @@ final class LayoutController: ObservableObject {
     var refreshConfiguration: (@MainActor () -> DisplaySnapshot)?
     var isApplyingQuickLayout = false
     var quickLayoutMutationRevision: UInt64 = 0
-    var quickLayoutOverrides: [DisplaySelectionID: PersistedLayout] = [:]
+    var quickLayoutOverrides: [LayoutOverrideKey: PersistedLayout] = [:]
+    var degradedLayoutOverrides: [LayoutOverrideKey: PersistedLayout] = [:]
+    var lastPublishedSelectedSpaceScope: PersistedSpaceScope?
+    var lastPublishedSelectedSpaceMode: SpaceProviderMode?
 
-    init(displayProvider: DisplayProvider = DisplayProvider(), storeCoordinator: PersistentStoreCoordinator? = nil,
+    init(displayProvider: DisplayProvider = DisplayProvider(), spaceProvider: SpaceProvider = SpaceProvider(), storeCoordinator: PersistentStoreCoordinator? = nil,
          placementValidity: PlacementValidity = PlacementValidity(),
          bundleIdentifierProvider: @escaping @MainActor (pid_t) -> String? = {
              NSRunningApplication(processIdentifier: $0)?.bundleIdentifier
          }) {
         self.displayProvider = displayProvider
+        self.spaceProvider = spaceProvider
         self.placementValidity = placementValidity
         self.bundleIdentifierProvider = bundleIdentifierProvider
         if let storeCoordinator {
@@ -252,6 +270,23 @@ final class LayoutController: ObservableObject {
 
 @MainActor
 extension LayoutController {
+    func spaceSnapshot(for display: Display) -> DisplaySpaceSnapshot {
+        guard let uuid = display.persistentID?.uuid else {
+            let sessionOnly = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+            return DisplaySpaceSnapshot(displayUUID: sessionOnly, mode: .commonOnly, spaceID: nil, kind: nil, reason: nil)
+        }
+        return spaceProvider.snapshot(for: uuid)
+    }
+
+    func assignmentKey(for display: Display, scope: PersistedSpaceScope? = nil) -> PersistedAssignmentKey? {
+        guard let uuid = display.persistentID?.uuid else { return nil }
+        return PersistedAssignmentKey(displayUUID: uuid, spaceScope: scope ?? spaceSnapshot(for: display).persistedScope)
+    }
+
+    func overrideKey(for display: Display, scope: PersistedSpaceScope? = nil) -> LayoutOverrideKey {
+        LayoutOverrideKey(displayID: display.id, spaceScope: scope ?? spaceSnapshot(for: display).persistedScope)
+    }
+
     func loadPersistentState() async {
         guard !persistenceReady, !loadInProgress else { return }
         guard let storeCoordinator else {
@@ -274,7 +309,8 @@ extension LayoutController {
             adoptSettings(state.settings)
             persistenceReady = true
             canEdit = acceptsChanges
-            persistenceErrorMessage = nil
+            persistenceErrorMessage = state.assignmentsAvailable ? nil
+                : "Saved display assignments are protected because their data format is unsupported or incomplete. Basic layouts remain available."
             canRetrySave = false
             if state.layoutStoreNeedsRepair { errorMessage = "Damaged layout data was backed up and reset." }
         } catch {
@@ -296,7 +332,16 @@ extension LayoutController {
         if !result.displays.contains(where: { $0.id == selectedDisplayID }) {
             selectedDisplayID = result.displays.first(where: \.isPrimary)?.id
         }
-        if selectedDisplayID != previous { showLayoutForSelectedDisplay() } else { recalculate() }
+        degradedLayoutOverrides = degradedLayoutOverrides.filter { key, _ in
+            guard let display = result.displays.first(where: { $0.id == key.displayID }) else { return false }
+            return spaceSnapshot(for: display).mode == .degradedScoped
+        }
+        let currentScope = selectedDisplay.map { spaceSnapshot(for: $0).persistedScope }
+        let currentMode = selectedDisplay.map { spaceSnapshot(for: $0).mode }
+        let spaceChanged = currentScope != lastPublishedSelectedSpaceScope || currentMode != lastPublishedSelectedSpaceMode
+        lastPublishedSelectedSpaceScope = currentScope
+        lastPublishedSelectedSpaceMode = currentMode
+        if selectedDisplayID != previous || spaceChanged { showLayoutForSelectedDisplay() } else { recalculate() }
     }
     func recalculate() {
         invalidateAppliedDragLayout()
@@ -322,7 +367,7 @@ extension LayoutController {
         guard acceptsChanges, id != PersistentStoreCoordinator.defaultLayoutID else { return }
         guard savedLayouts[id] != nil else { return }
         for assignment in assignments.values.filter({ $0.layoutID == id }) {
-            assignments.removeValue(forKey: assignment.displayUUID)
+            _ = assignments.removeValue(forKey: assignment.key)
         }
         let remainingAssignments = Array(assignments.values)
         var remainingLayouts = savedLayouts

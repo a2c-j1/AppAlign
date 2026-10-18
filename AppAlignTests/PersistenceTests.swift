@@ -42,7 +42,7 @@ final class PersistenceTests: XCTestCase {
         let assignmentObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: urls.assignments)) as? [String: Any])
         let settingsObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: urls.settings)) as? [String: Any])
         XCTAssertEqual(layoutObject["schemaVersion"] as? Int, 1)
-        XCTAssertEqual(assignmentObject["schemaVersion"] as? Int, 1)
+        XCTAssertEqual(assignmentObject["schemaVersion"] as? Int, 2)
         XCTAssertEqual(settingsObject["schemaVersion"] as? Int, 1)
 
         let loaded = try await coordinator.load()
@@ -153,22 +153,82 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: urls.layouts), original)
     }
 
-    func testDanglingAssignmentsAreBackedUpAndRemoved() async throws {
+    func testDanglingAssignmentsProtectOriginalAndKeepBasicStateAvailable() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let urls = StoreURLs(directory: directory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let assignment = PersistedAssignment(displayUUID: UUID(), spaceScope: .common, layoutID: UUID())
+        let defaultLayout = PersistentStoreCoordinator.defaultLayout()
+        let layoutCoordinator = PersistentStoreCoordinator(directory: directory)
+        try await layoutCoordinator.saveLayouts([defaultLayout])
         let encoder = JSONEncoder()
-        let original = try encoder.encode(VersionedStore(schemaVersion: 1, value: AssignmentStore(assignments: [assignment])))
+        let dangling = PersistedAssignment(displayUUID: assignment.displayUUID, spaceScope: .common, layoutID: UUID())
+        let original = try encoder.encode(VersionedStore(schemaVersion: 2, value: AssignmentStore(assignments: [dangling])))
         try original.write(to: urls.assignments)
 
-        let state = try await PersistentStoreCoordinator(directory: directory).load()
+        let coordinator = PersistentStoreCoordinator(directory: directory)
+        let state = try await coordinator.load()
         XCTAssertTrue(state.assignments.isEmpty)
-        let backup = try XCTUnwrap(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first { $0.lastPathComponent.contains("assignments.json.") })
-        XCTAssertEqual(try Data(contentsOf: backup), original)
-        let repaired = try JSONDecoder().decode(VersionedStore<AssignmentStore>.self, from: Data(contentsOf: urls.assignments))
-        XCTAssertTrue(repaired.value.assignments.isEmpty)
+        XCTAssertFalse(state.assignmentsAvailable)
+        do {
+            try await coordinator.saveAssignments([])
+            XCTFail("protected assignment store must reject writes")
+        } catch {}
+        XCTAssertEqual(try Data(contentsOf: urls.assignments), original)
+    }
+
+    func testLegacyCommonAssignmentsMigrateOnlyOnFirstWriteWithVerifiedBackup() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = StoreURLs(directory: directory)
+        let displayID = UUID()
+        let layout = PersistentStoreCoordinator.defaultLayout()
+        try await PersistentStoreCoordinator(directory: directory).saveLayouts([layout])
+        let legacy = Data("""
+        {"schemaVersion":1,"value":{"assignments":[{"displayUUID":"\(displayID.uuidString)","spaceScope":"common","layoutID":"\(layout.id.uuidString)"}]}}
+        """.utf8)
+        try legacy.write(to: urls.assignments)
+
+        let coordinator = PersistentStoreCoordinator(directory: directory)
+        let loaded = try await coordinator.load()
+        XCTAssertEqual(loaded.assignments[displayID]?.layoutID, layout.id)
+        XCTAssertEqual(try Data(contentsOf: urls.assignments), legacy, "Loading legacy data must not rewrite it.")
+
+        let space = try XCTUnwrap(PersistentSpaceID(backend: "validated-test", opaqueID: "space-1"))
+        try await coordinator.saveAssignments([
+            PersistedAssignment(displayUUID: displayID, spaceScope: .common, layoutID: layout.id),
+            PersistedAssignment(displayUUID: displayID, spaceScope: .space(space), layoutID: layout.id)
+        ])
+        let backup = try XCTUnwrap(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .first { $0.lastPathComponent.contains("assignments.json.") })
+        XCTAssertEqual(try Data(contentsOf: backup), legacy)
+        let migrated = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: urls.assignments)) as? [String: Any])
+        XCTAssertEqual(migrated["schemaVersion"] as? Int, 2)
+        let migratedState = try await coordinator.load()
+        XCTAssertEqual(migratedState.assignments.count, 2)
+    }
+
+    func testUnknownAssignmentFieldsPreserveSourceAndBlockEveryWriter() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = StoreURLs(directory: directory)
+        let original = Data(#"{"schemaVersion":2,"value":{"assignments":[],"future":true}}"#.utf8)
+        try original.write(to: urls.assignments)
+        let coordinator = PersistentStoreCoordinator(directory: directory)
+        let state = try await coordinator.load()
+        XCTAssertFalse(state.assignmentsAvailable)
+        for write in [0, 1] {
+            do {
+                if write == 0 {
+                    try await coordinator.saveAssignments([])
+                } else {
+                    try await coordinator.flush()
+                }
+                if write == 0 { XCTFail("protected assignments must reject save") }
+            } catch {}
+        }
+        XCTAssertEqual(try Data(contentsOf: urls.assignments), original)
     }
 
     private func makeTemporaryDirectory() throws -> URL {
@@ -193,6 +253,37 @@ final class PersistenceTests: XCTestCase {
         ])
         let duplicateStore = try encoder.encode(VersionedStore(schemaVersion: 1, value: LayoutStore(layouts: duplicateLayouts)))
         return [malformed, invalidGridStore, duplicateStore]
+    }
+
+}
+
+extension PersistenceTests {
+    func testRecoveredLayoutCatalogProtectsAssignmentAndHistoryStores() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = StoreURLs(directory: directory)
+        let brokenLayouts = Data(#"{"schemaVersion":99,"value":{"future":"catalog"}}"#.utf8)
+        let assignment = PersistedAssignment(displayUUID: UUID(), spaceScope: .common, layoutID: UUID())
+        let assignmentBytes = try JSONEncoder().encode(VersionedStore(schemaVersion: 2,
+            value: AssignmentStore(assignments: [assignment])))
+        let key = AppZoneHistoryKey(bundleID: "com.example.CatalogRecovery", displayUUID: UUID(),
+                                    spaceScope: .common, layoutID: assignment.layoutID)
+        let historyBytes = try JSONEncoder().encode(VersionedStore(schemaVersion: 2,
+            value: AppZoneHistoryStore(records: [AppZoneHistoryRecord(key: key, zoneIDs: [0], revision: 1)])))
+        try brokenLayouts.write(to: urls.layouts)
+        try assignmentBytes.write(to: urls.assignments)
+        try historyBytes.write(to: urls.appZoneHistory)
+
+        let coordinator = PersistentStoreCoordinator(directory: directory)
+        let state = try await coordinator.load()
+        XCTAssertTrue(state.layoutStoreNeedsRepair)
+        XCTAssertFalse(state.assignmentsAvailable)
+        XCTAssertFalse(state.appZoneHistoryAvailable)
+        XCTAssertEqual(try Data(contentsOf: urls.assignments), assignmentBytes)
+        XCTAssertEqual(try Data(contentsOf: urls.appZoneHistory), historyBytes)
+        try await coordinator.flush()
+        XCTAssertEqual(try Data(contentsOf: urls.assignments), assignmentBytes)
+        XCTAssertEqual(try Data(contentsOf: urls.appZoneHistory), historyBytes)
     }
 
 }

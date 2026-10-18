@@ -3,11 +3,19 @@ import Foundation
 
 @MainActor
 extension LayoutController {
-    func editorCatalog(for displayID: DisplaySelectionID) -> EditorCatalogSnapshot {
+    func editorCatalog(for displayID: DisplaySelectionID, scope requestedScope: PersistedSpaceScope? = nil) -> EditorCatalogSnapshot {
         let display = displayProvider.snapshot.displays.first { $0.id == displayID }
         let appliedID: UUID
-        if let uuid = display?.persistentID?.uuid {
-            appliedID = assignments[uuid]?.layoutID ?? PersistentStoreCoordinator.defaultLayoutID
+        if let display, let persistentID = display.persistentID?.uuid {
+            let scope = requestedScope ?? spaceSnapshot(for: display).persistedScope
+            appliedID = quickLayoutOverrides[LayoutOverrideKey(displayID: display.id, spaceScope: scope)]?.id
+                ?? assignments[PersistedAssignmentKey(displayUUID: persistentID, spaceScope: scope)]?.layoutID
+                ?? assignments[PersistedAssignmentKey(displayUUID: persistentID, spaceScope: .common)]?.layoutID
+                ?? PersistentStoreCoordinator.defaultLayoutID
+        } else if let display, let key = assignmentKey(for: display) {
+            appliedID = assignments[key]?.layoutID
+                ?? assignments[PersistedAssignmentKey(displayUUID: key.displayUUID, spaceScope: .common)]?.layoutID
+                ?? PersistentStoreCoordinator.defaultLayoutID
         } else if case .session(let sessionID) = displayID {
             appliedID = sessionLayouts[sessionID]?.id ?? PersistentStoreCoordinator.defaultLayoutID
         } else {
@@ -34,15 +42,16 @@ extension LayoutController {
                 }
                 var candidate = proposed
                 let targetUUID = display.persistentID?.uuid
-                if copyOnWrite && (candidate.id == PersistentStoreCoordinator.defaultLayoutID || self.isApplied(candidate.id) || self.isShared(candidate.id, excluding: targetUUID)) {
+                let ownerKey = targetUUID.map { PersistedAssignmentKey(displayUUID: $0, spaceScope: identity.targetScope) }
+                if copyOnWrite && (candidate.id == PersistentStoreCoordinator.defaultLayoutID || self.isApplied(candidate.id)
+                    || self.isShared(candidate.id, excluding: ownerKey)) {
                     candidate = try self.reidentified(candidate, id: UUID())
                 }
                 try candidate.validate()
-                var layouts = self.savedLayouts
-                layouts[candidate.id] = candidate
-                try await storeCoordinator.saveLayouts(Array(layouts.values))
-                guard self.quickLayoutMutationRevision == quickRevision else { return .failure("This editor operation was superseded by a layout switch.") }
-                self.savedLayouts = layouts
+                try await storeCoordinator.mergeEditorDelta(layout: candidate, assignment: nil)
+                self.isApplyingQuickLayout = true
+                self.savedLayouts[candidate.id] = candidate
+                self.isApplyingQuickLayout = false
                 self.markEditorPersistenceSucceeded()
                 guard self.isCurrent(identity) else { return .failure("This editor operation was superseded after saving.") }
                 self.errorMessage = nil
@@ -76,21 +85,22 @@ extension LayoutController {
             var persistedAssignment = false
             do {
                 if let uuid = display.persistentID?.uuid {
-                    var nextAssignments = self.assignments
-                    nextAssignments[uuid] = PersistedAssignment(displayUUID: uuid, spaceScope: .common, layoutID: id)
-                    var layouts = self.savedLayouts
-                    layouts[layout.id] = layout
-                    try await storeCoordinator.saveLayoutAndAssignments(Array(layouts.values), Array(nextAssignments.values))
-                    guard self.quickLayoutMutationRevision == quickRevision else { return .failure("This editor operation was superseded by a layout switch.") }
-                    self.savedLayouts = layouts
-                    self.assignments = nextAssignments
+                    let assignment = PersistedAssignment(displayUUID: uuid, spaceScope: identity.targetScope, layoutID: id)
+                    try await storeCoordinator.mergeEditorDelta(layout: layout, assignment: assignment)
+                    self.isApplyingQuickLayout = true
+                    self.savedLayouts[layout.id] = layout
+                    var latestAssignments = self.assignments
+                    latestAssignments[assignment.key] = assignment
+                    self.assignments = latestAssignments
+                    self.isApplyingQuickLayout = false
+                    self.invalidateAppliedDragLayout()
                     persistedAssignment = true
                 } else if case .session(let sessionID) = identity.targetDisplay {
                     self.sessionLayouts[sessionID] = layout
                 } else {
                     return .failure("This display cannot be assigned for this session.")
                 }
-                if self.selectedDisplayID == identity.targetDisplay { self.showLayoutForSelectedDisplay() }
+                if self.isCurrent(identity), self.selectedDisplayID == identity.targetDisplay { self.showLayoutForSelectedDisplay() }
                 self.markEditorPersistenceSucceeded(acknowledgesQuickAssignment: persistedAssignment)
                 guard self.isCurrent(identity) else { return .failure("This editor operation was superseded after saving.") }
                 return .success(layout)
@@ -251,31 +261,36 @@ extension LayoutController {
         placementValidity.invalidateForLayoutChange()
         dragLayoutRevision &+= 1
         quickLayoutMutationRevision &+= 1
-        quickLayoutOverrides[snapshot.display.id] = next
+        let key = overrideKey(for: snapshot.display, scope: snapshot.spaceSnapshot.persistedScope)
+        let degraded = snapshot.spaceSnapshot.mode == .degradedScoped
+        if degraded { degradedLayoutOverrides[key] = next } else { quickLayoutOverrides[key] = next }
         isApplyingQuickLayout = true
-        if let persistentID = snapshot.display.persistentID?.uuid {
+        if degraded {
+            // The override is intentionally runtime-only while the requested Space
+            // cannot be identified reliably.
+        } else if let persistentID = snapshot.display.persistentID?.uuid {
             var updated = assignments
-            updated[persistentID] = PersistedAssignment(displayUUID: persistentID, spaceScope: .common, layoutID: next.id)
+            let assignmentKey = PersistedAssignmentKey(displayUUID: persistentID, spaceScope: snapshot.spaceSnapshot.persistedScope)
+            updated[assignmentKey] = PersistedAssignment(displayUUID: persistentID, spaceScope: assignmentKey.spaceScope, layoutID: next.id)
             assignments = updated
         } else if case .session(let sessionID) = snapshot.display.id {
             sessionLayouts[sessionID] = next
         } else {
             isApplyingQuickLayout = false
-            quickLayoutOverrides.removeValue(forKey: snapshot.display.id)
+            quickLayoutOverrides.removeValue(forKey: key)
             return nil
         }
         if selectedDisplayID == snapshot.display.id { adoptQuickLayoutForSelectedDisplay(next, display: snapshot.display) }
         isApplyingQuickLayout = false
-        if snapshot.display.persistentID != nil {
-            let layoutSnapshot = Array(savedLayouts.values)
-            let assignmentSnapshot = Array(assignments.values)
+        if !degraded, let persistentID = snapshot.display.persistentID?.uuid {
             let mutationRevision = quickLayoutMutationRevision
-            let displayID = snapshot.display.id
+            let assignment = PersistedAssignment(displayUUID: persistentID,
+                                                 spaceScope: snapshot.spaceSnapshot.persistedScope, layoutID: next.id)
             enqueueSave(isQuickAssignmentSave: true) { coordinator in
-                try await coordinator.saveLayoutAndAssignments(layoutSnapshot, assignmentSnapshot)
+                try await coordinator.mergeEditorDelta(layout: next, assignment: assignment)
                 guard self.quickLayoutMutationRevision == mutationRevision,
-                      self.quickLayoutOverrides[displayID]?.id == next.id else { return }
-                self.quickLayoutOverrides.removeValue(forKey: displayID)
+                      self.quickLayoutOverrides[key]?.id == next.id else { return }
+                self.quickLayoutOverrides.removeValue(forKey: key)
             }
         }
         return next
@@ -317,14 +332,23 @@ extension LayoutController {
         guard acceptsChanges, persistenceReady, canEdit,
               displayProvider.snapshot.displays.contains(where: { $0.id == identity.targetDisplay }) else { return false }
         if let target = editorOperationTargets[identity.token], target != identity.targetDisplay { return false }
+        if let scope = editorOperationScopes[identity.token], scope != identity.targetScope { return false }
+        let targetDisplay = displayProvider.snapshot.displays.first { $0.id == identity.targetDisplay }
+        if case .space = identity.targetScope,
+           targetDisplay.flatMap({ spaceSnapshot(for: $0).persistedScope }) != identity.targetScope { return false }
+        guard identity.configurationRevision == placementValidity.revision.configuration else { return false }
         guard identity.revision > (editorOperationRevisions[identity.token] ?? 0) else { return false }
         editorOperationTargets[identity.token] = identity.targetDisplay
         editorOperationRevisions[identity.token] = identity.revision
+        editorOperationScopes[identity.token] = identity.targetScope
         return true
     }
 
     func isCurrent(_ identity: EditorOperationIdentity) -> Bool {
-        editorOperationTargets[identity.token] == identity.targetDisplay && editorOperationRevisions[identity.token] == identity.revision
+        editorOperationTargets[identity.token] == identity.targetDisplay
+            && editorOperationRevisions[identity.token] == identity.revision
+            && editorOperationScopes[identity.token] == identity.targetScope
+            && identity.configurationRevision == placementValidity.revision.configuration
     }
 
     func markEditorPersistenceSucceeded(acknowledgesQuickAssignment: Bool = false) {
@@ -341,8 +365,8 @@ extension LayoutController {
         persistenceErrorMessage = nil
     }
 
-    func isShared(_ id: UUID, excluding displayUUID: UUID?) -> Bool {
-        assignments.values.contains { assignment in assignment.layoutID == id && assignment.displayUUID != displayUUID }
+    func isShared(_ id: UUID, excluding key: PersistedAssignmentKey?) -> Bool {
+        assignments.values.contains { assignment in assignment.layoutID == id && assignment.key != key }
     }
 
     func isApplied(_ id: UUID) -> Bool {
@@ -367,29 +391,33 @@ extension LayoutController {
                                zoneCount: layout.zoneCount, name: name ?? layout.name)
     }
     func userChangedDefinition() {
-        guard canEdit, !isApplyingStoredValues, selectedDisplay != nil else { return }
+        guard canEdit, !isApplyingStoredValues, let display = selectedDisplay else { return }
         do {
             let definition = try LayoutTemplates.definition(
-                for: template, zoneCount: zoneCount, area: selectedDisplay?.workArea ?? .zero, spacing: spacing
+                for: template, zoneCount: zoneCount, area: display.workArea, spacing: spacing
             )
             let id = writableLayoutID()
             currentLayout = PersistedLayout(id: id, definition: definition, spacing: spacing, template: template, zoneCount: zoneCount, name: currentLayout.name)
-            if case .session(let sessionID)? = selectedDisplayID {
+            if case .session(let sessionID) = display.id {
                 sessionLayouts[sessionID] = currentLayout
+            } else if spaceSnapshot(for: display).mode == .degradedScoped {
+                degradedLayoutOverrides[overrideKey(for: display, scope: .common)] = currentLayout
             } else {
                 savedLayouts[id] = currentLayout
                 guard storeCoordinator != nil else { return }
-                let layoutSnapshot = Array(savedLayouts.values)
-                let displayUUID = selectedDisplay?.persistentID?.uuid
+                let displayUUID = display.persistentID?.uuid
                 if let displayUUID {
-                    let assignment = PersistedAssignment(displayUUID: displayUUID, spaceScope: .common, layoutID: id)
-                    assignments[displayUUID] = assignment
-                    let assignmentSnapshot = Array(assignments.values)
+                    let scope = spaceSnapshot(for: display).persistedScope
+                    let assignmentKey = PersistedAssignmentKey(displayUUID: displayUUID, spaceScope: scope)
+                    let assignment = PersistedAssignment(displayUUID: displayUUID, spaceScope: scope, layoutID: id)
+                    let editedLayout = currentLayout
+                    assignments[assignmentKey] = assignment
                     enqueueSave(acknowledgesQuickAssignment: true) { coordinator in
-                        try await coordinator.saveLayoutAndAssignments(layoutSnapshot, assignmentSnapshot)
+                        try await coordinator.mergeEditorDelta(layout: editedLayout, assignment: assignment)
                     }
                 } else {
-                    enqueueSave { coordinator in try await coordinator.saveLayouts(layoutSnapshot) }
+                    let editedLayout = currentLayout
+                    enqueueSave { coordinator in try await coordinator.mergeEditorDelta(layout: editedLayout, assignment: nil) }
                 }
             }
             recalculate()
@@ -403,23 +431,21 @@ extension LayoutController {
             return sessionLayouts[sessionID]?.id ?? UUID()
         }
         guard let id = selectedDisplay.persistentID?.uuid else { return currentLayout.id }
-        let shared = assignments.values.contains { $0.layoutID == currentLayout.id && $0.displayUUID != id }
-        if currentLayout.id == PersistentStoreCoordinator.defaultLayoutID || shared || assignments[id]?.layoutID != currentLayout.id {
+        let scope = spaceSnapshot(for: selectedDisplay).persistedScope
+        let ownerKey = PersistedAssignmentKey(displayUUID: id, spaceScope: scope)
+        let shared = assignments.values.contains { $0.layoutID == currentLayout.id && $0.key != ownerKey }
+        if currentLayout.id == PersistentStoreCoordinator.defaultLayoutID || shared || assignments[ownerKey]?.layoutID != currentLayout.id {
             return UUID()
         }
         return currentLayout.id
     }
     func showLayoutForSelectedDisplay() {
         guard let selectedDisplay else { recalculate(); return }
-        let stored: PersistedLayout?
-        if let persistentID = selectedDisplay.persistentID,
-           let layoutID = assignments[persistentID.uuid]?.layoutID {
-            stored = savedLayouts[layoutID]
-        } else if case .session(let sessionID) = selectedDisplay.id {
-            stored = sessionLayouts[sessionID]
-        } else {
-            stored = nil
-        }
+        let key = overrideKey(for: selectedDisplay)
+        let degraded = spaceSnapshot(for: selectedDisplay).mode == .degradedScoped
+        if !degraded { degradedLayoutOverrides.removeValue(forKey: key) }
+        let stored: PersistedLayout? = (degraded ? degradedLayoutOverrides[key] : quickLayoutOverrides[key])
+            ?? assignedLayout(for: selectedDisplay)
         currentLayout = stored ?? PersistentStoreCoordinator.defaultLayout()
         isApplyingStoredValues = true
         template = LayoutTemplate(rawValue: currentLayout.template) ?? .grid
@@ -429,36 +455,47 @@ extension LayoutController {
         recalculate()
     }
 
+    private func assignedLayout(for selectedDisplay: Display) -> PersistedLayout? {
+        if let persistentID = selectedDisplay.persistentID,
+           let layoutID = assignments[PersistedAssignmentKey(displayUUID: persistentID.uuid,
+                                                              spaceScope: spaceSnapshot(for: selectedDisplay).persistedScope)]?.layoutID
+            ?? assignments[PersistedAssignmentKey(displayUUID: persistentID.uuid, spaceScope: .common)]?.layoutID {
+            return savedLayouts[layoutID]
+        } else if case .session(let sessionID) = selectedDisplay.id {
+            return sessionLayouts[sessionID]
+        }
+        return nil
+    }
+
     func adoptPersistedStatePreservingQuickSwitches(_ state: LoadedPersistentState) {
-        let keepSelectedQuickLayout = selectedDisplayID.map {
-            quickLayoutOverrides[$0]?.id == currentLayout.id
-        } ?? false
+        let keepSelectedQuickLayout = selectedDisplay.flatMap { quickLayoutOverrides[overrideKey(for: $0)]?.id } == currentLayout.id
         isApplyingQuickLayout = true
         savedLayouts = state.layouts
         assignments = assignmentsWithQuickSwitchOverrides(state.assignments)
-        for (displayID, layout) in Array(quickLayoutOverrides) {
-            if case .session(let sessionID) = displayID { sessionLayouts[sessionID] = layout }
+        for (key, layout) in Array(quickLayoutOverrides) {
+            if case .session(let sessionID) = key.displayID { sessionLayouts[sessionID] = layout }
         }
         isApplyingQuickLayout = false
         if !keepSelectedQuickLayout { showLayoutForSelectedDisplay() }
     }
 
-    func assignmentsWithQuickSwitchOverrides(_ source: [UUID: PersistedAssignment]) -> [UUID: PersistedAssignment] {
+    func assignmentsWithQuickSwitchOverrides(_ source: PersistedAssignments) -> PersistedAssignments {
         var result = source
-        for (displayID, layout) in quickLayoutOverrides {
-            guard let display = displayProvider.snapshot.displays.first(where: { $0.id == displayID }),
+        for (key, layout) in quickLayoutOverrides {
+            guard let display = displayProvider.snapshot.displays.first(where: { $0.id == key.displayID }),
                   let persistentID = display.persistentID?.uuid else { continue }
-            result[persistentID] = PersistedAssignment(displayUUID: persistentID, spaceScope: .common, layoutID: layout.id)
+            let assignmentKey = PersistedAssignmentKey(displayUUID: persistentID, spaceScope: key.spaceScope)
+            result[assignmentKey] = PersistedAssignment(displayUUID: persistentID, spaceScope: key.spaceScope, layoutID: layout.id)
         }
         return result
     }
 
-    func clearPersistedQuickSwitchOverrides(_ persistedAssignments: [UUID: PersistedAssignment]) {
-        for (displayID, layout) in Array(quickLayoutOverrides) {
-            guard let display = displayProvider.snapshot.displays.first(where: { $0.id == displayID }),
+    func clearPersistedQuickSwitchOverrides(_ persistedAssignments: PersistedAssignments) {
+        for (key, layout) in Array(quickLayoutOverrides) {
+            guard let display = displayProvider.snapshot.displays.first(where: { $0.id == key.displayID }),
                   let displayUUID = display.persistentID?.uuid,
-                  persistedAssignments[displayUUID]?.layoutID == layout.id else { continue }
-            quickLayoutOverrides.removeValue(forKey: displayID)
+                  persistedAssignments[PersistedAssignmentKey(displayUUID: displayUUID, spaceScope: key.spaceScope)]?.layoutID == layout.id else { continue }
+            quickLayoutOverrides.removeValue(forKey: key)
         }
     }
 

@@ -83,7 +83,7 @@ struct AutoRestoreFixture {
     let runtime: AccessibilityWindowRuntime
     let mover: BlockingPlacementMover
 
-    static func make(mismatchedFrame: Bool, blockSetter: Bool) async throws -> AutoRestoreFixture {
+    static func make(mismatchedFrame: Bool, blockSetter: Bool, spaceProvider: SpaceProvider? = nil) async throws -> AutoRestoreFixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("AppAlignAutoRestore-\(UUID().uuidString)")
         let store = PersistentStoreCoordinator(directory: directory)
         let persistedLayout = PersistentStoreCoordinator.defaultLayout()
@@ -91,8 +91,18 @@ struct AutoRestoreFixture {
         let display = Display(runtimeID: RuntimeDisplayID(rawValue: 1), persistentID: PersistentDisplayID(uuid: UUID()),
                               sessionID: UUID(), name: "Auto", frame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
                               workArea: CGRect(x: 0, y: 0, width: 1_000, height: 800), isPrimary: true, backingScaleFactor: 1)
+        if let spaceProvider {
+            _ = spaceProvider.refresh(displays: [display.persistentID!.uuid])
+            if !spaceProvider.snapshot(for: display.persistentID!.uuid).recordsHistory {
+                _ = try await store.load()
+                let key = AppZoneHistoryKey(bundleID: "com.example.Auto", displayUUID: display.persistentID!.uuid,
+                                            spaceScope: .common, layoutID: persistedLayout.id)
+                try await store.upsertAppZoneHistory(AppZoneHistoryRecord(key: key, zoneIDs: [0], revision: 1),
+                                                     expectedLayout: persistedLayout)
+            }
+        }
         let layout = LayoutController(displayProvider: DisplayProvider(snapshot: DisplaySnapshot(displays: [display], primaryFrame: display.frame)),
-                                      storeCoordinator: store)
+                                      spaceProvider: spaceProvider ?? SpaceProvider(), storeCoordinator: store)
         await layout.loadPersistentState()
         var settings = layout.appHistorySettings
         settings.monitorNewWindows = true
@@ -100,9 +110,11 @@ struct AutoRestoreFixture {
         layout.appHistorySettings = settings
         let key = AppZoneHistoryKey(bundleID: "com.example.Auto", displayUUID: display.persistentID!.uuid,
                                     spaceScope: .common, layoutID: persistedLayout.id)
-        layout.recordAppZoneHistory(key: key, expectedLayout: persistedLayout, zoneIDs: [0])
-        let historyFlushed = await layout.flush()
-        XCTAssertTrue(historyFlushed)
+        if layout.spaceSnapshot(for: display).recordsHistory {
+            layout.recordAppZoneHistory(key: key, expectedLayout: persistedLayout, zoneIDs: [0])
+            let historyFlushed = await layout.flush()
+            XCTAssertTrue(historyFlushed)
+        }
         let mover = BlockingPlacementMover(shouldBlock: blockSetter, mismatchedFrame: mismatchedFrame)
         let runtime = AccessibilityWindowRuntime(
             focusedWindowValidator: { _ in },
