@@ -3,10 +3,15 @@ import Foundation
 extension PersistentStoreCoordinator {
     /// Merge the editor's fixed target into the latest stores after an await.
     func mergeEditorDelta(layout: PersistedLayout, assignment: PersistedAssignment?) throws {
+        guard !catalogRecoveryProtected else { throw PersistenceError.storeUnavailable("layouts") }
         try ensureWritable("layouts")
         let loadedLayouts = try loadStore(LayoutStore.self, at: urls.layouts, name: "layouts",
                                           default: LayoutStore(layouts: [Self.defaultLayout()]),
                                           validate: Self.validateLayouts)
+        guard !loadedLayouts.wasRecovered else {
+            protectDependentStoresAfterCatalogRecovery()
+            throw PersistenceError.storeUnavailable("layouts")
+        }
         var layouts = Dictionary(uniqueKeysWithValues: loadedLayouts.value.layouts.map { ($0.id, $0) })
         layouts[layout.id] = layout
         let orderedLayouts = layouts.values.sorted { $0.id.uuidString < $1.id.uuidString }

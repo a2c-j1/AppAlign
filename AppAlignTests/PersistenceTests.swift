@@ -286,6 +286,62 @@ extension PersistenceTests {
         XCTAssertEqual(try Data(contentsOf: urls.appZoneHistory), historyBytes)
     }
 
+    func testCatalogRecoveryAfterSuccessfulLoadProtectsAssignmentAndHistoryBytes() async throws {
+        let spaceA = try XCTUnwrap(PersistentSpaceID(backend: "test", opaqueID: "A"))
+        let spaceB = try XCTUnwrap(PersistentSpaceID(backend: "test", opaqueID: "B"))
+
+        for (index, brokenCatalog) in [
+            Data("{not-json".utf8),
+            Data(#"{"schemaVersion":99,"value":{"future":"catalog"}}"#.utf8)
+        ].enumerated() {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let urls = StoreURLs(directory: directory)
+            let displayUUID = UUID()
+            let layout = PersistentStoreCoordinator.defaultLayout()
+            let assignmentA = PersistedAssignment(displayUUID: displayUUID, spaceScope: .space(spaceA), layoutID: layout.id)
+            let assignmentB = PersistedAssignment(displayUUID: displayUUID, spaceScope: .space(spaceB), layoutID: layout.id)
+            let coordinator = PersistentStoreCoordinator(directory: directory)
+
+            try await coordinator.saveLayoutAndAssignments([layout], [assignmentA, assignmentB])
+            let initial = try await coordinator.load()
+            XCTAssertTrue(initial.assignmentsAvailable)
+            XCTAssertTrue(initial.appZoneHistoryAvailable)
+            let history = AppZoneHistoryRecord(
+                key: AppZoneHistoryKey(bundleID: "com.example.CatalogRecovery\(index)", displayUUID: displayUUID,
+                                       spaceScope: .space(spaceA), layoutID: layout.id),
+                zoneIDs: [0], revision: 1
+            )
+            try await coordinator.upsertAppZoneHistory(history, expectedLayout: layout)
+            let assignmentBytes = try Data(contentsOf: urls.assignments)
+            let historyBytes = try Data(contentsOf: urls.appZoneHistory)
+
+            try brokenCatalog.write(to: urls.layouts)
+            do {
+                try await coordinator.mergeEditorDelta(layout: layout, assignment: index == 0 ? nil : assignmentB)
+                XCTFail("editor/quick delta must not write against a recovered catalog")
+            } catch {}
+
+            let recovered = try await coordinator.load()
+            XCTAssertTrue(recovered.layouts[PersistentStoreCoordinator.defaultLayoutID] != nil)
+            XCTAssertFalse(recovered.assignmentsAvailable)
+            XCTAssertFalse(recovered.appZoneHistoryAvailable)
+            XCTAssertTrue(recovered.assignments.isEmpty)
+            try await coordinator.flush()
+            do {
+                try await coordinator.saveAssignments([assignmentA, assignmentB])
+                XCTFail("assignments must remain protected after catalog recovery")
+            } catch {}
+            do {
+                try await coordinator.mergeEditorDelta(layout: layout, assignment: assignmentB)
+                XCTFail("a retry must not trust the catalog repaired by the first attempt")
+            } catch {}
+
+            XCTAssertEqual(try Data(contentsOf: urls.assignments), assignmentBytes)
+            XCTAssertEqual(try Data(contentsOf: urls.appZoneHistory), historyBytes)
+        }
+    }
+
 }
 
 final class LayoutPersistenceSaveTests: XCTestCase {

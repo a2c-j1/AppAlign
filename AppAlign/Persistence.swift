@@ -310,6 +310,7 @@ actor PersistentStoreCoordinator {
     var appZoneHistoryLoadAttempted = false
     var appZoneHistoryAvailable = false
     var appZoneHistoryNeedsPrune = false
+    var catalogRecoveryProtected = false
     private var legacyAssignmentBytes: Data?
     private var legacyHistoryBytes: Data?
 
@@ -356,13 +357,8 @@ actor PersistentStoreCoordinator {
             historyFile = nil
             appZoneHistoryAvailable = false
         }
-        let catalogTrusted = !layoutFile.wasRecovered
-        if !catalogTrusted {
-            protectedStores.insert("assignments")
-            protectedStores.insert("app-zone-history")
-            appZoneHistoryAvailable = false
-            appZoneHistoryNeedsPrune = false
-        }
+        if layoutFile.wasRecovered { protectDependentStoresAfterCatalogRecovery() }
+        let catalogTrusted = !layoutFile.wasRecovered && !catalogRecoveryProtected
         let history: [AppZoneHistoryKey: AppZoneHistoryRecord] = Dictionary(
             (catalogTrusted ? (historyFile?.value.records ?? []) : []).compactMap { record in
                 guard Self.isValid(record, layouts: layouts) else { return nil }
@@ -403,6 +399,15 @@ actor PersistentStoreCoordinator {
                 // a successfully saved layout catalog into a failed layout transaction.
             }
         }
+    }
+
+    func protectDependentStoresAfterCatalogRecovery() {
+        catalogRecoveryProtected = true
+        protectedStores.insert("assignments")
+        protectedStores.insert("app-zone-history")
+        appZoneHistoryLoadAttempted = true
+        appZoneHistoryAvailable = false
+        appZoneHistoryNeedsPrune = false
     }
 
     func saveAssignments(_ assignments: [PersistedAssignment]) throws {
