@@ -4,9 +4,10 @@ import Foundation
 
 // Private ABI candidate source (not an Apple ABI contract):
 // yabai commit dd845723416f5fe92af49fad5ebab00369e07edd,
-// src/misc/extern.h:42 and src/display.c:179-187.
-// The pinned declaration is uint64_t SLSManagedDisplayGetCurrentSpace(int, CFStringRef).
-// Only this query and SLSMainConnectionID are looked up after both OS guards pass.
+// src/misc/extern.h:42,56,57,60; src/display.c:197-213,225-249;
+// src/space.c:88-100; src/view.c:995,1039; src/space_manager.c:1166-1195.
+// Additional signatures and call-site links are documented in issue-12-validation.md.
+// Only these read-only functions and SLSMainConnectionID are looked up after both OS guards pass.
 
 private struct ProbeOutput: Encodable {
     let osMajor: Int?
@@ -16,6 +17,21 @@ private struct ProbeOutput: Encodable {
     let kind: String
     let error: String?
     let adoption: Bool
+    let rawSpaceType: Int?
+    let spaceUUIDCandidate: String?
+
+    init(osMajor: Int?, build: String?, displayUUID: String?, rawSpaceID: String?, kind: String,
+         error: String?, adoption: Bool, rawSpaceType: Int? = nil, spaceUUIDCandidate: String? = nil) {
+        self.osMajor = osMajor
+        self.build = build
+        self.displayUUID = displayUUID
+        self.rawSpaceID = rawSpaceID
+        self.kind = kind
+        self.error = error
+        self.adoption = adoption
+        self.rawSpaceType = rawSpaceType
+        self.spaceUUIDCandidate = spaceUUIDCandidate
+    }
 
     enum CodingKeys: String, CodingKey {
         case osMajor
@@ -25,6 +41,8 @@ private struct ProbeOutput: Encodable {
         case kind
         case error
         case adoption
+        case rawSpaceType
+        case spaceUUIDCandidate
     }
 
     func encode(to encoder: Encoder) throws {
@@ -36,11 +54,16 @@ private struct ProbeOutput: Encodable {
         try container.encode(kind, forKey: .kind)
         if let error { try container.encode(error, forKey: .error) } else { try container.encodeNil(forKey: .error) }
         try container.encode(adoption, forKey: .adoption)
+        if let rawSpaceType { try container.encode(rawSpaceType, forKey: .rawSpaceType) } else { try container.encodeNil(forKey: .rawSpaceType) }
+        if let spaceUUIDCandidate { try container.encode(spaceUUIDCandidate, forKey: .spaceUUIDCandidate) } else { try container.encodeNil(forKey: .spaceUUIDCandidate) }
     }
 }
 
 private typealias MainConnectionFunction = @convention(c) () -> Int32
 private typealias CurrentSpaceFunction = @convention(c) (Int32, CFString) -> UInt64
+private typealias SpaceTypeFunction = @convention(c) (Int32, UInt64) -> Int32
+private typealias ManagedDisplaySpacesFunction = @convention(c) (Int32) -> Unmanaged<CFArray>?
+private typealias SpaceCopyNameFunction = @convention(c) (Int32, UInt64) -> Unmanaged<CFString>?
 
 private func emit(_ output: ProbeOutput, exitCode: Int32) -> Never {
     let encoder = JSONEncoder()
@@ -48,7 +71,7 @@ private func emit(_ output: ProbeOutput, exitCode: Int32) -> Never {
     if let data = try? encoder.encode(output), let line = String(data: data, encoding: .utf8) {
         FileHandle.standardOutput.write(Data((line + "\n").utf8))
     } else {
-        FileHandle.standardOutput.write(Data("{\"adoption\":false,\"error\":\"json_encode_failed\",\"kind\":\"unknown\"}\n".utf8))
+        FileHandle.standardOutput.write(Data("{\"adoption\":false,\"build\":null,\"displayUUID\":null,\"error\":\"json_encode_failed\",\"kind\":\"unknown\",\"osMajor\":null,\"rawSpaceID\":null,\"rawSpaceType\":null,\"spaceUUIDCandidate\":null}\n".utf8))
     }
     exit(exitCode)
 }
@@ -120,9 +143,9 @@ private func run() -> Never {
         emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID, rawSpaceID: nil,
                          kind: "unknown", error: "skylight_unavailable", adoption: false), exitCode: 3)
     }
-    // The two signatures below are copied from the pinned yabai declaration and its
-    // call site, not from Apple documentation. unsafeBitCast is limited to these
-    // two dlsym results; the probe must never use any mutating Space/window symbol.
+    // Signatures below are copied from the pinned yabai declarations and call sites,
+    // not from Apple documentation. unsafeBitCast is limited to these dlsym results;
+    // the probe must never use any mutating Space/window symbol.
     guard let connectionSymbol = dlsym(framework, "SLSMainConnectionID") else {
         emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID, rawSpaceID: nil,
                          kind: "unknown", error: "main_connection_symbol_missing", adoption: false), exitCode: 3)
@@ -131,31 +154,106 @@ private func run() -> Never {
         emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID, rawSpaceID: nil,
                          kind: "unknown", error: "current_space_symbol_missing", adoption: false), exitCode: 3)
     }
+    guard let spaceTypeSymbol = dlsym(framework, "SLSSpaceGetType") else {
+        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID, rawSpaceID: nil,
+                         kind: "unknown", error: "space_type_symbol_missing", adoption: false), exitCode: 3)
+    }
+    guard let managedSpacesSymbol = dlsym(framework, "SLSCopyManagedDisplaySpaces") else {
+        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID, rawSpaceID: nil,
+                         kind: "unknown", error: "managed_display_spaces_symbol_missing", adoption: false), exitCode: 3)
+    }
+    guard let spaceNameSymbol = dlsym(framework, "SLSSpaceCopyName") else {
+        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID, rawSpaceID: nil,
+                         kind: "unknown", error: "space_copy_name_symbol_missing", adoption: false), exitCode: 3)
+    }
 
     let mainConnection = unsafeBitCast(connectionSymbol, to: MainConnectionFunction.self)
     let currentSpace = unsafeBitCast(currentSpaceSymbol, to: CurrentSpaceFunction.self)
+    let spaceType = unsafeBitCast(spaceTypeSymbol, to: SpaceTypeFunction.self)
+    let managedDisplaySpaces = unsafeBitCast(managedSpacesSymbol, to: ManagedDisplaySpacesFunction.self)
+    let spaceCopyName = unsafeBitCast(spaceNameSymbol, to: SpaceCopyNameFunction.self)
     let connection = mainConnection()
     guard connection > 0 else {
         emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID, rawSpaceID: nil,
                          kind: "unknown", error: "main_connection_failed", adoption: false), exitCode: 3)
     }
 
-    let rawSpaceID = {
-        let cfUUID = CFUUIDCreateFromString(kCFAllocatorDefault, canonicalUUID as CFString)!
-        let cfUUIDString = CFUUIDCreateString(kCFAllocatorDefault, cfUUID)!
-        // Swift ARC owns the +1 CFCreate results and releases them at scope exit,
-        // matching the pinned C call site's explicit post-call CFRelease.
-        return currentSpace(connection, cfUUIDString)
-    }()
-    dlclose(framework)
+    let rawSpaceID = currentSpace(connection, canonicalUUID as CFString)
     guard rawSpaceID != 0 else {
+        dlclose(framework)
         emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID, rawSpaceID: nil,
                          kind: "unknown", error: "zero_space_id", adoption: false), exitCode: 3)
     }
 
+    do {
+        let displayMetadata = managedDisplaySpaces(connection)
+        guard let displayMetadata else { throw SpaceProbeFailure.managedDisplaySpacesUnavailable }
+        // The +1 Copy result is consumed exactly once; all array/dictionary children
+        // are borrowed and remain owned by this array.
+        let metadata = displayMetadata.takeRetainedValue()
+        _ = try decodeManagedDisplaySpaces(metadata, displayUUID: canonicalUUID, currentSpaceID: rawSpaceID)
+    } catch let failure as SpaceProbeFailure {
+        dlclose(framework)
+        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
+                         rawSpaceID: String(rawSpaceID), kind: "unknown", error: failure.rawValue, adoption: false), exitCode: 3)
+    } catch {
+        dlclose(framework)
+        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
+                         rawSpaceID: String(rawSpaceID), kind: "unknown", error: "invalid_display_metadata", adoption: false), exitCode: 3)
+    }
+
+    let rawSpaceType = spaceType(connection, rawSpaceID)
+    let kind = kindForSpaceType(rawSpaceType)
+    guard let kind else {
+        dlclose(framework)
+        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
+                         rawSpaceID: String(rawSpaceID), kind: "unknown", error: "unsupported_space_type",
+                         adoption: false, rawSpaceType: Int(rawSpaceType)), exitCode: 3)
+    }
+    let nameResult = spaceCopyName(connection, rawSpaceID)
+    guard let nameResult else {
+        dlclose(framework)
+        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
+                         rawSpaceID: String(rawSpaceID), kind: kind, error: "invalid_space_uuid",
+                         adoption: false, rawSpaceType: Int(rawSpaceType)), exitCode: 3)
+    }
+    // SLSSpaceCopyName is a Copy result. Consume/release it in this scope and expose
+    // only UUID-shaped strings; arbitrary user Space names are never emitted.
+    let candidate: String? = {
+        let copiedName = nameResult.takeRetainedValue()
+        return spaceUUIDCandidate(from: copiedName)
+    }()
+    guard let candidate else {
+        dlclose(framework)
+        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
+                         rawSpaceID: String(rawSpaceID), kind: kind, error: "invalid_space_uuid",
+                         adoption: false, rawSpaceType: Int(rawSpaceType)), exitCode: 3)
+    }
+    let secondSpaceID = currentSpace(connection, canonicalUUID as CFString)
+    do {
+        _ = try verifyCurrentSpaceIDs(before: rawSpaceID, after: secondSpaceID)
+    } catch let failure as SpaceProbeFailure {
+        dlclose(framework)
+        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
+                         rawSpaceID: String(rawSpaceID), kind: kind, error: failure.rawValue,
+                         adoption: false, rawSpaceType: Int(rawSpaceType), spaceUUIDCandidate: candidate), exitCode: 3)
+    } catch {
+        dlclose(framework)
+        emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
+                         rawSpaceID: String(rawSpaceID), kind: kind, error: "space_changed_during_probe",
+                         adoption: false, rawSpaceType: Int(rawSpaceType), spaceUUIDCandidate: candidate), exitCode: 3)
+    }
+    dlclose(framework)
+
     emit(ProbeOutput(osMajor: version.majorVersion, build: build, displayUUID: canonicalUUID,
-                     rawSpaceID: String(rawSpaceID), kind: "unknown",
-                     error: nil, adoption: false), exitCode: 0)
+                     rawSpaceID: String(rawSpaceID), kind: kind,
+                     error: nil, adoption: false, rawSpaceType: Int(rawSpaceType),
+                     spaceUUIDCandidate: candidate), exitCode: 0)
 }
 
-run()
+@main
+private struct SpaceProbeMain {
+    static func main() {
+        run()
+    }
+}

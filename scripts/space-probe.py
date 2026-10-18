@@ -17,6 +17,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 HELPER_SOURCE = ROOT / "scripts" / "space-probe.swift"
+CORE_SOURCE = ROOT / "scripts" / "space-probe-core.swift"
 HELPER_BINARY = ROOT / "build" / "issue-12-probe" / "space-probe"
 ALLOWED_OS_MAJOR = 27
 CHILD_TIMEOUT_SECONDS = 2.0
@@ -27,6 +28,21 @@ ERROR_CODES = {
     "current_space_symbol_missing",
     "main_connection_failed",
     "zero_space_id",
+    "space_type_symbol_missing",
+    "managed_display_spaces_symbol_missing",
+    "space_copy_name_symbol_missing",
+    "managed_display_spaces_unavailable",
+    "invalid_display_metadata",
+    "display_uuid_not_found",
+    "ambiguous_display_uuid",
+    "invalid_spaces_metadata",
+    "invalid_space_id",
+    "duplicate_space_id",
+    "current_space_not_found",
+    "ambiguous_current_space_id",
+    "invalid_space_uuid",
+    "space_changed_during_probe",
+    "unsupported_space_type",
 }
 
 
@@ -37,6 +53,8 @@ def result_record(
     raw_space_id: str | None,
     kind: str,
     error: str | None,
+    raw_space_type: int | None = None,
+    space_uuid_candidate: str | None = None,
 ) -> dict[str, Any]:
     return {
         "osMajor": os_major,
@@ -46,6 +64,8 @@ def result_record(
         "kind": kind,
         "error": error,
         "adoption": False,
+        "rawSpaceType": raw_space_type,
+        "spaceUUIDCandidate": space_uuid_candidate,
     }
 
 
@@ -127,6 +147,7 @@ def compile_helper() -> Path:
             str(Path(developer) / "Platforms" / "MacOSX.platform" / "Developer" / "SDKs" / "MacOSX26.5.sdk"),
             "-target",
             "arm64-apple-macosx26.0",
+            str(CORE_SOURCE),
             str(HELPER_SOURCE),
             "-o",
             str(HELPER_BINARY),
@@ -230,15 +251,49 @@ def validate_helper_payload(
     except (UnicodeDecodeError, json.JSONDecodeError):
         return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
 
-    expected_keys = {"osMajor", "build", "displayUUID", "rawSpaceID", "kind", "error", "adoption"}
+    expected_keys = {
+        "osMajor",
+        "build",
+        "displayUUID",
+        "rawSpaceID",
+        "kind",
+        "error",
+        "adoption",
+        "rawSpaceType",
+        "spaceUUIDCandidate",
+    }
     if not isinstance(candidate, dict) or set(candidate) != expected_keys:
         return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
-    if candidate["osMajor"] != os_major or candidate["build"] != build:
+    if type(candidate["osMajor"]) is not int or candidate["osMajor"] != os_major or type(candidate["build"]) is not str or candidate["build"] != build:
         return result_record(os_major, build, display_uuid, None, "unknown", "helper_identity_mismatch")
-    if not isinstance(candidate["displayUUID"], str) or candidate["displayUUID"].upper() != display_uuid:
+    if type(candidate["displayUUID"]) is not str or candidate["displayUUID"] != display_uuid:
         return result_record(os_major, build, display_uuid, None, "unknown", "helper_identity_mismatch")
-    if candidate["kind"] != "unknown" or candidate["adoption"] is not False:
+    if type(candidate["adoption"]) is not bool or candidate["adoption"] is not False:
         return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+    if type(candidate["kind"]) is not str or candidate["kind"] not in {"user", "system", "fullscreen", "unknown"}:
+        return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+
+    raw_space_type = candidate["rawSpaceType"]
+    if raw_space_type is not None and (type(raw_space_type) is not int or raw_space_type < -(2**31) or raw_space_type > 2**31 - 1):
+        return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+    expected_kind = {0: "user", 2: "system", 4: "fullscreen"}.get(raw_space_type)
+    error = candidate["error"]
+    if type(error) is not str and error is not None:
+        return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+    if error is not None and error not in ERROR_CODES:
+        return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+    if expected_kind is None:
+        if raw_space_type is None and candidate["kind"] != "unknown":
+            return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+        if raw_space_type is not None and (candidate["kind"] != "unknown" or error != "unsupported_space_type"):
+            return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+    elif candidate["kind"] != expected_kind:
+        return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
+
+    space_uuid_candidate = candidate["spaceUUIDCandidate"]
+    if space_uuid_candidate is not None:
+        if type(space_uuid_candidate) is not str or canonical_uuid(space_uuid_candidate) != space_uuid_candidate:
+            return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
 
     raw_space_id = candidate["rawSpaceID"]
     if raw_space_id is not None:
@@ -247,14 +302,17 @@ def validate_helper_payload(
         if int(raw_space_id) > (2**64 - 1):
             return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
 
-    error = candidate["error"]
-    if error is not None and error not in ERROR_CODES:
-        return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
     if returncode != 0 and error is None:
         return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
-    if returncode == 0 and (error is not None or raw_space_id is None):
+    if returncode == 0 and (
+        error is not None
+        or raw_space_id is None
+        or expected_kind is None
+        or space_uuid_candidate is None
+    ):
         return result_record(os_major, build, display_uuid, None, "unknown", "invalid_helper_response")
-    return result_record(os_major, build, display_uuid, raw_space_id, "unknown", error)
+    return result_record(os_major, build, display_uuid, raw_space_id, candidate["kind"], error,
+                         raw_space_type, space_uuid_candidate)
 
 
 def run_probe(expected_major: int, expected_build: str, display_uuid: str) -> tuple[dict[str, Any], int]:

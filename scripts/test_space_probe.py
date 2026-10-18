@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -20,6 +21,45 @@ MODULE_SPEC.loader.exec_module(probe)
 
 
 class SpaceProbeGuardTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        developer = subprocess.run(
+            ["/usr/bin/xcode-select", "-p"], check=True, capture_output=True, text=True, timeout=2
+        ).stdout.strip()
+        cls.fixture_directory = tempfile.TemporaryDirectory(prefix="appalign-space-probe-fixtures-")
+        cls.fixture_binary = Path(cls.fixture_directory.name) / "space-probe-fixtures"
+        compiler = Path(developer) / "Toolchains" / "XcodeDefault.xctoolchain" / "usr" / "bin" / "swiftc"
+        sdk = Path(developer) / "Platforms" / "MacOSX.platform" / "Developer" / "SDKs" / "MacOSX26.5.sdk"
+        subprocess.run(
+            [
+                str(compiler),
+                "-swift-version",
+                "6",
+                "-sdk",
+                str(sdk),
+                "-target",
+                "arm64-apple-macosx26.0",
+                str(ROOT / "scripts" / "space-probe-core.swift"),
+                str(ROOT / "scripts" / "test-space-probe-fixtures.swift"),
+                "-o",
+                str(cls.fixture_binary),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.fixture_directory.cleanup()
+
+    def test_native_pure_metadata_and_type_fixtures(self) -> None:
+        result = subprocess.run(
+            [str(self.fixture_binary)], check=False, capture_output=True, text=True, timeout=5
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Space probe pure fixtures passed", result.stdout)
+
     def test_pure_guard_requires_allowlisted_major_and_exact_build(self) -> None:
         self.assertIsNone(probe.evaluate_os_guard(27, "26A434", 27, "26A434"))
         self.assertEqual(probe.evaluate_os_guard(27, "26A434", 26, "26A434"), "unsupported_expected_os_major")
@@ -124,6 +164,54 @@ class SpaceProbeGuardTests(unittest.TestCase):
         self.assertEqual(result.error, "helper_output_too_large")
         self.assertIsNotNone(result.returncode)
         self.assertEqual(result.payload, b"")
+
+    def test_wrapper_validates_type_kind_uuid_and_exact_fields(self) -> None:
+        expected_uuid = "D16814E6-E4F8-4D8F-0857-D6964E3302DB"
+
+        def payload(raw_type: int | None, kind: str, candidate: str | None) -> dict[str, object]:
+            return {
+                "osMajor": 27,
+                "build": "26A434",
+                "displayUUID": expected_uuid,
+                "rawSpaceID": "41",
+                "kind": kind,
+                "error": None,
+                "adoption": False,
+                "rawSpaceType": raw_type,
+                "spaceUUIDCandidate": candidate,
+            }
+
+        for raw_type, kind in [(0, "user"), (2, "system"), (4, "fullscreen")]:
+            record = probe.validate_helper_payload(
+                json.dumps(payload(raw_type, kind, expected_uuid)).encode(), 0, 27, "26A434", expected_uuid
+            )
+            self.assertIsNone(record["error"])
+            self.assertEqual(record["kind"], kind)
+            self.assertFalse(record["adoption"])
+
+        unsupported = payload(3, "unknown", expected_uuid)
+        unsupported["error"] = "unsupported_space_type"
+        record = probe.validate_helper_payload(json.dumps(unsupported).encode(), 3, 27, "26A434", expected_uuid)
+        self.assertEqual(record["error"], "unsupported_space_type")
+        self.assertEqual(record["kind"], "unknown")
+
+        invalid_payloads = []
+        unknown_field = payload(0, "user", expected_uuid)
+        unknown_field["extra"] = "ignored-fields-must-not-be-forwarded"
+        invalid_payloads.append(unknown_field)
+        invalid_payloads.append(payload(0, "system", expected_uuid))
+        invalid_uuid = payload(0, "user", "personal Space")
+        invalid_payloads.append(invalid_uuid)
+        invalid_payloads.append(payload(True, "user", expected_uuid))
+        invalid_payloads.append(payload(None, "user", expected_uuid))
+        for invalid in invalid_payloads:
+            with self.subTest(payload=invalid):
+                record = probe.validate_helper_payload(
+                    json.dumps(invalid).encode(), 0, 27, "26A434", expected_uuid
+                )
+                self.assertEqual(record["error"], "invalid_helper_response")
+                self.assertIsNone(record["spaceUUIDCandidate"])
+                self.assertFalse(record["adoption"])
 
 
 if __name__ == "__main__":
