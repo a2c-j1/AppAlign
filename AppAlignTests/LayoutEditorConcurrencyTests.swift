@@ -221,7 +221,7 @@ final class LayoutEditorConcurrencyTests: XCTestCase {
         let second = display(uuid: secondUUID, runtimeID: 2, primary: false)
         let custom = layout(name: "Custom")
         let other = layout(name: "Other display")
-        if let spaceProvider { _ = spaceProvider.refresh(displays: [firstUUID, secondUUID]) }
+        if let spaceProvider { _ = await refreshSpaceProvider(spaceProvider, displays: [firstUUID, secondUUID]) }
         try await coordinator.saveLayoutAndAssignments(
             (includeDefault ? [PersistentStoreCoordinator.defaultLayout()] : []) + [custom, other],
             [PersistedAssignment(displayUUID: secondUUID, spaceScope: .common, layoutID: other.id)]
@@ -295,7 +295,7 @@ extension LayoutEditorConcurrencyTests {
         try await fixture.access.waitForBlockedWrite()
 
         backend.set("B")
-        _ = provider.refresh(displays: [fixture.firstUUID, fixture.secondUUID])
+        _ = await refreshSpaceProvider(provider, displays: [fixture.firstUUID, fixture.secondUUID])
         let configurationRevision = fixture.controller.placementValidity.invalidateForConfigurationChange()
         fixture.controller.displaysDidPublish(initialSnapshot)
         XCTAssertTrue(fixture.controller.placementValidity.publishConfiguration(revision: configurationRevision))
@@ -462,10 +462,8 @@ private final class SwitchingSpaceBackendForEditor: ReadOnlySpaceBackend, @unche
     private var value = "A"
 
     func set(_ value: String) { lock.lock(); self.value = value; lock.unlock() }
-    func snapshot(for displayUUID: UUID) -> (id: String, kind: SpaceKind)? {
-        lock.lock()
-        defer { lock.unlock() }
-        return (value, .regular)
+    func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue? {
+        lock.withLock { ReadOnlySpaceValue(id: value, kind: .regular) }
     }
 }
 

@@ -49,6 +49,8 @@ raw 1と41が同じdisplayの通常desktopであることは確認できたが�
 
 固定yabai revisionの`display.c`、`space.c`、`space_manager.c`、`view.c`、`misc/extern.h`の確認範囲では、Space辞書の別UUID keyを読むcallsiteは見つからず、推測したmetadata keyは追加していない。確認範囲外を含む不存在は断定しない。
 
+追加のread-only資料確認では、`space-renamer`の固定commit [`c0b2878659f6594f2894bac8b1c467f439b2df94`のActiveSpaceReader.swift](https://github.com/noobomancer/space-renamer/blob/c0b2878659f6594f2894bac8b1c467f439b2df94/Sources/SpaceRenamerCore/ActiveSpaceReader.swift#L16)が別名の`CGSCopyManagedDisplaySpaces`結果から先頭displayのSpaces辞書の`uuid`をStringで読む実例を確認した。ただし欠落・不正型を空文字に統合し、[SpacesPlistParser.swift](https://github.com/noobomancer/space-renamer/blob/c0b2878659f6594f2894bac8b1c467f439b2df94/Sources/SpaceRenamerCore/SpacesPlistParser.swift#L11)は空文字をprimaryへ変換する。[READMEの安定性主張](https://github.com/noobomancer/space-renamer/blob/c0b2878659f6594f2894bac8b1c467f439b2df94/README.md#L74)もprimary display対象で、今回の外部display・OS・SLS query・raw 1の意味を保証しない。`hs._asm.undocumented.spaces`の固定commit [`75e5be3b16e532a307aab043c3c73646716a67f1`のCGSSpace.h](https://github.com/asmagill/hs._asm.undocumented.spaces/blob/75e5be3b16e532a307aab043c3c73646716a67f1/CGSSpace.h#L64)のuuid記載はSpace作成APIのoptions辞書用であり、列挙schemaの保証ではない。今回probeには別key・別関数を追加せず、raw 1をprimaryや生成IDへ置換していない。
+
 列挙版のSwift 6 helper/純粋fixtureのcompileと実行、`python3 scripts/test_space_probe.py`の10 testsが成功した。64/65件、前後集合変化、重複UUID、固定schema、既知項目失敗の非成功扱い、実生成型のnull保持を含む。ログは`/private/tmp/issue12-space-probe-null-encoding-tests.log`。親レビューは97/100点、重大不具合0件。
 
 - ローカル環境: macOS 27.0.1 (build 26A434)、arm64 M1 + Dell、Xcode 26.5。テストbuildはXcode付属MacOSX 26.5 SDKを使用する。
@@ -60,13 +62,27 @@ raw 1と41が同じdisplayの通常desktopであることは確認できたが�
 - `/Users/a2c/.local/bin/semgrep scan --config .semgrep.yml --error AppAlign AppAlignTests scripts/space-probe.swift scripts/space-probe.py scripts/test_space_probe.py`: 4 rules、56 applicable targets、0 findings。probe pathsも明示指定した。既存ruleのpath filterは`AppAlign/**/*.swift`なので、実際にrule適用されたのはその範囲。
 - `git diff --check`: 成功。新規Swift source/test filesは`AppAlign.xcodeproj/project.pbxproj`のapp/test sourcesへ登録し、公式suiteでcompile・実行した。
 
-## 製品backendへの非同期接続案（未実装）
+## 非同期接続基盤（実SkyLight未採用）
 
-現行の`SpaceProvider.refresh(displays:)`はMainActorで同期backendを呼ぶため、private IPCや子process待機を直接追加しない。`DisplayConfigurationController`が既存の`beginInvalidation`後に取得を要求し、専用の直列workerと有限timeoutで取得したSendable結果をMainActorへ返す。実行中1件と最新要求1件に集約する。
+同期`SpaceProvider.refresh(displays:)`を廃止し、`makeRefreshRequest`、cacheを変更しない`nonisolated async readCandidate`、同期`publish`へ分離した。`ReadOnlySpaceBackend.snapshot`はasync throws契約で、戻り値はSendable。将来の同期private IPCや子process待機は専用直列workerへ隔離し、queryとchild終了/reapを完了してからreturnする契約とした。今回のstubはqueryを行わず、実helper機構も追加していない。`DisplayConfigurationController`は独立した既定1秒deadlineを持ち、実行中1件と最新待機要求1件に集約する。
 
 要求には`callbackEpoch`、`pendingRevision`、display snapshotを固定する。結果到着時にepoch、`validity.revision.configuration`とのrevision一致、sleep/構成変更待ち状態、再採取displayとの一致を確認し、古い結果はcache更新前に破棄する。合格時だけawaitなしでSpace cache、`DisplayProvider.publish`、`layout.displaysDidPublish`を更新し、最後に`validity.publishConfiguration(revision:)`でgateを開く。取得中の同期呼出しは最後にpublish済みのdisplayを返す。
 
-最新要求の失敗は同revisionのdisplayと`degradedScoped`を一括反映し、古い失敗で新しい成功を上書きしない。通知callbackによる同期ticket無効化、shutdown時のepoch無効化、cancelQuit時の再取得を維持する。起動時は`startAfterPersistentLoad`の構成gate初期化を履歴監視・hotkey受付より先に置く。変更境界は`SpaceProvider.swift`、`DisplayConfigurationController.swift`、`AppAlignApp.swift`と関連テスト。遅延fake backendで応答中のMainActor応答性、A→B→Aの遅い結果拒否、fallback、lifecycle、display変化、polling集約を検証する。今回は設計記録のみで製品sourceを変更していない。
+timeoutはbackendのTaskGroup競争で実装せず、独立deadline taskで最新要求をfallbackする。実backend呼出しのrunning枠は実際のreturnまで保持し、取消し・timeout・shutdownでは解放しない。同時実処理1件と最新待機1件に制限し、待機時間も受付時の絶対deadlineへ含める。待機中の期限切れは実行せずfallbackして枠から外す。古い結果は同revisionでもtimeout後に採用せず、epoch不一致でも実処理枠の後始末だけは行う。shutdown→cancelQuitもこの占有規則を維持する。再試行は新しいinvalidationとして扱う。
+
+最新要求の失敗は同revisionのdisplayと`degradedScoped`を一括反映し、古い失敗で新しい成功を上書きしない。通知callbackによる同期ticket無効化、shutdown時のepoch無効化、cancelQuit時の再取得を維持する。shutdown中はpollを含む新規要求・publishを拒否する。起動時は`startAfterPersistentLoad`の構成gate初期化を履歴監視・hotkey受付より先に置く。本体変更は`SpaceProvider.swift`、`DisplayConfigurationController.swift`、`AppAlignApp.swift`の3ファイルに限定し、実SkyLight採用gateはfalseを維持した。
+
+focused検証は`SpaceProviderTests`と`DisplayConfigurationControllerTests`の19 tests成功、xcresultは`/private/tmp/issue12-space-focused-8.xcresult`。保留continuation backendでMainActor応答、同fingerprintへ戻るA→B→Aの古い失敗拒否、候補read時のcache不変、intent変更の拒否、最新失敗、取消非対応readのtimeout、待機期限切れによる追加call抑止、display再採取不一致からpoll再取得、sleep/wake、shutdown中poll拒否、cancelQuit後の単一slot再開を検証した。callback同期ticket無効化の既存検証も維持した。既存テストのprovider呼出しは候補read/publishへ適応し、assertionを弱めず非同期公開を待つようにした。
+
+### 非同期checkpointの最終検証
+
+2026-10-18にsourceをfreezeした後の` scripts/test.sh `が、中断後も最後まで完了していたことを2026-10-22の再開時に確認した。通常macOS build、294 tests / 0 failures / 0 skips、bundle executable・bundle identifierのsmokeが成功している。ログは`/private/tmp/issue12-async-test-script.log`、元xcresultは`build/issue-3-evidence/AppAlignTests-20261018T134542Z-41167.xcresult`。`xcresulttool get test-results summary`でもmacOS 27.0.1 / build 26A434 / arm64上の294件Passedを照合した。source/testの更新時刻はこの実行前で、再開後はレビューと文書更新のみ。重複実行を避け、10/22に新しいビルド・全suiteを開始していない。
+
+実行コマンドは` scripts/test.sh > /private/tmp/issue12-async-test-script.log 2>&1 `で、通常チェックそのものだった。当時のbuildはarm64・x86_64を含み、test実行はarm64だった。jobs 2を指定した実行と誤記しない。今後新たに実行する場合はユーザー指定のarm64・jobs 2・同時ビルド1件を適用し、その制限を通常コマンドとの差として記録する。高負荷時にこの検証buildだけを一時停止し、プレビュー起動後に同じPID群を再開して完走した。
+
+同差分のSwiftFormatは93 files / 0 formatting changes、SwiftLintは93 files / 0 violations、Semgrepは4 rules / 56 applicable AppAlign files / 0 findingsで成功。Semgrepログは`/private/tmp/issue12-async-semgrep.log`。親の最終評価は要件34/35・非同期安全34/35・回帰検証24/25・保守性4/5の96/100、重大指摘0件。実SkyLight採用false、実機Space別の利用可否はこの自動検証では確認していない。
+
+試用中のprimary `build/preview/AppAlign.app`は変更・終了・再署名していない。統括が重複appをLS登録解除・退避した後、再開時にこのworktreeの`build/DerivedData/Build/Products/Debug/AppAlign.app`が存在しないことを確認した。ビルドを追加していないため重複appも再生成していない。xcresultと他DerivedDataは保持している。#13は対象外、#29の入力監視・権限初期化・再署名は行っていない。
 
 ## 実機で必要な確認
 

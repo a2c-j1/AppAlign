@@ -4,13 +4,13 @@ import XCTest
 
 final class SpaceProviderTests: XCTestCase {
     @MainActor
-    func testValidatedBackendProducesPerDisplayPersistentSpaceSnapshots() throws {
+    func testValidatedBackendProducesPerDisplayPersistentSpaceSnapshots() async throws {
         let firstDisplay = UUID()
         let secondDisplay = UUID()
         let provider = SpaceProvider(backend: FakeValidatedSpaceBackend())
         provider.requestScopedMode()
 
-        let snapshots = provider.refresh(displays: [firstDisplay, secondDisplay])
+        let snapshots = await refreshSpaceProvider(provider, displays: [firstDisplay, secondDisplay])
 
         XCTAssertEqual(provider.mode, .validatedScoped)
         let expectedID = try XCTUnwrap(PersistentSpaceID(backend: "fake", opaqueID: firstDisplay.uuidString))
@@ -21,18 +21,18 @@ final class SpaceProviderTests: XCTestCase {
     }
 
     @MainActor
-    func testCommonOnlyAndDegradedScopedKeepDifferentHistoryPolicies() {
+    func testCommonOnlyAndDegradedScopedKeepDifferentHistoryPolicies() async {
         let display = UUID()
         let provider = SpaceProvider(backend: FakeFailedSpaceBackend())
 
-        let common = provider.refresh(displays: [display])[display]
+        let common = await refreshSpaceProvider(provider, displays: [display])[display]
         XCTAssertEqual(common?.mode, .commonOnly)
         XCTAssertEqual(common?.persistedScope, .common)
         XCTAssertTrue(common?.recordsHistory == true)
         XCTAssertTrue(common?.allowsAutomaticRestore == true)
 
         provider.requestScopedMode()
-        let degraded = provider.refresh(displays: [display])[display]
+        let degraded = await refreshSpaceProvider(provider, displays: [display])[display]
         XCTAssertEqual(degraded?.mode, .degradedScoped)
         XCTAssertEqual(degraded?.persistedScope, .common)
         XCTAssertFalse(degraded?.recordsHistory ?? true)
@@ -40,16 +40,36 @@ final class SpaceProviderTests: XCTestCase {
     }
 
     @MainActor
-    func testIntentionalCommonOnlyModeDoesNotReenableScopedBackend() {
+    func testIntentionalCommonOnlyModeDoesNotReenableScopedBackend() async {
         let display = UUID()
         let provider = SpaceProvider(backend: FakeValidatedSpaceBackend())
         provider.requestScopedMode()
-        XCTAssertEqual(provider.refresh(displays: [display])[display]?.mode, .validatedScoped)
+        let scoped = await refreshSpaceProvider(provider, displays: [display])
+        XCTAssertEqual(scoped[display]?.mode, .validatedScoped)
 
         provider.useCommonOnlyMode()
 
-        XCTAssertEqual(provider.refresh(displays: [display])[display]?.mode, .commonOnly)
+        let common = await refreshSpaceProvider(provider, displays: [display])
+        XCTAssertEqual(common[display]?.mode, .commonOnly)
         XCTAssertEqual(provider.mode, .commonOnly)
+    }
+
+    @MainActor
+    func testCandidateReadDoesNotPublishAndStaleIntentCannotCommit() async {
+        let display = UUID()
+        let provider = SpaceProvider(backend: FakeValidatedSpaceBackend())
+        provider.requestScopedMode()
+        let request = provider.makeRefreshRequest(displays: [display])
+        let candidate = await provider.readCandidate(for: request)
+
+        XCTAssertEqual(provider.mode, .commonOnly)
+        XCTAssertTrue(provider.snapshots.isEmpty)
+
+        provider.useCommonOnlyMode()
+
+        XCTAssertFalse(provider.publish(candidate, for: request))
+        XCTAssertEqual(provider.mode, .commonOnly)
+        XCTAssertTrue(provider.snapshots.isEmpty)
     }
 
     @MainActor
@@ -75,7 +95,7 @@ final class SpaceProviderTests: XCTestCase {
         ])
         let backend = SwitchingSpaceBackend()
         let provider = SpaceProvider.production(backend: backend)
-        _ = provider.refresh(displays: [displayUUID])
+        _ = await refreshSpaceProvider(provider, displays: [displayUUID])
         let snapshot = DisplaySnapshot(displays: [display], primaryFrame: display.frame)
         let layout = LayoutController(displayProvider: DisplayProvider(snapshot: snapshot), spaceProvider: provider,
                                       storeCoordinator: store)
@@ -95,7 +115,7 @@ final class SpaceProviderTests: XCTestCase {
         layout.releaseAppPlacement(scopedLease)
 
         backend.set("B")
-        _ = provider.refresh(displays: [displayUUID])
+        _ = await refreshSpaceProvider(provider, displays: [displayUUID])
         layout.displaysDidPublish(snapshot)
         XCTAssertEqual(layout.currentLayout.id, layoutB.id)
         XCTAssertEqual(layout.zones.count, 3, "Manual zones must be recalculated from Space B's selected layout.")
@@ -109,6 +129,7 @@ final class SpaceProviderTests: XCTestCase {
         layout.releaseAppPlacement(scopedLeaseB)
         let common = PersistedSpaceScope.common
         layout.spaceProvider.useCommonOnlyMode()
+        _ = await refreshSpaceProvider(provider, displays: [displayUUID])
         layout.displaysDidPublish(snapshot)
         XCTAssertEqual(layout.spaceSnapshot(for: display).mode, .commonOnly)
         let commonLeaseInCommonMode = layout.reserveAppPlacement(token: RuntimeWindowToken(id: UUID(), pid: 43),
@@ -124,7 +145,7 @@ final class SpaceProviderTests: XCTestCase {
 
         provider.requestScopedMode()
         backend.set(nil)
-        _ = provider.refresh(displays: [displayUUID])
+        _ = await refreshSpaceProvider(provider, displays: [displayUUID])
         layout.displaysDidPublish(snapshot)
         let degraded = layout.spaceSnapshot(for: display)
         XCTAssertEqual(degraded.mode, .degradedScoped)
@@ -182,7 +203,7 @@ final class SpaceProviderTests: XCTestCase {
             PersistedAssignment(displayUUID: displayUUID, spaceScope: .common, layoutID: defaultLayout.id)
         ])
         let provider = SpaceProvider.production(backend: FakeFailedSpaceBackend())
-        _ = provider.refresh(displays: [displayUUID, secondUUID])
+        _ = await refreshSpaceProvider(provider, displays: [displayUUID, secondUUID])
         let displaySnapshot = DisplaySnapshot(displays: [display, second], primaryFrame: display.frame)
         let controller = LayoutController(displayProvider: DisplayProvider(snapshot: displaySnapshot),
                                           spaceProvider: provider, storeCoordinator: store)
@@ -208,7 +229,7 @@ final class SpaceProviderTests: XCTestCase {
         let nonselectedKey = controller.overrideKey(for: second, scope: .common)
         controller.degradedLayoutOverrides[nonselectedKey] = quickLayout
         provider.useCommonOnlyMode()
-        _ = provider.refresh(displays: [displayUUID, secondUUID])
+        _ = await refreshSpaceProvider(provider, displays: [displayUUID, secondUUID])
         controller.displaysDidPublish(displaySnapshot)
         XCTAssertNil(controller.degradedLayoutOverrides[nonselectedKey],
                      "Recovery must clear temporary overrides for every display, including nonselected displays.")
@@ -245,8 +266,8 @@ private struct FakeValidatedSpaceBackend: ReadOnlySpaceBackend {
     let identifier = "fake"
     let canAdoptStableIdentifiers = true
 
-    func snapshot(for displayUUID: UUID) -> (id: String, kind: SpaceKind)? {
-        (displayUUID.uuidString, .regular)
+    func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue? {
+        ReadOnlySpaceValue(id: displayUUID.uuidString, kind: .regular)
     }
 }
 
@@ -254,7 +275,7 @@ private struct FakeFailedSpaceBackend: ReadOnlySpaceBackend {
     let identifier = "fake-failed"
     let canAdoptStableIdentifiers = true
 
-    func snapshot(for displayUUID: UUID) -> (id: String, kind: SpaceKind)? { nil }
+    func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue? { nil }
 }
 
 private final class SwitchingSpaceBackend: ReadOnlySpaceBackend, @unchecked Sendable {
@@ -264,11 +285,17 @@ private final class SwitchingSpaceBackend: ReadOnlySpaceBackend, @unchecked Send
     private var value: String? = "A"
 
     func set(_ value: String?) { lock.lock(); self.value = value; lock.unlock() }
-    func snapshot(for displayUUID: UUID) -> (id: String, kind: SpaceKind)? {
-        lock.lock()
-        defer { lock.unlock() }
-        return value.map { ($0, .regular) }
+    func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue? {
+        lock.withLock { value.map { ReadOnlySpaceValue(id: $0, kind: .regular) } }
     }
+}
+
+@MainActor
+func refreshSpaceProvider(_ provider: SpaceProvider, displays: [UUID]) async -> [UUID: DisplaySpaceSnapshot] {
+    let request = provider.makeRefreshRequest(displays: displays)
+    let candidate = await provider.readCandidate(for: request)
+    XCTAssertTrue(provider.publish(candidate, for: request))
+    return provider.snapshots
 }
 
 private func testLayout(name: String, columns: Int) -> PersistedLayout {

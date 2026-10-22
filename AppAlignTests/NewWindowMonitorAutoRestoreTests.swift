@@ -206,5 +206,5 @@ extension NewWindowMonitorTests {
 private struct AutoRestoreUnavailableSpaceBackend: ReadOnlySpaceBackend {
     let identifier = "auto-restore-unavailable"
     let canAdoptStableIdentifiers = true
-    func snapshot(for displayUUID: UUID) -> (id: String, kind: SpaceKind)? { nil }
+    func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue? { nil }
 }

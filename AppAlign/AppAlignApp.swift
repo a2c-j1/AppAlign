@@ -183,8 +183,8 @@ private func startAfterPersistentLoad(_ context: HistoryLifecycleContext) {
         }
         await context.layout.loadPersistentState()
         guard !context.delegate.isTerminating else { return }
-        context.delegate.applyHistoryLifecycle?()
         context.displayConfiguration.start()
+        context.delegate.applyHistoryLifecycle?()
         context.hotkeys.start()
         context.layoutHotkeys.start()
     }

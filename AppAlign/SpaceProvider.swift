@@ -74,18 +74,43 @@ struct LayoutOverrideKey: Hashable, Sendable {
 protocol ReadOnlySpaceBackend: Sendable {
     var identifier: String { get }
     var canAdoptStableIdentifiers: Bool { get }
-    func snapshot(for displayUUID: UUID) -> (id: String, kind: SpaceKind)?
+    /// A future private-IPC/helper implementation must run synchronous work on a dedicated
+    /// serial worker, never MainActor or a cooperative executor. It must return only after
+    /// the query and any child exit/reap work finish; the controller retains its single
+    /// running slot until this method returns. The current SkyLight stub performs no query.
+    func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue?
+}
+
+struct ReadOnlySpaceValue: Equatable, Sendable {
+    let id: String
+    let kind: SpaceKind
+}
+
+struct SpaceProviderRefreshRequest: Sendable {
+    let intentRevision: UInt64
+    let displayUUIDs: [UUID]
+    let scopedModeRequested: Bool
+    let backend: (any ReadOnlySpaceBackend)?
+}
+
+struct SpaceProviderCandidate: Equatable, Sendable {
+    let intentRevision: UInt64
+    let displayUUIDs: [UUID]
+    let scopedModeRequested: Bool
+    let snapshots: [UUID: DisplaySpaceSnapshot]
 }
 
 /// An intentionally closed gate until the private ABI and IDs have been verified on
-/// the supported macOS 26 + M1 + Dell setup. This implementation never resolves or
+/// the target macOS 27 build 26A434 + M1 + Dell setup. This implementation never resolves or
 /// calls a SkyLight symbol on unverified systems.
 struct SkyLightReadOnlyBackend: ReadOnlySpaceBackend {
     let identifier = "skylight-read-only"
     let isValidatedForCurrentSystem = false
     var canAdoptStableIdentifiers: Bool { isValidatedForCurrentSystem }
 
-    func snapshot(for displayUUID: UUID) -> (id: String, kind: SpaceKind)? {
+    func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue? {
+        // Production lookup remains disabled until the isolated probe establishes the
+        // required OS-specific ABI and stable IDs; this stub never resolves a symbol.
         guard isValidatedForCurrentSystem else { return nil }
         return nil
     }
@@ -98,6 +123,7 @@ final class SpaceProvider {
     private let backend: (any ReadOnlySpaceBackend)?
     private let notificationCenter: NotificationCenter
     private var scopedModeRequested = false
+    private var intentRevision: UInt64 = 0
     private var observer: NSObjectProtocol?
 
     init(backend: (any ReadOnlySpaceBackend)? = SkyLightReadOnlyBackend(),
@@ -130,27 +156,28 @@ final class SpaceProvider {
 
     func requestScopedMode() {
         scopedModeRequested = true
-        mode = .degradedScoped
-        snapshots = snapshots.mapValues {
-            DisplaySpaceSnapshot(displayUUID: $0.displayUUID, mode: .degradedScoped, spaceID: nil, kind: nil,
-                                 reason: "Space information is being refreshed.")
-        }
+        intentRevision &+= 1
     }
 
     func useCommonOnlyMode() {
         scopedModeRequested = false
-        mode = .commonOnly
-        snapshots = snapshots.mapValues {
-            DisplaySpaceSnapshot(displayUUID: $0.displayUUID, mode: .commonOnly, spaceID: nil, kind: nil, reason: nil)
-        }
+        intentRevision &+= 1
     }
 
-    @discardableResult
-    func refresh(displays: [UUID]) -> [UUID: DisplaySpaceSnapshot] {
+    func makeRefreshRequest(displays: [UUID]) -> SpaceProviderRefreshRequest {
+        var seen: Set<UUID> = []
+        let uniqueDisplays = displays.filter { seen.insert($0).inserted }
+        return SpaceProviderRefreshRequest(intentRevision: intentRevision, displayUUIDs: uniqueDisplays,
+                                           scopedModeRequested: scopedModeRequested, backend: backend)
+    }
+
+    nonisolated func readCandidate(for request: SpaceProviderRefreshRequest) async -> SpaceProviderCandidate {
         var result: [UUID: DisplaySpaceSnapshot] = [:]
-        if scopedModeRequested, let backend, backend.canAdoptStableIdentifiers {
-            for displayUUID in displays {
-                if let found = backend.snapshot(for: displayUUID),
+        if request.scopedModeRequested, let backend = request.backend, backend.canAdoptStableIdentifiers {
+            for displayUUID in request.displayUUIDs {
+                let found: ReadOnlySpaceValue?
+                do { found = try await backend.snapshot(for: displayUUID) } catch { found = nil }
+                if let found,
                    let runtimeID = RuntimeSpaceID(provider: backend.identifier, value: found.id, isPersistent: true),
                    runtimeID.persisted != nil {
                     result[displayUUID] = DisplaySpaceSnapshot(displayUUID: displayUUID, mode: .validatedScoped,
@@ -160,21 +187,55 @@ final class SpaceProvider {
                                                                spaceID: nil, kind: nil, reason: "Space information is unavailable.")
                 }
             }
-            mode = result.values.allSatisfy { $0.mode == .validatedScoped } ? .validatedScoped : .degradedScoped
-        } else if scopedModeRequested {
-            mode = .degradedScoped
-            result = Dictionary(uniqueKeysWithValues: displays.map {
+        } else if request.scopedModeRequested {
+            result = Dictionary(uniqueKeysWithValues: request.displayUUIDs.map {
                 ($0, DisplaySpaceSnapshot(displayUUID: $0, mode: .degradedScoped, spaceID: nil, kind: nil,
                                           reason: "No validated Space provider is available."))
             })
         } else {
-            mode = .commonOnly
-            result = Dictionary(uniqueKeysWithValues: displays.map {
+            result = Dictionary(uniqueKeysWithValues: request.displayUUIDs.map {
                 ($0, DisplaySpaceSnapshot(displayUUID: $0, mode: .commonOnly, spaceID: nil, kind: nil, reason: nil))
             })
         }
-        snapshots = result
-        return result
+        return SpaceProviderCandidate(intentRevision: request.intentRevision, displayUUIDs: request.displayUUIDs,
+                                      scopedModeRequested: request.scopedModeRequested, snapshots: result)
+    }
+
+    nonisolated func fallbackCandidate(for request: SpaceProviderRefreshRequest) -> SpaceProviderCandidate {
+        let snapshotMode: SpaceProviderMode = request.scopedModeRequested ? .degradedScoped : .commonOnly
+        let result = Dictionary(uniqueKeysWithValues: request.displayUUIDs.map { displayUUID in
+            (displayUUID, DisplaySpaceSnapshot(displayUUID: displayUUID, mode: snapshotMode, spaceID: nil,
+                                               kind: nil,
+                                               reason: request.scopedModeRequested ? "Space information timed out." : nil))
+        })
+        return SpaceProviderCandidate(intentRevision: request.intentRevision, displayUUIDs: request.displayUUIDs,
+                                      scopedModeRequested: request.scopedModeRequested, snapshots: result)
+    }
+
+    @discardableResult
+    func publish(_ candidate: SpaceProviderCandidate, for request: SpaceProviderRefreshRequest) -> Bool {
+        guard candidate.intentRevision == intentRevision,
+              candidate.intentRevision == request.intentRevision,
+              candidate.displayUUIDs == request.displayUUIDs,
+              candidate.scopedModeRequested == request.scopedModeRequested,
+              Set(candidate.snapshots.keys) == Set(request.displayUUIDs),
+              candidate.snapshots.allSatisfy({ key, snapshot in
+                  guard key == snapshot.displayUUID else { return false }
+                  switch snapshot.mode {
+                  case .commonOnly:
+                      return !request.scopedModeRequested && snapshot.spaceID == nil && snapshot.kind == nil
+                  case .validatedScoped:
+                      return request.scopedModeRequested && snapshot.spaceID?.persisted != nil && snapshot.kind != nil
+                  case .degradedScoped:
+                      return request.scopedModeRequested && snapshot.spaceID == nil && snapshot.kind == nil
+                  }
+              })
+        else { return false }
+        snapshots = candidate.snapshots
+        mode = !candidate.snapshots.isEmpty && candidate.snapshots.values.allSatisfy { $0.mode == .validatedScoped } && request.scopedModeRequested
+            ? .validatedScoped
+            : (request.scopedModeRequested ? .degradedScoped : .commonOnly)
+        return true
     }
 
     func snapshot(for displayUUID: UUID) -> DisplaySpaceSnapshot {

@@ -92,7 +92,7 @@ struct AutoRestoreFixture {
                               sessionID: UUID(), name: "Auto", frame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
                               workArea: CGRect(x: 0, y: 0, width: 1_000, height: 800), isPrimary: true, backingScaleFactor: 1)
         if let spaceProvider {
-            _ = spaceProvider.refresh(displays: [display.persistentID!.uuid])
+            _ = await refreshSpaceProvider(spaceProvider, displays: [display.persistentID!.uuid])
             if !spaceProvider.snapshot(for: display.persistentID!.uuid).recordsHistory {
                 _ = try await store.load()
                 let key = AppZoneHistoryKey(bundleID: "com.example.Auto", displayUUID: display.persistentID!.uuid,

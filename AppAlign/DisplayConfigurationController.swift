@@ -2,6 +2,15 @@ import AppKit
 import CoreGraphics
 import Foundation
 
+private struct ConfigurationRefreshRequest: Sendable {
+    let id: UInt64
+    let epoch: UInt64
+    let revision: UInt64
+    let displaySnapshot: DisplaySnapshot
+    let spaceRequest: SpaceProviderRefreshRequest
+    let deadline: UInt64
+}
+
 @MainActor
 final class DisplayConfigurationController {
     struct Effects {
@@ -24,6 +33,7 @@ final class DisplayConfigurationController {
     private let registerCoreGraphics: (UnsafeMutableRawPointer) -> CGError
     private let removeCoreGraphics: (UnsafeMutableRawPointer) -> CGError
     private let sampleDisplayConfiguration: @MainActor () -> DisplaySnapshot
+    private let refreshDeadlineNanoseconds: UInt64
     private var observers: [ObserverRegistration] = []
     private var pollingTimer: Timer?
     private var sleeping = false
@@ -31,6 +41,12 @@ final class DisplayConfigurationController {
     private var callbackEpoch: UInt64 = 0
     private var lastHandledConfigurationRevision: UInt64 = 0
     private var handledSleepTransition: UInt64 = 0
+    private var nextRefreshID: UInt64 = 0
+    private var latestRefreshID: UInt64?
+    private var runningRefresh: ConfigurationRefreshRequest?
+    private var runningRefreshExpired = false
+    private var pendingRefresh: ConfigurationRefreshRequest?
+    private var refreshDeadlineTask: Task<Void, Never>?
     // A single userdata object stays strongly owned for the whole delegate lifetime.
     // During the Cancel Quit prompt it is deactivated, so callbacks become no-ops;
     // Cancel Quit reactivates it with a new epoch instead of allocating stale userdata.
@@ -42,7 +58,8 @@ final class DisplayConfigurationController {
     var callbackEpochForTesting: UInt64 { callbackEpoch }
 
     init(layout: LayoutController, drag: DragSnapController, detection: DragDetectionController,
-         keyboard: KeyboardSnapController, gate: DragKeyboardGate) {
+         keyboard: KeyboardSnapController, gate: DragKeyboardGate,
+         refreshDeadlineNanoseconds: UInt64 = 1_000_000_000) {
         self.layout = layout
         validity = layout.placementValidity
         effects = Effects(cancelDrag: { drag.cancel(reason: $0) },
@@ -55,6 +72,7 @@ final class DisplayConfigurationController {
         registerCoreGraphics = { CGDisplayRegisterReconfigurationCallback(issue9DisplayReconfigured, $0) }
         removeCoreGraphics = { CGDisplayRemoveReconfigurationCallback(issue9DisplayReconfigured, $0) }
         sampleDisplayConfiguration = { layout.displayProvider.sample() }
+        self.refreshDeadlineNanoseconds = refreshDeadlineNanoseconds
         callbackContext = DisplayCallbackContext(validity: layout.placementValidity, owner: nil)
         callbackContext.setOwner(self)
         layout.refreshConfiguration = { [weak self, weak layout] in
@@ -67,7 +85,8 @@ final class DisplayConfigurationController {
          appKitNotificationCenter: NotificationCenter, workspaceNotificationCenter: NotificationCenter,
          registerCoreGraphics: @escaping (UnsafeMutableRawPointer) -> CGError,
          removeCoreGraphics: @escaping (UnsafeMutableRawPointer) -> CGError,
-         sample: @escaping @MainActor () -> DisplaySnapshot) {
+         sample: @escaping @MainActor () -> DisplaySnapshot,
+         refreshDeadlineNanoseconds: UInt64 = 1_000_000_000) {
         self.layout = layout
         validity = layout.placementValidity
         self.effects = effects
@@ -76,6 +95,7 @@ final class DisplayConfigurationController {
         self.registerCoreGraphics = registerCoreGraphics
         self.removeCoreGraphics = removeCoreGraphics
         sampleDisplayConfiguration = sample
+        self.refreshDeadlineNanoseconds = refreshDeadlineNanoseconds
         callbackContext = DisplayCallbackContext(validity: layout.placementValidity, owner: nil)
         callbackContext.setOwner(self)
         layout.refreshConfiguration = { [weak self, weak layout] in
@@ -122,6 +142,8 @@ final class DisplayConfigurationController {
                 registeredWithCoreGraphics = true
             }
         }
+        let revision = beginInvalidation()
+        enqueueRefresh(sampleDisplayConfiguration(), revision: revision)
         startPolling()
     }
 
@@ -129,6 +151,7 @@ final class DisplayConfigurationController {
         pollingTimer?.invalidate()
         pollingTimer = nil
         callbackEpoch &+= 1
+        invalidateRefreshRequests()
         callbackContext.deactivate()
         for observer in observers { observer.center.removeObserver(observer.token) }
         observers.removeAll()
@@ -152,11 +175,11 @@ final class DisplayConfigurationController {
         sleeping = false
         historyPermissionPollingSuspendedChanged?(false)
         start()
-        refreshAfterSignal()
     }
 
     private func beginInvalidation(revision: UInt64? = nil) -> UInt64 {
         let revision = revision ?? validity.invalidateForConfigurationChange()
+        invalidateRefreshRequests()
         layout.cancelAutomaticRestores?()
         effects.invalidateManualCapture()
         pendingRevision = revision
@@ -166,37 +189,156 @@ final class DisplayConfigurationController {
         effects.environmentChanged("The display configuration changed.")
         return revision
     }
+}
 
+@MainActor
+extension DisplayConfigurationController {
     private func refreshAfterSignal(revision: UInt64? = nil) {
-        guard !sleeping, !callbackContext.isSleeping, !callbackContext.isAwaitingCompletion else { return }
+        guard callbackContext.isActive, !sleeping, !callbackContext.isSleeping,
+              !callbackContext.isAwaitingCompletion else { return }
         let revision = revision ?? pendingRevision ?? beginInvalidation()
         _ = beginInvalidation(revision: revision)
-        publishSample(sampleDisplayConfiguration(), revision: revision)
+        enqueueRefresh(sampleDisplayConfiguration(), revision: revision)
     }
 
     private func refreshIfChanged() -> DisplaySnapshot {
-        guard !sleeping, !callbackContext.isSleeping else { return layout.displayProvider.snapshot }
+        guard callbackContext.isActive, !sleeping, !callbackContext.isSleeping else { return layout.displayProvider.snapshot }
         let sampled = sampleDisplayConfiguration()
         guard !callbackContext.isAwaitingCompletion else { return layout.displayProvider.snapshot }
         if sampled == layout.displayProvider.snapshot {
-            if let pendingRevision { publishSample(sampled, revision: pendingRevision) }
-            return sampled
+            if let revision = pendingRevision, !hasOutstandingRefresh(matching: sampled) {
+                enqueueRefresh(sampled, revision: revision)
+            }
+            return layout.displayProvider.snapshot
         }
+        if hasOutstandingRefresh(matching: sampled) { return layout.displayProvider.snapshot }
         let revision = beginInvalidation()
-        publishSample(sampled, revision: revision)
-        return sampled
+        enqueueRefresh(sampled, revision: revision)
+        return layout.displayProvider.snapshot
     }
 
-    private func publishSample(_ sampled: DisplaySnapshot, revision: UInt64) {
-        guard !callbackContext.isSleeping, !callbackContext.isAwaitingCompletion,
-              pendingRevision == revision, validity.revision.configuration == revision else { return }
-        _ = layout.spaceProvider.refresh(displays: sampled.displays.compactMap { $0.persistentID?.uuid })
-        layout.displayProvider.publish(sampled)
-        layout.displaysDidPublish(sampled)
-        guard pendingRevision == revision, validity.revision.configuration == revision,
-              validity.publishConfiguration(revision: revision) else { return }
+    private func enqueueRefresh(_ sampled: DisplaySnapshot, revision: UInt64) {
+        guard callbackContext.isActive else { return }
+        nextRefreshID &+= 1
+        let id = nextRefreshID
+        let now = DispatchTime.now().uptimeNanoseconds
+        let deadline = now &+ refreshDeadlineNanoseconds
+        let displays = sampled.displays.compactMap { $0.persistentID?.uuid }
+        let request = ConfigurationRefreshRequest(id: id, epoch: callbackEpoch, revision: revision,
+                                                  displaySnapshot: sampled,
+                                                  spaceRequest: layout.spaceProvider.makeRefreshRequest(displays: displays),
+                                                  deadline: deadline)
+        latestRefreshID = id
+        refreshDeadlineTask?.cancel()
+        refreshDeadlineTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(nanoseconds: self?.remaining(until: deadline) ?? 0) } catch { return }
+            self?.expireRefresh(id: id)
+        }
+        if runningRefresh == nil {
+            startRefresh(request)
+        } else {
+            pendingRefresh = request
+        }
+    }
+
+    private func startRefresh(_ request: ConfigurationRefreshRequest) {
+        guard runningRefresh == nil else {
+            pendingRefresh = request
+            return
+        }
+        guard isEligible(request), DispatchTime.now().uptimeNanoseconds < request.deadline else {
+            expireRefresh(id: request.id, request: request)
+            return
+        }
+        runningRefresh = request
+        runningRefreshExpired = false
+        let spaceProvider = layout.spaceProvider
+        Task { @MainActor [weak self, spaceProvider] in
+            let candidate = await spaceProvider.readCandidate(for: request.spaceRequest)
+            self?.finishRefresh(request, candidate: candidate)
+        }
+    }
+
+    private func finishRefresh(_ request: ConfigurationRefreshRequest, candidate: SpaceProviderCandidate) {
+        guard runningRefresh?.id == request.id else { return }
+        let wasExpired = runningRefreshExpired
+        runningRefresh = nil
+        runningRefreshExpired = false
+
+        if !wasExpired, DispatchTime.now().uptimeNanoseconds < request.deadline,
+           latestRefreshID == request.id, isEligible(request) {
+            _ = publish(request, candidate: candidate)
+        } else if !wasExpired, latestRefreshID == request.id,
+                  DispatchTime.now().uptimeNanoseconds >= request.deadline {
+            expireRefresh(id: request.id, request: request)
+        }
+        startPendingRefreshIfPossible()
+    }
+
+    private func startPendingRefreshIfPossible() {
+        guard runningRefresh == nil, let request = pendingRefresh else { return }
+        pendingRefresh = nil
+        guard latestRefreshID == request.id, isEligible(request) else { return }
+        if DispatchTime.now().uptimeNanoseconds >= request.deadline {
+            expireRefresh(id: request.id, request: request)
+        } else {
+            startRefresh(request)
+        }
+    }
+
+    private func expireRefresh(id: UInt64, request suppliedRequest: ConfigurationRefreshRequest? = nil) {
+        guard latestRefreshID == id,
+              let request = suppliedRequest ?? (runningRefresh?.id == id ? runningRefresh : pendingRefresh?.id == id ? pendingRefresh : nil)
+        else { return }
+        if runningRefresh?.id == id { runningRefreshExpired = true }
+        if pendingRefresh?.id == id { pendingRefresh = nil }
+        refreshDeadlineTask?.cancel()
+        refreshDeadlineTask = nil
+        guard isEligible(request) else { latestRefreshID = nil; return }
+        _ = publish(request, candidate: layout.spaceProvider.fallbackCandidate(for: request.spaceRequest),
+                    deadlineFallback: true)
+    }
+
+    private func publish(_ request: ConfigurationRefreshRequest, candidate: SpaceProviderCandidate,
+                         deadlineFallback: Bool = false) -> Bool {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard isEligible(request), deadlineFallback ? now >= request.deadline : now < request.deadline,
+              sampleDisplayConfiguration() == request.displaySnapshot,
+              layout.spaceProvider.publish(candidate, for: request.spaceRequest) else { return false }
+        layout.displayProvider.publish(request.displaySnapshot)
+        layout.displaysDidPublish(request.displaySnapshot)
+        guard isEligible(request), validity.publishConfiguration(revision: request.revision) else { return false }
+        refreshDeadlineTask?.cancel()
+        refreshDeadlineTask = nil
+        latestRefreshID = nil
         pendingRevision = nil
         effects.setConfigurationPending(false)
+        return true
+    }
+
+    private func isEligible(_ request: ConfigurationRefreshRequest) -> Bool {
+        callbackContext.isActive && latestRefreshID == request.id && request.epoch == callbackEpoch && pendingRevision == request.revision &&
+            validity.revision.configuration == request.revision && !sleeping && !callbackContext.isSleeping &&
+            !callbackContext.isAwaitingCompletion
+    }
+
+    private func hasOutstandingRefresh(matching sampled: DisplaySnapshot) -> Bool {
+        let outstanding = pendingRefresh ?? runningRefresh
+        return outstanding?.id == latestRefreshID && outstanding?.revision == pendingRevision &&
+            outstanding?.displaySnapshot == sampled
+    }
+
+    private func invalidateRefreshRequests() {
+        latestRefreshID = nil
+        pendingRefresh = nil
+        refreshDeadlineTask?.cancel()
+        refreshDeadlineTask = nil
+        if runningRefresh != nil { runningRefreshExpired = true }
+    }
+
+    private func remaining(until deadline: UInt64) -> UInt64 {
+        let now = DispatchTime.now().uptimeNanoseconds
+        return deadline > now ? deadline - now : 0
     }
 
     private func startPolling() {
@@ -315,6 +457,7 @@ private final class DisplayCallbackContext: @unchecked Sendable {
     }
     var isAwaitingCompletion: Bool { lock.withLock { awaitingCompletion } }
     var isSleeping: Bool { lock.withLock { sleeping } }
+    var isActive: Bool { lock.withLock { active } }
 
     func signal(event: Event, expectedEpoch: UInt64? = nil) -> (revision: UInt64, epoch: UInt64)? {
         lock.withLock {
