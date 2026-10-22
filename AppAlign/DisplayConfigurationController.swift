@@ -75,9 +75,9 @@ final class DisplayConfigurationController {
         self.refreshDeadlineNanoseconds = refreshDeadlineNanoseconds
         callbackContext = DisplayCallbackContext(validity: layout.placementValidity, owner: nil)
         callbackContext.setOwner(self)
-        layout.refreshConfiguration = { [weak self, weak layout] in
+        layout.refreshConfiguration = { [weak self, weak layout] force in
             guard let layout else { return DisplaySnapshot(displays: [], primaryFrame: .zero) }
-            return self?.refreshIfChanged() ?? layout.displayProvider.snapshot
+            return self?.refreshIfChanged(force: force) ?? layout.displayProvider.snapshot
         }
     }
 
@@ -98,9 +98,9 @@ final class DisplayConfigurationController {
         self.refreshDeadlineNanoseconds = refreshDeadlineNanoseconds
         callbackContext = DisplayCallbackContext(validity: layout.placementValidity, owner: nil)
         callbackContext.setOwner(self)
-        layout.refreshConfiguration = { [weak self, weak layout] in
+        layout.refreshConfiguration = { [weak self, weak layout] force in
             guard let layout else { return DisplaySnapshot(displays: [], primaryFrame: .zero) }
-            return self?.refreshIfChanged() ?? layout.displayProvider.snapshot
+            return self?.refreshIfChanged(force: force) ?? layout.displayProvider.snapshot
         }
     }
 
@@ -201,17 +201,17 @@ extension DisplayConfigurationController {
         enqueueRefresh(sampleDisplayConfiguration(), revision: revision)
     }
 
-    private func refreshIfChanged() -> DisplaySnapshot {
+    private func refreshIfChanged(force: Bool = false) -> DisplaySnapshot {
         guard callbackContext.isActive, !sleeping, !callbackContext.isSleeping else { return layout.displayProvider.snapshot }
         let sampled = sampleDisplayConfiguration()
         guard !callbackContext.isAwaitingCompletion else { return layout.displayProvider.snapshot }
-        if sampled == layout.displayProvider.snapshot {
+        if !force, sampled == layout.displayProvider.snapshot {
             if let revision = pendingRevision, !hasOutstandingRefresh(matching: sampled) {
                 enqueueRefresh(sampled, revision: revision)
             }
             return layout.displayProvider.snapshot
         }
-        if hasOutstandingRefresh(matching: sampled) { return layout.displayProvider.snapshot }
+        if !force, hasOutstandingRefresh(matching: sampled) { return layout.displayProvider.snapshot }
         let revision = beginInvalidation()
         enqueueRefresh(sampled, revision: revision)
         return layout.displayProvider.snapshot
@@ -254,7 +254,7 @@ extension DisplayConfigurationController {
         runningRefreshExpired = false
         let spaceProvider = layout.spaceProvider
         Task { @MainActor [weak self, spaceProvider] in
-            let candidate = await spaceProvider.readCandidate(for: request.spaceRequest)
+            let candidate = await spaceProvider.readCandidate(for: request.spaceRequest, deadline: request.deadline)
             self?.finishRefresh(request, candidate: candidate)
         }
     }

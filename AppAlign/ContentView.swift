@@ -35,7 +35,7 @@ struct ContentView: View {
                             .disabled(!layoutController.canEdit || layoutController.selectedDisplayID == nil)
 
                         Button("Refresh Displays") {
-                            layoutController.refreshDisplays()
+                            layoutController.refreshDisplays(force: true)
                         }
                         .disabled(!layoutController.canEdit)
                     }

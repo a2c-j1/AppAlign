@@ -237,7 +237,7 @@ final class LayoutController: ObservableObject {
     var invalidateDragCommit: (@MainActor () -> Void)?
     var lastDragDisplaySnapshot: DisplaySnapshot?
     var lastDragCursorDisplayID: DisplaySelectionID?
-    var refreshConfiguration: (@MainActor () -> DisplaySnapshot)?
+    var refreshConfiguration: (@MainActor (Bool) -> DisplaySnapshot)?
     var isApplyingQuickLayout = false
     var quickLayoutMutationRevision: UInt64 = 0
     var quickLayoutOverrides: [LayoutOverrideKey: PersistedLayout] = [:]

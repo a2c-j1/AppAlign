@@ -74,11 +74,19 @@ struct LayoutOverrideKey: Hashable, Sendable {
 protocol ReadOnlySpaceBackend: Sendable {
     var identifier: String { get }
     var canAdoptStableIdentifiers: Bool { get }
-    /// A future private-IPC/helper implementation must run synchronous work on a dedicated
-    /// serial worker, never MainActor or a cooperative executor. It must return only after
-    /// the query and any child exit/reap work finish; the controller retains its single
-    /// running slot until this method returns. The current SkyLight stub performs no query.
+    /// Synchronous private IPC/helper waits must run on a dedicated serial worker, never
+    /// MainActor or a cooperative executor. Return only after query work and any child
+    /// exit/reap complete; the controller retains its single running slot until then.
+    /// The current SkyLight backend is wired to the bundled helper but its adoption gate
+    /// is closed, so it performs no query.
     func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue?
+    func snapshot(for displayUUID: UUID, deadline: UInt64) async throws -> ReadOnlySpaceValue?
+}
+
+extension ReadOnlySpaceBackend {
+    func snapshot(for displayUUID: UUID, deadline _: UInt64) async throws -> ReadOnlySpaceValue? {
+        try await snapshot(for: displayUUID)
+    }
 }
 
 struct ReadOnlySpaceValue: Equatable, Sendable {
@@ -106,13 +114,23 @@ struct SpaceProviderCandidate: Equatable, Sendable {
 struct SkyLightReadOnlyBackend: ReadOnlySpaceBackend {
     let identifier = "skylight-read-only"
     let isValidatedForCurrentSystem = false
+    let runner: SpaceHelperProcessRunner
+
+    init(runner: SpaceHelperProcessRunner = SpaceHelperProcessRunner()) {
+        self.runner = runner
+    }
+
     var canAdoptStableIdentifiers: Bool { isValidatedForCurrentSystem }
 
     func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue? {
+        try await snapshot(for: displayUUID, deadline: UInt64.max)
+    }
+
+    func snapshot(for displayUUID: UUID, deadline: UInt64) async throws -> ReadOnlySpaceValue? {
         // Production lookup remains disabled until the isolated probe establishes the
-        // required OS-specific ABI and stable IDs; this stub never resolves a symbol.
+        // required OS-specific ABI and stable IDs. This policy also prevents child launch.
         guard isValidatedForCurrentSystem else { return nil }
-        return nil
+        return try await runner.snapshot(for: displayUUID, deadline: deadline)
     }
 }
 
@@ -172,11 +190,32 @@ final class SpaceProvider {
     }
 
     nonisolated func readCandidate(for request: SpaceProviderRefreshRequest) async -> SpaceProviderCandidate {
+        await readCandidate(for: request, deadline: UInt64.max)
+    }
+
+    nonisolated func readCandidate(for request: SpaceProviderRefreshRequest,
+                                   deadline: UInt64) async -> SpaceProviderCandidate {
         var result: [UUID: DisplaySpaceSnapshot] = [:]
         if request.scopedModeRequested, let backend = request.backend, backend.canAdoptStableIdentifiers {
-            for displayUUID in request.displayUUIDs {
+            let initialTime = DispatchTime.now().uptimeNanoseconds
+            let available = deadline > initialTime ? deadline - initialTime : 0
+            let reserve = min(100_000_000, available / 10)
+            let usableDeadline = deadline > reserve ? deadline - reserve : deadline
+            for (index, displayUUID) in request.displayUUIDs.enumerated() {
+                let now = DispatchTime.now().uptimeNanoseconds
+                let remaining = usableDeadline > now ? usableDeadline - now : 0
+                let displayCount = UInt64(request.displayUUIDs.count - index)
+                let displayBudget = min(250_000_000, remaining / displayCount)
+                guard displayBudget > 0 else {
+                    result[displayUUID] = DisplaySpaceSnapshot(
+                        displayUUID: displayUUID, mode: .degradedScoped, spaceID: nil, kind: nil,
+                        reason: "Space information deadline expired."
+                    )
+                    continue
+                }
+                let displayDeadline = now &+ displayBudget
                 let found: ReadOnlySpaceValue?
-                do { found = try await backend.snapshot(for: displayUUID) } catch { found = nil }
+                do { found = try await backend.snapshot(for: displayUUID, deadline: displayDeadline) } catch { found = nil }
                 if let found,
                    let runtimeID = RuntimeSpaceID(provider: backend.identifier, value: found.id, isPersistent: true),
                    runtimeID.persisted != nil {

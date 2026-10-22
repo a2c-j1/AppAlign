@@ -1,6 +1,6 @@
 # Issue #12 ローカル検証記録
 
-状態: **ローカル実装・自動検証**。Spaceごとの永続化と実行時解決はproviderが安定IDを検証できた場合だけ有効になる。production SkyLight backendはread-only stubのままで、Space A/Bの実機配置・GUI確認は未完了。対象ホストはユーザー訂正後のmacOS 27.0.1 / build 26A434 / arm64 M1 + Dell。元のmacOS 26想定からの変更である。Issueの実機受け入れ完了を意味しない。
+状態: **bundle helper接続済み・ローカル自動検証完了、実採用は未許可**。Spaceごとの永続化と実行時解決はproviderが安定IDを検証できた場合だけ有効になる。production SkyLight backendはbundle内helperへ接続済みだがadoption gateはfalseで、Space A/Bの実機配置・GUI確認は未完了。対象ホストはユーザー訂正後のmacOS 27.0.1 / build 26A434 / arm64 M1 + Dell。元のmacOS 26想定からの変更である。Issueの実機受け入れ完了を意味しない。
 
 ## 実装・自動テストの範囲
 
@@ -21,7 +21,7 @@ read-onlyで取得した実装資料として、`koekeishiya/yabai`が`asmvik/ya
 
 この固定sourceは候補関数のsignature、返却値の利用・release、id64の型を示す第三者実装である。対象OS buildのABI一次資料や安定ID契約ではないため、製品backendへの採用根拠にはしない。
 
-productionのSkyLight backendは引き続きread-only stubで、adoption gateはfalse。隔離CLI `scripts/space-probe.py` とnative helper `scripts/space-probe.swift` は実装した。作業セッションで公開CoreGraphics APIから外部display UUID `D16814E6-E4F8-4D8F-0857-D6964E3302DB`を取得し、builtin=0、オンライン外部display 1台だった。内蔵display UUIDは取得結果として記録していない。Dellの製品名も列挙APIからは取得していない。
+productionのSkyLight backendは後述のbundle helperへ接続済みで、adoption gateはfalse。隔離CLI `scripts/space-probe.py` とnative helper `scripts/space-probe.swift` は実装した。作業セッションで公開CoreGraphics APIから外部display UUID `D16814E6-E4F8-4D8F-0857-D6964E3302DB`を取得し、builtin=0、オンライン外部display 1台だった。内蔵display UUIDは取得結果として記録していない。Dellの製品名も列挙APIからは取得していない。
 
 拡張probeにより統括が次のコマンドを独立したhelperプロセスで2回実行し、両方exit 0、9-field JSONは同一だった: `python3 scripts/space-probe.py --expected-os-major 27 --expected-build 26A434 --display-uuid D16814E6-E4F8-4D8F-0857-D6964E3302DB`。結果は`{"adoption":false,"build":"26A434","displayUUID":"D16814E6-E4F8-4D8F-0857-D6964E3302DB","error":null,"kind":"user","osMajor":27,"rawSpaceID":"41","rawSpaceType":0,"spaceUUIDCandidate":"06497333-89E6-B6A1-90A2-D67FCC9F9348"}`。親は専用probe子プロセスの残留がないことも確認した。これは同一Spaceでのhelper process 2回の一致だけで、A-B-A切替やOS再起動後の安定性は証明しない。統括は別途、手動Space切替中に120 samples / 70秒でraw ID `1`→`41`、error 0を観測したが、どのSpaceがA/Bかを固定した照合ではなく、新probeのkind/UUID candidateを含むA-B-A証拠ではない。過去の旧probeはraw ID `41`を2回観測し、kind `unknown`だった。旧probeの7-field結果と今回の9-field結果は別時点の記録である。
 
@@ -64,7 +64,7 @@ raw 1と41が同じdisplayの通常desktopであることは確認できたが�
 
 ## 非同期接続基盤（実SkyLight未採用）
 
-同期`SpaceProvider.refresh(displays:)`を廃止し、`makeRefreshRequest`、cacheを変更しない`nonisolated async readCandidate`、同期`publish`へ分離した。`ReadOnlySpaceBackend.snapshot`はasync throws契約で、戻り値はSendable。将来の同期private IPCや子process待機は専用直列workerへ隔離し、queryとchild終了/reapを完了してからreturnする契約とした。今回のstubはqueryを行わず、実helper機構も追加していない。`DisplayConfigurationController`は独立した既定1秒deadlineを持ち、実行中1件と最新待機要求1件に集約する。
+非同期checkpoint `4fd6c06`で同期`SpaceProvider.refresh(displays:)`を廃止し、`makeRefreshRequest`、cacheを変更しない`nonisolated async readCandidate`、同期`publish`へ分離した。`ReadOnlySpaceBackend.snapshot`はasync throws契約で、戻り値はSendable。同期private IPCや子process待機は専用直列workerへ隔離し、queryとchild終了/reapを完了してからreturnする契約とした。このcheckpointではhelper実体を未接続とし、後述のbundle同梱checkpointで接続した。`DisplayConfigurationController`は独立した既定1秒deadlineを持ち、実行中1件と最新待機要求1件に集約する。
 
 要求には`callbackEpoch`、`pendingRevision`、display snapshotを固定する。結果到着時にepoch、`validity.revision.configuration`とのrevision一致、sleep/構成変更待ち状態、再採取displayとの一致を確認し、古い結果はcache更新前に破棄する。合格時だけawaitなしでSpace cache、`DisplayProvider.publish`、`layout.displaysDidPublish`を更新し、最後に`validity.publishConfiguration(revision:)`でgateを開く。取得中の同期呼出しは最後にpublish済みのdisplayを返す。
 
@@ -83,6 +83,32 @@ focused検証は`SpaceProviderTests`と`DisplayConfigurationControllerTests`の1
 同差分のSwiftFormatは93 files / 0 formatting changes、SwiftLintは93 files / 0 violations、Semgrepは4 rules / 56 applicable AppAlign files / 0 findingsで成功。Semgrepログは`/private/tmp/issue12-async-semgrep.log`。親の最終評価は要件34/35・非同期安全34/35・回帰検証24/25・保守性4/5の96/100、重大指摘0件。実SkyLight採用false、実機Space別の利用可否はこの自動検証では確認していない。
 
 試用中のprimary `build/preview/AppAlign.app`は変更・終了・再署名していない。統括が重複appをLS登録解除・退避した後、再開時にこのworktreeの`build/DerivedData/Build/Products/Debug/AppAlign.app`が存在しないことを確認した。ビルドを追加していないため重複appも再生成していない。xcresultと他DerivedDataは保持している。#13は対象外、#29の入力監視・権限初期化・再署名は行っていない。
+
+## bundle同梱・backend接続checkpoint（2026-10-22）
+
+`AppAlignSpaceHelper`をSwift 6のcommand-line tool targetとして追加した。既存の` scripts/space-probe.swift `と` scripts/space-probe-core.swift `をbuild時にcompileし、appのtarget dependencyとExecutables Copy Files phase（CodeSignOnCopy）により`Contents/MacOS/AppAlignSpaceHelper`へ同梱する。helperの機能は変更していない。productionは`Bundle.main.url(forAuxiliaryExecutable:)`でこの実体を使い、repo相対パス、PATH探索、Python、実行時の再compileには依存しない。
+
+`SpaceHelperProcessRunner`は専用の直列DispatchQueueで子processを起動し、通常9-field JSONだけを最大2KBまで読む。実OS major 27/build 26A434とhelperの独立guardを維持する。backend側のdeadlineは最大250ms、controller側は既定1秒である。複数displayは全体残時間からreserveを引き、残画面数で予算を分ける。取消しはflagだけを更新し、最大25msのpollで専用queueが検出する。timeout・過大出力・取消しでは起動した直接childだけを終了し、実終了/reapとpipe cleanup後にreturnする。stdout先行closeでもdeadlineを維持し、取消し側が回収済みPIDへsignalする経路を持たない。
+
+decoderはexact keys、型、OS/build/display、adoption false、exit/error、正UInt64 raw ID、type/kind、UUID文法を検査する。通常type 0のUUID candidateだけを永続ID候補として返す。raw ID、順番、primary sentinelは使わない。fullscreenや候補欠落はscoped値を返さず、取得不能なそのdisplayのcurrentだけをdegradedにする。他SpaceのUUID欠落を理由に全列挙成功を要求しない。production factoryから接続済みだが、backend自身もgate falseを検査して子起動を止める。
+
+明示的な`Refresh Displays`だけは`force: true`で新revisionの取得を要求する。通常poll・キー・drag・auto経路はforce falseのまま。同じdisplayでhelperが一度失敗してdegradedになっても、回復後にユーザーがRefreshを押してvalidatedへ戻れる。自動pollの度にgateを閉じて再取得する方式にはしていない。
+
+署名を既定のまま有効にし、ビルド同時1件・arm64・jobs 2・非並列testingで次の単一コマンドを実行した。通常の` scripts/test.sh `との差は、arm64とjobs数の明示、並列testing無効化、別DerivedData/resultBundleの使用である。`CODE_SIGNING_ALLOWED=NO`は使わず、Team・証明書・権限設定は変更していない。
+
+```sh
+xcodebuild -project AppAlign.xcodeproj -scheme AppAlign -destination 'platform=macOS,arch=arm64' -jobs 2 -parallel-testing-enabled NO -derivedDataPath /private/tmp/issue12-backend-derived-data -resultBundlePath /private/tmp/issue12-backend-tests-20261022.xcresult ARCHS=arm64 ONLY_ACTIVE_ARCH=YES test
+```
+
+最初の実行でapp/helper buildと全303 testsが成功し、0 failures / 0 skipsだった。通過後の再実行はしていない。xcresult summaryでもmacOS 27.0.1 / 26A434 / arm64 / 303 Passedを確認した。ログは`/private/tmp/issue12-backend-test-20261022.log`、xcresultは上記path。新規8 testsはdecoder、正常dummy応答、strict schema/identity/数値型、timeout/EOF、過大出力、取消しとreap、混在display予算、閉gate/host不一致/helper欠落を確認する。既存controller testへ同displayの失敗→通常poll不再試行→明示force→回復の1件を追加した。既存version/layoutを含む回帰も同suiteで実行した。
+
+appとhelperの`codesign --verify --deep --strict`（helper単体は`--verify --strict`）が成功し、両実行ファイルはarm64だった。同梱helperの`--help`はexit 0で、private query前に終了する動作を確認した。bundle identifierは`jp.a2c.AppAlign`。補助的に読んだversionメタデータ2 keysは新生成物と既存試用版の両方に元から存在せず、この差分では追加・変更していない。実private queryは実行していない。
+
+SwiftFormatは95 files / 0 changes、SwiftLintは95 files / 0 violations、Semgrepは4 rules / 57 applicable AppAlign files / 0 findingsで各exit 0。ログは`/private/tmp/issue12-helper-swiftformat-20261022.log`、`/private/tmp/issue12-helper-swiftlint-20261022.log`、`/private/tmp/issue12-helper-semgrep-20261022.log`。既存Semgrepのpath filterはhelper sourceを含まず、helperは既存固定sourceのまま別targetでcompile・署名確認している。親の最終評価は要件30/30・境界安全34/35・検証24/25・保守9/10の97/100、重大指摘0件。
+
+新生成appだけを`lsregister -u`で登録解除し、`/private/tmp/issue12-retired-verification-20261022/AppAlign.app.retired`へ退避した。退避後も両署名を再確認済み。元のDerivedDataのAppAlign.appは残しておらず、xcresultと他DerivedDataは保持した。検証helper・buildの残留processなし。既存試用版は変更・終了・再署名していない。
+
+ユーザーはOS再起動を明示保留した。統括から伝達された10/22の通常41/58のUUID一致は同じboot内の観測であり、再起動安定性ではない。実A→B→Aと再起動後の同一性は未確認で、adoption gateはfalseのまま。#13は対象外、#29は修正保留を維持する。
 
 ## 実機で必要な確認
 

@@ -214,6 +214,49 @@ extension DisplayConfigurationControllerTests {
         fixture.controller.dispose()
     }
 
+    func testExplicitRefreshRetriesDegradedSpaceForTheSameDisplay() async throws {
+        let firstCallStarted = expectation(description: "initial Space read starts")
+        let observer = BackendCallObserver(expectations: [1: firstCallStarted])
+        let backend = ControlledSpaceBackend(observer: observer)
+        let fixture = makeFixture(spaceBackend: backend)
+        fixture.sampled.snapshot = fixture.snapshotA
+        fixture.controller.start()
+        await fulfillment(of: [firstCallStarted], timeout: 2)
+
+        let degradedPublished = expectation(description: "failed Space read publishes degraded fallback")
+        fixture.effects.gateExpectations[false] = degradedPublished
+        await backend.fail(call: 1)
+        await fulfillment(of: [degradedPublished], timeout: 2)
+        XCTAssertEqual(fixture.spaceProvider.mode, .degradedScoped)
+        XCTAssertTrue(fixture.validity.isAccepting)
+
+        let unchangedRevision = fixture.validity.revision.configuration
+        _ = fixture.layout.refreshDisplays()
+        fixture.controller.pollForTesting()
+        await Task.yield()
+        let callsAfterOrdinaryRefresh = await backend.callCount
+        XCTAssertEqual(callsAfterOrdinaryRefresh, 1, "Normal polling must not repeatedly retry a degraded result.")
+        XCTAssertEqual(fixture.validity.revision.configuration, unchangedRevision)
+
+        let recoveryCallStarted = expectation(description: "explicit same-display refresh starts a new Space read")
+        observer.expect(2, fulfills: recoveryCallStarted)
+        let gateClosed = expectation(description: "explicit refresh closes admission before recovery read")
+        fixture.effects.gateExpectations[true] = gateClosed
+        _ = fixture.layout.refreshDisplays(force: true)
+        XCTAssertGreaterThan(fixture.validity.revision.configuration, unchangedRevision)
+        XCTAssertFalse(fixture.validity.isAccepting)
+        await fulfillment(of: [gateClosed, recoveryCallStarted], timeout: 2)
+
+        let recovered = expectation(description: "explicit retry publishes validated Space result")
+        fixture.effects.gateExpectations[false] = recovered
+        await backend.complete(call: 2, id: "same-display-recovered")
+        await fulfillment(of: [recovered], timeout: 2)
+        XCTAssertEqual(fixture.spaceProvider.mode, .validatedScoped)
+        XCTAssertTrue(fixture.validity.isAccepting)
+        XCTAssertEqual(fixture.provider.snapshot, fixture.snapshotA)
+        fixture.controller.dispose()
+    }
+
     func testReSampleMismatchRejectsCandidateAndPollStartsFreshRequest() async throws {
         let firstCallStarted = expectation(description: "initial read starts")
         let observer = BackendCallObserver(expectations: [1: firstCallStarted])
