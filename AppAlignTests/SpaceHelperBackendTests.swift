@@ -196,51 +196,6 @@ final class SpaceHelperBackendTests: XCTestCase {
         })
     }
 
-    @MainActor
-    func testClosedGateHostMismatchAndMissingHelperDoNotLaunchAChild() async throws {
-        let recorder = ProcessIDRecorder()
-        let helperURL = URL(fileURLWithPath: "/bin/sh")
-        let runner = SpaceHelperProcessRunner(testExecutableURL: helperURL,
-                                              testArgumentPrefix: ["-c", "exec /bin/sleep 20"],
-                                              childStarted: { recorder.set($0) })
-        let backend = SkyLightReadOnlyBackend(runner: runner, previewRequested: false)
-        let gatedValue = try await backend.snapshot(for: UUID(), deadline: deadline(after: 1_000_000_000))
-        XCTAssertNil(gatedValue)
-        XCTAssertNil(recorder.pid, "The product adoption gate is false and must prevent helper launch.")
-
-        let mismatch = SpaceHelperProcessRunner(testExecutableURL: helperURL,
-                                                testHostIdentity: SpaceHelperHostIdentity(major: 26, build: "26A434"),
-                                                testArgumentPrefix: ["-c", "exec /bin/sleep 20"],
-                                                childStarted: { recorder.set($0) })
-        do {
-            _ = try await mismatch.snapshot(for: UUID(), deadline: deadline(after: 1_000_000_000))
-            XCTFail("Unsupported host identity must fail before launch.")
-        } catch let error as SpaceHelperProcessError {
-            XCTAssertEqual(error, .unsupportedHost)
-        }
-        XCTAssertNil(recorder.pid)
-
-        let missing = SpaceHelperProcessRunner(testExecutableURL: nil, childStarted: { recorder.set($0) })
-        do {
-            _ = try await missing.snapshot(for: UUID(), deadline: deadline(after: 1_000_000_000))
-            XCTFail("A missing bundled helper must fail before launch.")
-        } catch let error as SpaceHelperProcessError {
-            XCTAssertEqual(error, .helperUnavailable)
-        }
-        XCTAssertNil(recorder.pid)
-
-        let expired = SpaceHelperProcessRunner(testExecutableURL: helperURL,
-                                               testArgumentPrefix: ["-c", "exec /bin/sleep 20"],
-                                               childStarted: { recorder.set($0) })
-        do {
-            _ = try await expired.snapshot(for: UUID(), deadline: 0)
-            XCTFail("An expired deadline must prevent process creation.")
-        } catch let error as SpaceHelperProcessError {
-            XCTAssertEqual(error, .deadlineExpired)
-        }
-        XCTAssertNil(recorder.pid)
-    }
-
     private func record(displayUUID: UUID, candidate: Any) -> [String: Any] {
         [
             "osMajor": 27,
@@ -289,6 +244,77 @@ final class SpaceHelperBackendTests: XCTestCase {
     }
 }
 
+@MainActor
+extension SpaceHelperBackendTests {
+    func testUnsupportedBackendHostAndMissingHelperDoNotLaunchAChild() async throws {
+        let recorder = ProcessIDRecorder()
+        let helperURL = URL(fileURLWithPath: "/bin/sh")
+        let runner = SpaceHelperProcessRunner(testExecutableURL: helperURL,
+                                              testArgumentPrefix: ["-c", "exec /bin/sleep 20"],
+                                              childStarted: { recorder.set($0) })
+        let backend = SkyLightReadOnlyBackend(runner: runner, previewRequested: false,
+                                              hostIdentity: SpaceHelperHostIdentity(major: 26, build: "26A434"),
+                                              architecture: "arm64")
+        let provider = SpaceProvider.production(backend: backend, notificationCenter: NotificationCenter())
+        let request = provider.makeRefreshRequest(displays: [UUID()])
+        let candidate = await provider.readCandidate(for: request, deadline: deadline(after: 1_000_000_000))
+        XCTAssertTrue(provider.publish(candidate, for: request))
+        XCTAssertEqual(provider.mode, .commonOnly,
+                       "The production factory remains on common layout when the host is unsupported.")
+        let gatedValue = try await backend.snapshot(for: UUID(), deadline: deadline(after: 1_000_000_000))
+        XCTAssertNil(gatedValue)
+        XCTAssertNil(recorder.pid, "An unsupported host must prevent helper launch.")
+
+        let unsupportedArchitecture = SkyLightReadOnlyBackend(runner: runner, previewRequested: true,
+                                                              hostIdentity: .supported, architecture: "x86_64")
+        let architectureValue = try await unsupportedArchitecture.snapshot(
+            for: UUID(), deadline: deadline(after: 1_000_000_000)
+        )
+        XCTAssertNil(architectureValue)
+        XCTAssertNil(recorder.pid, "An unsupported architecture must prevent helper launch, even with opt-in.")
+
+        let unavailableHost = SkyLightReadOnlyBackend(runner: runner, previewRequested: true,
+                                                      hostIdentity: nil, architecture: "arm64")
+        let unavailableHostValue = try await unavailableHost.snapshot(
+            for: UUID(), deadline: deadline(after: 1_000_000_000)
+        )
+        XCTAssertNil(unavailableHostValue)
+        XCTAssertNil(recorder.pid, "An unavailable host identity must prevent helper launch.")
+
+        let mismatch = SpaceHelperProcessRunner(testExecutableURL: helperURL,
+                                                testHostIdentity: SpaceHelperHostIdentity(major: 26, build: "26A434"),
+                                                testArgumentPrefix: ["-c", "exec /bin/sleep 20"],
+                                                childStarted: { recorder.set($0) })
+        do {
+            _ = try await mismatch.snapshot(for: UUID(), deadline: deadline(after: 1_000_000_000))
+            XCTFail("Unsupported host identity must fail before launch.")
+        } catch let error as SpaceHelperProcessError {
+            XCTAssertEqual(error, .unsupportedHost)
+        }
+        XCTAssertNil(recorder.pid)
+
+        let missing = SpaceHelperProcessRunner(testExecutableURL: nil, childStarted: { recorder.set($0) })
+        do {
+            _ = try await missing.snapshot(for: UUID(), deadline: deadline(after: 1_000_000_000))
+            XCTFail("A missing bundled helper must fail before launch.")
+        } catch let error as SpaceHelperProcessError {
+            XCTAssertEqual(error, .helperUnavailable)
+        }
+        XCTAssertNil(recorder.pid)
+
+        let expired = SpaceHelperProcessRunner(testExecutableURL: helperURL,
+                                               testArgumentPrefix: ["-c", "exec /bin/sleep 20"],
+                                               childStarted: { recorder.set($0) })
+        do {
+            _ = try await expired.snapshot(for: UUID(), deadline: 0)
+            XCTFail("An expired deadline must prevent process creation.")
+        } catch let error as SpaceHelperProcessError {
+            XCTAssertEqual(error, .deadlineExpired)
+        }
+        XCTAssertNil(recorder.pid)
+    }
+}
+
 private final class ProcessIDRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var value: pid_t?
@@ -327,19 +353,25 @@ private actor BudgetRecordingBackend: ReadOnlySpaceBackend {
 }
 
 final class SpacePreviewPolicyTests: XCTestCase {
-    func testPreviewRequiresExplicitOptInAndObservedHost() {
-        XCTAssertTrue(SkyLightReadOnlyBackend.permitsPreview(requested: true, host: .supported, architecture: "arm64"))
-        XCTAssertFalse(SkyLightReadOnlyBackend.permitsPreview(requested: false, host: .supported, architecture: "arm64"))
-        XCTAssertFalse(SkyLightReadOnlyBackend.permitsPreview(requested: true, host: nil, architecture: "arm64"))
-        XCTAssertFalse(SkyLightReadOnlyBackend.permitsPreview(requested: true, host: .supported, architecture: "x86_64"))
-        XCTAssertFalse(SkyLightReadOnlyBackend.permitsPreview(requested: true,
-            host: SpaceHelperHostIdentity(major: 27, build: "other"), architecture: "arm64"))
-        let preview = SkyLightReadOnlyBackend(previewRequested: true)
-        XCTAssertFalse(preview.canAdoptStableIdentifiers)
-        if preview.previewEnabled {
-            XCTAssertTrue(preview.allowsScopedQueries)
-            XCTAssertEqual(preview.identifier, "skylight-preview-27-26A434")
-            XCTAssertNotEqual(preview.identifier, SkyLightReadOnlyBackend(previewRequested: false).identifier)
-        }
+    func testScopedUseRequiresObservedHostAndArchitecture() {
+        XCTAssertTrue(SkyLightReadOnlyBackend.permitsScopedSpaceUse(host: .supported, architecture: "arm64"))
+        XCTAssertFalse(SkyLightReadOnlyBackend.permitsScopedSpaceUse(host: nil, architecture: "arm64"))
+        XCTAssertFalse(SkyLightReadOnlyBackend.permitsScopedSpaceUse(host: .supported, architecture: "x86_64"))
+        XCTAssertFalse(SkyLightReadOnlyBackend.permitsScopedSpaceUse(
+            host: SpaceHelperHostIdentity(major: 26, build: "26A434"), architecture: "arm64"
+        ))
+        XCTAssertFalse(SkyLightReadOnlyBackend.permitsScopedSpaceUse(
+            host: SpaceHelperHostIdentity(major: 27, build: "other"), architecture: "arm64"
+        ))
+
+        let normal = SkyLightReadOnlyBackend(previewRequested: false, hostIdentity: .supported, architecture: "arm64")
+        let explicitPreview = SkyLightReadOnlyBackend(previewRequested: true, hostIdentity: .supported, architecture: "arm64")
+        XCTAssertTrue(normal.canAdoptStableIdentifiers)
+        XCTAssertTrue(normal.allowsScopedQueries)
+        XCTAssertEqual(normal.identifier, "skylight-preview-27-26A434")
+        XCTAssertEqual(explicitPreview.identifier, normal.identifier,
+                       "Opt-in arguments must not select a different persistence namespace.")
+        XCTAssertFalse(SkyLightReadOnlyBackend(previewRequested: true, hostIdentity: nil,
+                                               architecture: "arm64").allowsScopedQueries)
     }
 }

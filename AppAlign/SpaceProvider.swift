@@ -78,7 +78,7 @@ protocol ReadOnlySpaceBackend: Sendable {
     /// Synchronous private IPC/helper waits must run on a dedicated serial worker, never
     /// MainActor or a cooperative executor. Return only after query work and any child
     /// exit/reap complete; the controller retains its single running slot until then.
-    /// Normal SkyLight launches are disabled; an explicit host-limited preview can query.
+    /// Queries are host-gated; the helper independently checks the expected OS and build.
     func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue?
     func snapshot(for displayUUID: UUID, deadline: UInt64) async throws -> ReadOnlySpaceValue?
 }
@@ -109,43 +109,55 @@ struct SpaceProviderCandidate: Equatable, Sendable {
     let snapshots: [UUID: DisplaySpaceSnapshot]
 }
 
-/// Formal adoption remains closed. Explicit preview queries use a separate saved namespace
-/// on the observed macOS 27 build 26A434 arm64 host; reboot stability is still unverified.
+/// Scoped reads are enabled only on the user-confirmed macOS 27 build 26A434 arm64 host.
+/// The namespace remains stable across normal and explicit-preview launches.
 struct SkyLightReadOnlyBackend: ReadOnlySpaceBackend {
-    var identifier: String { previewEnabled ? "skylight-preview-27-26A434" : "skylight-read-only" }
-    let isValidatedForCurrentSystem = false
+    static let scopedNamespace = "skylight-preview-27-26A434"
+    static let currentArchitecture: String = {
+        #if arch(arm64)
+        "arm64"
+        #else
+        "unsupported"
+        #endif
+    }()
+
+    var identifier: String { hostAllowsScopedQueries ? Self.scopedNamespace : "skylight-read-only" }
+    let isValidatedForCurrentSystem: Bool
     let previewEnabled: Bool
+    private let hostAllowsScopedQueries: Bool
+    private let runner: SpaceHelperProcessRunner
 
     static var previewRequested: Bool {
         ProcessInfo.processInfo.arguments.contains("--appalign-space-preview")
     }
 
-    static func permitsPreview(requested: Bool, host: SpaceHelperHostIdentity?, architecture: String) -> Bool {
-        requested && host == .supported && architecture == "arm64"
+    static func permitsScopedSpaceUse(host: SpaceHelperHostIdentity?, architecture: String) -> Bool {
+        host == .supported && architecture == "arm64"
     }
-    let runner: SpaceHelperProcessRunner
+
+    static var currentHostSupportsScopedSpaceUse: Bool {
+        permitsScopedSpaceUse(host: SpaceHelperHostIdentity.current(), architecture: currentArchitecture)
+    }
 
     init(runner: SpaceHelperProcessRunner = SpaceHelperProcessRunner(),
-         previewRequested: Bool = SkyLightReadOnlyBackend.previewRequested) {
+         previewRequested: Bool = SkyLightReadOnlyBackend.previewRequested,
+         hostIdentity: SpaceHelperHostIdentity? = SpaceHelperHostIdentity.current(),
+         architecture: String = SkyLightReadOnlyBackend.currentArchitecture) {
         self.runner = runner
-        #if arch(arm64)
-        let architecture = "arm64"
-        #else
-        let architecture = "unsupported"
-        #endif
-        previewEnabled = Self.permitsPreview(requested: previewRequested,
-                                            host: SpaceHelperHostIdentity.current(), architecture: architecture)
+        hostAllowsScopedQueries = Self.permitsScopedSpaceUse(host: hostIdentity, architecture: architecture)
+        isValidatedForCurrentSystem = hostAllowsScopedQueries
+        self.previewEnabled = previewRequested && hostAllowsScopedQueries
     }
 
     var canAdoptStableIdentifiers: Bool { isValidatedForCurrentSystem }
-    var allowsScopedQueries: Bool { isValidatedForCurrentSystem || previewEnabled }
+    var allowsScopedQueries: Bool { hostAllowsScopedQueries }
 
     func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue? {
         try await snapshot(for: displayUUID, deadline: UInt64.max)
     }
 
     func snapshot(for displayUUID: UUID, deadline: UInt64) async throws -> ReadOnlySpaceValue? {
-        // Normal launches remain disabled. Preview is an explicit experiment, not formal adoption.
+        // The helper's own OS/build checks remain an independent boundary.
         guard allowsScopedQueries else { return nil }
         return try await runner.snapshot(for: displayUUID, deadline: deadline)
     }

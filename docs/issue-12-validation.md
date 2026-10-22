@@ -124,3 +124,29 @@ SwiftFormatは95 files / 0 changes、SwiftLintは95 files / 0 violations、Semgr
 署名有効arm64/jobs2で304テスト成功、失敗0・skip0。テストを独立クラスへ移動した後のSpacePreviewPolicyTestsも成功。SwiftFormat・SwiftLint・Semgrep成功、bundle/helper署名とhelper --help成功。ユーザーのA→B→A・再起動後の同一性確認は未完了。TCC reset・identity変更・#29修正なし。
 
 確認手順：メニューバーAppAlign→Settings→Dellを選択。通常SpaceでSpace別保存有効のID末尾を確認。Edit Layoutで新しいlayoutを作り、Save assignment to: Current Spaceで保存・適用。別Spaceでも異なるlayoutを作りA→B→AでレイアウトとID末尾を照合。取得不能Spaceは共通fallback。既存common layoutを直接編集しない。
+
+## 2026-10-22 通常起動への限定有効化
+
+ユーザーは「いけてた」「再起動大丈夫だったから残作業で」と動作の受入・最終化を依頼した。統括判断により、実測対象のOS major 27 / build 26A434 / arm64だけ、明示引数なしの通常起動でもSpace照会とSpace別保存を有効にする。minor/patchへ追加の制限は設けない。異なるOS major・build・architecture、host取得不能では照会を開始せず、通常のcommon動作を使う。対応hostでもUUID欠落・fullscreen・照会失敗は、そのdisplayのdegraded fallbackとなり、history・auto restore・Space保存を停止する。既存のbounded helper、単一実処理枠、期限、revision/epoch検証は変更しない。
+
+保存namespaceはpreviewと同じ`skylight-preview-27-26A434`を継続する。通常起動と既存のpreview引数付き起動で同じassignment/historyキーを使い、キーrename・データ移行・初期化を追加しない。設定画面の現在Space状態も通常起動で表示する。bundle ID・署名identity・権限設定は変更せず、既存試用版の停止・置換・起動は統括が担当する。
+
+ユーザーは後に「AppAlignアプリを起動し直した」と明確化した。アプリ再起動後の動作報告を受入根拠とし、OS再起動は未実施・安定性未確認として残す。統括の`kern.boottime`は1790847413（10/1）のままで、この区別と整合する。OS再起動前後のUUID一致を独立測定したとは主張しない。独立に確認された保存状態はpreview assignment 1件でcommonと同じlayout IDであり、実機A/Bに異なるlayoutを割り当てた分離の証拠とは扱わない。自動テストによるA/B分離・保存互換と、ユーザーによる実機報告を区別する。
+
+Mission Control固有の遷移、fullscreen、Stage Manager、ディスプレイ別Spacesの各組合せは実機未検証。fullscreenは通常Spaceと混同せずfallbackするdecoderテストがある。実drag確認は#29の入力監視問題の修正保留により未検証で、既存のdrag自動テストの成功と区別する。#13は対象外。PRには自動Issue close指定を付けず、公開・CI・merge・Issue完了判断は統括へ引き継ぐ。
+
+### 最終差分の検証と引渡し
+
+sourceをfreezeして次の単一コマンドを実行し、初回で305 tests / 0 failures / 0 skips、`TEST SUCCEEDED`となった。`xcresulttool get test-results summary`でもmacOS 27.0.1 / build 26A434 / arm64 / 305 Passedを確認した。通過後の再実行は行っていない。
+
+```sh
+xcodebuild -project AppAlign.xcodeproj -scheme AppAlign -destination 'platform=macOS,arch=arm64' -jobs 2 -parallel-testing-enabled NO -derivedDataPath /private/tmp/issue12-final-derived-data -resultBundlePath /private/tmp/issue12-final-tests-20261022.xcresult ARCHS=arm64 ONLY_ACTIVE_ARCH=YES test
+```
+
+ログは`/private/tmp/issue12-final-test-20261022.log`。通常factory→dummy child→候補read/publish→ディスクから既存preview assignmentをload→共通とは異なる保存済みlayoutの解決を新規統合テストで確認した。host/architecture policy、通常とpreviewのnamespace一致、未対応hostでchild未起動のテストも成功した。新しい実private queryやGUI実機操作はこの検証に追加していない。
+
+変更した4 Swift filesのSwiftFormat lintは0 changes、strict SwiftLint（no-cache）は0 violations / 0 serious、`git diff --check`は成功。SwiftFormatはcache書込み警告があったがlint自体はexit 0。Semgrepは統括がstandalone実行で0 findingsを報告しており、この最終工程では重複実行していない。既存テストはtype bodyのlint制限に合わせ同ファイル内のextensionへ移し、assertionを維持した。
+
+appの`codesign --verify --deep --strict`、同梱helperの`codesign --verify --strict`が成功し、双方arm64のMach-Oだった。同梱helper `--help`もexit 0。今回生成したappだけを`lsregister -u`し、`/private/tmp/issue12-final-verification-20261022/AppAlign.app.retired`へ退避した。退避後も両署名を再確認し、元の生成app pathは存在しない。既存試用appの停止・置換・起動・再署名は行っていない。統括のGUI撮影はtimeoutで未取得との報告があり、スクリーンショットによる表示確認成功とは扱わない。
+
+最終レビューは95/100（要件34/35、安全29/30、検証23/25、保守9/10）、重大指摘0。通常起動の対応host限定、保存互換、有限helperとfallback維持を受け入れ、OS再起動・未検証実機組合せ・公開CIを残条件として引き継ぐ。PR原稿は「#12 対応環境でSpace別レイアウトを有効化し保存割当を継承する」を軸に、上記検証・権限変更なし・既知制約を記載する。統括が最終本文と公開承認を担当する。

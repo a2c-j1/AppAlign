@@ -40,9 +40,9 @@ struct ContentView: View {
                         .disabled(!layoutController.canEdit)
                     }
 
-                    if SkyLightReadOnlyBackend.previewRequested {
+                    if SkyLightReadOnlyBackend.currentHostSupportsScopedSpaceUse {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Space preview — 再起動後の同一性は未確認")
+                            Text("Space別レイアウト（対象環境で動作確認済み）")
                                 .font(.caption.weight(.semibold))
                             if let display = layoutController.selectedDisplay {
                                 let snapshot = layoutController.spaceSnapshot(for: display)

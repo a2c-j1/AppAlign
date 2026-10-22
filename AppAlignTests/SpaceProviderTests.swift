@@ -255,6 +255,68 @@ final class SpaceProviderTests: XCTestCase {
     }
 }
 
+@MainActor
+extension SpaceProviderTests {
+    func testProductionBackendLoadsExistingPreviewAssignmentWithoutOptInArgument() async throws {
+        let displayUUID = UUID()
+        let candidateUUID = "5EA7DC96-5689-1D28-6AF8-DB244D30E11E"
+        let record: [String: Any] = [
+            "osMajor": 27,
+            "build": "26A434",
+            "displayUUID": displayUUID.uuidString.uppercased(),
+            "rawSpaceID": "58",
+            "kind": "user",
+            "error": NSNull(),
+            "adoption": false,
+            "rawSpaceType": 0,
+            "spaceUUIDCandidate": candidateUUID
+        ]
+        let payload = String(data: try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]),
+                             encoding: .utf8)!
+        let runner = SpaceHelperProcessRunner(testExecutableURL: URL(fileURLWithPath: "/bin/sh"),
+                                              testArgumentPrefix: ["-c", "printf '%s' '\(payload)'"])
+        let backend = SkyLightReadOnlyBackend(runner: runner, previewRequested: false,
+                                              hostIdentity: .supported, architecture: "arm64")
+        let explicitPreview = SkyLightReadOnlyBackend(runner: runner, previewRequested: true,
+                                                      hostIdentity: .supported, architecture: "arm64")
+        XCTAssertEqual(backend.identifier, SkyLightReadOnlyBackend.scopedNamespace)
+        XCTAssertEqual(explicitPreview.identifier, backend.identifier)
+
+        let specialSpace = try XCTUnwrap(PersistentSpaceID(backend: backend.identifier, opaqueID: candidateUUID))
+        let defaultLayout = PersistentStoreCoordinator.defaultLayout()
+        let scopedLayout = testLayout(name: "Saved preview layout", columns: 2)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersistentStoreCoordinator(directory: directory)
+        try await store.saveLayoutAndAssignments([defaultLayout, scopedLayout], [
+            PersistedAssignment(displayUUID: displayUUID, spaceScope: .common, layoutID: defaultLayout.id),
+            PersistedAssignment(displayUUID: displayUUID, spaceScope: .space(specialSpace), layoutID: scopedLayout.id)
+        ])
+
+        let provider = SpaceProvider.production(backend: backend)
+        let request = provider.makeRefreshRequest(displays: [displayUUID])
+        let deadline = DispatchTime.now().uptimeNanoseconds &+ 1_000_000_000
+        let candidate = await provider.readCandidate(for: request, deadline: deadline)
+        XCTAssertEqual(candidate.snapshots[displayUUID]?.mode, .validatedScoped)
+        XCTAssertEqual(candidate.snapshots[displayUUID]?.persistedScope, .space(specialSpace))
+        XCTAssertTrue(provider.publish(candidate, for: request))
+
+        let display = Display(runtimeID: RuntimeDisplayID(rawValue: 1),
+                              persistentID: PersistentDisplayID(uuid: displayUUID), sessionID: UUID(),
+                              name: "Test", frame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+                              workArea: CGRect(x: 0, y: 0, width: 1_000, height: 780), isPrimary: true,
+                              backingScaleFactor: 1)
+        let snapshot = DisplaySnapshot(displays: [display], primaryFrame: display.frame)
+        let layout = LayoutController(displayProvider: DisplayProvider(snapshot: snapshot), spaceProvider: provider,
+                                      storeCoordinator: store)
+        await layout.loadPersistentState()
+        layout.displaysDidPublish(snapshot)
+        XCTAssertEqual(layout.spaceSnapshot(for: display).persistedScope, .space(specialSpace))
+        XCTAssertEqual(layout.currentLayout.id, scopedLayout.id,
+                       "The ordinary factory must resolve an existing assignment in the stable preview namespace.")
+    }
+}
+
 private final class LockedCallbackCount: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
