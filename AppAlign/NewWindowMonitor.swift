@@ -355,12 +355,6 @@ extension NewWindowMonitor {
                                                              afterBaseline: true, epoch: expectedEpoch))
             if result.shouldDrain { Task { @MainActor [weak self] in self?.drainInbox() } }
         })
-        let ticketRegistry = self.ticketRegistry
-        observers.append(center.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification,
-                                            object: nil, queue: .main) { [weak self] _ in
-            ticketRegistry.invalidateAll()
-            Task { @MainActor [weak self] in self?.onEnvironmentChanged?() }
-        })
     }
 
     private func beginMonitoring(pid: pid_t, epoch expectedEpoch: UInt64, expectedLaunchDate: Date? = nil) async {

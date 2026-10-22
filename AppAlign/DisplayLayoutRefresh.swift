@@ -7,8 +7,8 @@ extension LayoutController {
     }
 
     @discardableResult
-    func refreshDisplays() -> DisplaySnapshot {
-        if let refreshConfiguration { return refreshConfiguration() }
+    func refreshDisplays(force: Bool = false) -> DisplaySnapshot {
+        if let refreshConfiguration { return refreshConfiguration(force) }
         let result = displayProvider.sample()
         if result != displayProvider.snapshot {
             displayProvider.publish(result)

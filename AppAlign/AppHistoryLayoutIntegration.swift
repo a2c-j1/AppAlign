@@ -25,8 +25,11 @@ extension LayoutController {
                              layout: PersistedLayout) -> AppHistoryCoordinator.Lease? {
         guard appZoneHistoryAvailable, let bundleID, let displayUUID = display.persistentID?.uuid,
               savedLayouts[layout.id] == layout else { return nil }
+        let snapshot = spaceSnapshot(for: display)
+        guard snapshot.recordsHistory else { return nil }
         return appHistoryCoordinator.reservePlacement(token: token, bundleID: bundleID,
-                                                       displayUUID: displayUUID, expectedLayout: layout)
+                                                       displayUUID: displayUUID, expectedLayout: layout,
+                                                       spaceScope: snapshot.persistedScope)
     }
 
     func acquireAppPlacement(_ lease: AppHistoryCoordinator.Lease?, using runtime: any WindowHistoryLeaseOperating) async -> AppHistoryCoordinator.Lease? {

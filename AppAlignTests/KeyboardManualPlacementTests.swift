@@ -135,7 +135,7 @@ extension KeyboardSnapControllerTests {
                 } catch {}
             }
             XCTAssertFalse(controller.statusMessage.contains("verified"))
-            XCTAssertEqual(controller.actualFrame, restoring ? frame : placed)
+            XCTAssertNil(controller.actualFrame, "A readback from a superseded configuration must not republish stale frame state.")
             XCTAssertTrue(controller.hasCapturedWindow)
             XCTAssertTrue(controller.canRestore, "A rejected completion must preserve the original Restore target.")
         }
@@ -182,6 +182,43 @@ extension KeyboardSnapControllerTests {
         XCTAssertEqual(controller.actualFrame, secondFrame, "The delayed readback from the previous token must not overwrite the new capture frame.")
         XCTAssertTrue(controller.statusMessage.contains("Captured the focused external window"),
                        "A stale placement failure must not overwrite the newer capture status.")
+    }
+
+    @MainActor
+    func testSpaceInvalidationClearsManualCaptureBeforeDelayedReadbackCompletes() async throws {
+        let original = CGRect(x: 100, y: 100, width: 300, height: 200)
+        let display = Display(runtimeID: RuntimeDisplayID(rawValue: 1), persistentID: nil, sessionID: UUID(),
+                              name: "Test", frame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+                              workArea: CGRect(x: 0, y: 0, width: 1_000, height: 780), isPrimary: true,
+                              backingScaleFactor: 1)
+        let snapshot = DisplaySnapshot(displays: [display], primaryFrame: display.frame)
+        let capture = ManualWindowCapture(token: RuntimeWindowToken(id: UUID(), pid: 200),
+                                          lease: ManualWindowLeaseID(), originalFrame: original)
+        let validity = PlacementValidity()
+        let runtime = ManualWindowTestRuntime(capture: capture, initialFrame: original, afterMove: {
+            _ = validity.invalidateForConfigurationChange()
+        })
+        let controller = PlacementController(displayProvider: DisplayProvider(snapshot: snapshot), validity: validity,
+                                             refreshDisplayConfiguration: { snapshot },
+                                             dependencies: PlacementControllerDependencies(isAccessibilityTrusted: { true }),
+                                             manualRuntime: runtime, initialManualCapture: capture,
+                                             initialManualDisplayFingerprint: snapshot.fingerprint)
+        await runtime.blockNextReadback()
+        let placement = Task { try? await controller.placeCapturedWindowAsync(
+            in: CGRect(x: 20, y: 30, width: 500, height: 400),
+            displayFingerprint: snapshot.fingerprint, historyContext: nil
+        ) }
+        await runtime.waitForBlockedReadback()
+
+        _ = validity.invalidateForConfigurationChange()
+        controller.clearCapture()
+        XCTAssertFalse(controller.hasCapturedWindow)
+        XCTAssertNil(controller.capturedRuntimeToken)
+
+        await runtime.completeBlockedReadback()
+        await placement.value
+        XCTAssertFalse(controller.hasCapturedWindow)
+        XCTAssertNil(controller.actualFrame, "The delayed pre-Space readback must not restore the old capture UI.")
     }
 
     @MainActor

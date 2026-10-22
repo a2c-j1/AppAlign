@@ -2,16 +2,6 @@ import CoreGraphics
 import Darwin
 import Foundation
 
-enum PersistedSpaceScope: String, Codable, Hashable, Sendable {
-    case common
-}
-
-struct PersistedAssignment: Codable, Equatable, Sendable {
-    let displayUUID: UUID
-    let spaceScope: PersistedSpaceScope
-    let layoutID: UUID
-}
-
 enum PersistedLayoutKind: String, Codable, Sendable {
     case grid
     case canvas
@@ -298,7 +288,8 @@ struct StoreURLs: Sendable {
 
 struct LoadedPersistentState: Sendable {
     var layouts: [UUID: PersistedLayout]
-    var assignments: [UUID: PersistedAssignment]
+    var assignments: PersistedAssignments
+    var assignmentsAvailable: Bool
     var settings: [String: PersistedSetting]
     var appZoneHistory: [AppZoneHistoryKey: AppZoneHistoryRecord]
     var appZoneHistoryAvailable: Bool
@@ -319,6 +310,9 @@ actor PersistentStoreCoordinator {
     var appZoneHistoryLoadAttempted = false
     var appZoneHistoryAvailable = false
     var appZoneHistoryNeedsPrune = false
+    var catalogRecoveryProtected = false
+    private var legacyAssignmentBytes: Data?
+    private var legacyHistoryBytes: Data?
 
     init(directory: URL, fileAccess: any AtomicFileAccess = LocalAtomicFileAccess()) {
         urls = StoreURLs(directory: directory)
@@ -343,43 +337,47 @@ actor PersistentStoreCoordinator {
     func load() throws -> LoadedPersistentState {
         appZoneHistoryLoadAttempted = true
         let layoutFile = try loadStore(LayoutStore.self, at: urls.layouts, name: "layouts", default: LayoutStore(layouts: [Self.defaultLayout()]), validate: Self.validateLayouts)
-        let assignmentFile = try loadStore(AssignmentStore.self, at: urls.assignments, name: "assignments", default: AssignmentStore(assignments: []), validate: Self.validateAssignments)
+        let assignmentFile: LoadedStore<AssignmentStore>?
+        do {
+            assignmentFile = try loadStore(AssignmentStore.self, at: urls.assignments, name: "assignments",
+                                           default: AssignmentStore(assignments: []), validate: Self.validateAssignments)
+            legacyAssignmentBytes = assignmentFile?.schemaVersion == 1 ? assignmentFile?.sourceBytes : nil
+        } catch {
+            assignmentFile = nil
+        }
         let settingsFile = try loadStore(SettingsStore.self, at: urls.settings, name: "settings", default: SettingsStore(values: [:]), validate: Self.validateSettings)
         let layouts = Dictionary(uniqueKeysWithValues: layoutFile.value.layouts.map { ($0.id, $0) })
         let historyFile: LoadedStore<AppZoneHistoryStore>?
         if (try? ensureAppZoneHistoryWriter()) != nil {
             historyFile = try? loadStore(AppZoneHistoryStore.self, at: urls.appZoneHistory, name: "app-zone-history",
                                          default: AppZoneHistoryStore(records: []), validate: Self.validateAppZoneHistory)
+            legacyHistoryBytes = historyFile?.schemaVersion == 1 ? historyFile?.sourceBytes : nil
             appZoneHistoryAvailable = historyFile != nil
         } else {
             historyFile = nil
             appZoneHistoryAvailable = false
         }
+        if layoutFile.wasRecovered { protectDependentStoresAfterCatalogRecovery() }
+        let catalogTrusted = !layoutFile.wasRecovered && !catalogRecoveryProtected
         let history: [AppZoneHistoryKey: AppZoneHistoryRecord] = Dictionary(
-            (historyFile?.value.records ?? []).compactMap { record in
+            (catalogTrusted ? (historyFile?.value.records ?? []) : []).compactMap { record in
                 guard Self.isValid(record, layouts: layouts) else { return nil }
                 return (record.key, record)
             }, uniquingKeysWith: { existing, incoming in
                 existing.revision >= incoming.revision ? existing : incoming
             })
         let maxHistoryRevision = historyFile?.value.records.map(\.revision).max() ?? 0
-        if let historyFile, history.count != historyFile.value.records.count { appZoneHistoryNeedsPrune = true }
-        var assignments: [UUID: PersistedAssignment] = [:]
-        var repaired = false
-        for assignment in assignmentFile.value.assignments {
-            guard layouts[assignment.layoutID] != nil else { repaired = true; continue }
-            assignments[assignment.displayUUID] = assignment
+        if catalogTrusted, let historyFile, history.count != historyFile.value.records.count { appZoneHistoryNeedsPrune = true }
+        var assignments = PersistedAssignments()
+        let decodedAssignments = assignmentFile?.value.assignments ?? []
+        if catalogTrusted, decodedAssignments.allSatisfy({ layouts[$0.layoutID] != nil }) {
+            for assignment in decodedAssignments { assignments[assignment.key] = assignment }
+        } else {
+            protectedStores.insert("assignments")
         }
-        if repaired {
-            do {
-                try backup(bytes: assignmentFile.sourceBytes, original: urls.assignments)
-                try saveAssignments(Array(assignments.values))
-            } catch {
-                protectedStores.insert("assignments")
-                throw PersistenceError.storeUnavailable("assignments")
-            }
-        }
-        return LoadedPersistentState(layouts: layouts, assignments: assignments, settings: settingsFile.value.values,
+        return LoadedPersistentState(layouts: layouts, assignments: assignments,
+                                     assignmentsAvailable: catalogTrusted && assignmentFile != nil && !protectedStores.contains("assignments"),
+                                     settings: settingsFile.value.values,
                                      appZoneHistory: history, appZoneHistoryAvailable: appZoneHistoryAvailable,
                                      maxAppZoneHistoryRevision: maxHistoryRevision,
                                      layoutStoreNeedsRepair: layoutFile.wasRecovered)
@@ -403,12 +401,26 @@ actor PersistentStoreCoordinator {
         }
     }
 
+    func protectDependentStoresAfterCatalogRecovery() {
+        catalogRecoveryProtected = true
+        protectedStores.insert("assignments")
+        protectedStores.insert("app-zone-history")
+        appZoneHistoryLoadAttempted = true
+        appZoneHistoryAvailable = false
+        appZoneHistoryNeedsPrune = false
+    }
+
     func saveAssignments(_ assignments: [PersistedAssignment]) throws {
         try ensureWritable("assignments")
         try ensureWritable("layouts")
         try Self.validateAssignments(AssignmentStore(assignments: assignments))
-        let ordered = assignments.sorted { $0.displayUUID.uuidString < $1.displayUUID.uuidString }
+        let ordered = assignments.sorted {
+            if $0.displayUUID != $1.displayUUID { return $0.displayUUID.uuidString < $1.displayUUID.uuidString }
+            return String(describing: $0.spaceScope) < String(describing: $1.spaceScope)
+        }
+        try backupLegacyStoreIfNeeded(name: "assignments", url: urls.assignments)
         try save(AssignmentStore(assignments: ordered), to: urls.assignments)
+        legacyAssignmentBytes = nil
     }
 
     func saveSettings(_ settings: [String: PersistedSetting]) throws {
@@ -448,7 +460,7 @@ actor PersistentStoreCoordinator {
         let bytes: Data
         do {
             guard let readBytes = try fileAccess.read(url) else {
-                return LoadedStore(value: defaultValue, wasRecovered: false, sourceBytes: Data())
+                return LoadedStore(value: defaultValue, wasRecovered: false, sourceBytes: Data(), schemaVersion: name == "assignments" || name == "app-zone-history" ? 2 : 1)
             }
             bytes = readBytes
         } catch {
@@ -457,14 +469,23 @@ actor PersistentStoreCoordinator {
         }
         do {
             let header = try decoder.decode(StoreHeader.self, from: bytes)
-            guard header.schemaVersion == 1 else { throw PersistenceError.unknownSchema(header.schemaVersion) }
+            let supportsMigration = name == "assignments" || name == "app-zone-history"
+            guard header.schemaVersion == 1 || (supportsMigration && header.schemaVersion == 2) else {
+                throw PersistenceError.unknownSchema(header.schemaVersion)
+            }
+            if supportsMigration { try validateSpaceStoreShape(bytes, name: name, schemaVersion: header.schemaVersion) }
             let file = try decoder.decode(VersionedStore<Value>.self, from: bytes)
             try validate(file.value)
-            return LoadedStore(value: file.value, wasRecovered: false, sourceBytes: bytes)
+            if header.schemaVersion == 1 { try validateLegacyCommonScope(file.value, name: name) }
+            return LoadedStore(value: file.value, wasRecovered: false, sourceBytes: bytes, schemaVersion: header.schemaVersion)
         } catch {
+            if name == "assignments" || name == "app-zone-history" {
+                protectedStores.insert(name)
+                throw PersistenceError.storeUnavailable(name)
+            }
             do {
                 try recover(bytes: bytes, original: url, defaultValue: defaultValue)
-                return LoadedStore(value: defaultValue, wasRecovered: true, sourceBytes: bytes)
+                return LoadedStore(value: defaultValue, wasRecovered: true, sourceBytes: bytes, schemaVersion: 1)
             } catch {
                 protectedStores.insert(name)
                 throw PersistenceError.storeUnavailable(name)
@@ -506,7 +527,18 @@ actor PersistentStoreCoordinator {
     }
 
     func save<Value: Codable & Sendable>(_ value: Value, to url: URL) throws {
-        try fileAccess.writeAtomically(encoder.encode(VersionedStore(schemaVersion: 1, value: value)), to: url)
+        let version = url == urls.assignments || url == urls.appZoneHistory ? 2 : 1
+        try fileAccess.writeAtomically(encoder.encode(VersionedStore(schemaVersion: version, value: value)), to: url)
+    }
+
+    func backupLegacyStoreIfNeeded(name: String, url: URL) throws {
+        let bytes = name == "assignments" ? legacyAssignmentBytes : legacyHistoryBytes
+        guard let bytes else { return }
+        try backup(bytes: bytes, original: url)
+    }
+
+    func markLegacyStoreMigrated(_ name: String) {
+        if name == "assignments" { legacyAssignmentBytes = nil } else if name == "app-zone-history" { legacyHistoryBytes = nil }
     }
 
     static func validateLayouts(_ store: LayoutStore) throws {
@@ -514,9 +546,10 @@ actor PersistentStoreCoordinator {
         for layout in store.layouts { try layout.validate() }
     }
 
-    private static func validateAssignments(_ store: AssignmentStore) throws {
-        guard Set(store.assignments.map(\.displayUUID)).count == store.assignments.count,
-              store.assignments.allSatisfy({ $0.spaceScope == .common }) else { throw PersistenceError.invalidData("assignments") }
+    static func validateAssignments(_ store: AssignmentStore) throws {
+        guard Set(store.assignments.map(\.key)).count == store.assignments.count else {
+            throw PersistenceError.invalidData("duplicate assignments")
+        }
     }
 
     private static func validateSettings(_ store: SettingsStore) throws {
@@ -543,4 +576,5 @@ struct LoadedStore<Value: Sendable> {
     let value: Value
     let wasRecovered: Bool
     let sourceBytes: Data
+    let schemaVersion: Int
 }

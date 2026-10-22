@@ -8,10 +8,12 @@ struct KeyboardLayoutSnapshot: Equatable, Sendable {
     let displayFingerprint: String
     let displayLayouts: [KeyboardDisplayLayout]
     let revision: PlacementRevision
+    let spaceSnapshot: DisplaySpaceSnapshot
 
     static func == (lhs: KeyboardLayoutSnapshot, rhs: KeyboardLayoutSnapshot) -> Bool {
         lhs.display == rhs.display && lhs.layout == rhs.layout && lhs.zones == rhs.zones
             && lhs.displayFingerprint == rhs.displayFingerprint && lhs.displayLayouts == rhs.displayLayouts
+            && lhs.revision == rhs.revision && lhs.spaceSnapshot == rhs.spaceSnapshot
     }
 }
 
@@ -66,16 +68,17 @@ extension LayoutController {
             return KeyboardDisplayLayout(display: candidate, layout: values.layout, zones: values.zones)
         }
         return KeyboardLayoutSnapshot(display: display, layout: selected.layout, zones: selected.zones,
-                                      displayFingerprint: fingerprint, displayLayouts: layouts, revision: revision)
+                                      displayFingerprint: fingerprint, displayLayouts: layouts, revision: revision,
+                                      spaceSnapshot: spaceSnapshot(for: display))
     }
 
     private func layoutValues(for display: Display) -> (layout: PersistedLayout, zones: [Zone])? {
         guard display.workArea.width > 0, display.workArea.height > 0 else { return nil }
         let layout: PersistedLayout
-        if let override = quickLayoutOverrides[display.id] {
+        if let override = quickLayoutOverrides[overrideKey(for: display)] {
             layout = override
-        } else if let persistentID = display.persistentID,
-           let layoutID = assignments[persistentID.uuid]?.layoutID,
+        } else if let key = assignmentKey(for: display),
+           let layoutID = assignments[key]?.layoutID ?? (key.spaceScope == .common ? nil : assignments[PersistedAssignmentKey(displayUUID: key.displayUUID, spaceScope: .common)]?.layoutID),
            let assigned = savedLayouts[layoutID] {
             layout = assigned
         } else if case .session(let sessionID) = display.id, let sessionLayout = sessionLayouts[sessionID] {

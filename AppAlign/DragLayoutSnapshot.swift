@@ -12,6 +12,7 @@ struct DragLayoutSnapshot: Equatable, Sendable {
     let fingerprint: String
     let revision: UInt64
     let placementRevision: PlacementRevision
+    let spaceSnapshot: DisplaySpaceSnapshot
 }
 
 @MainActor
@@ -50,7 +51,7 @@ extension LayoutController {
                                   workAreaKey: display.selectionKey, layout: resolved.layout, zones: resolved.zones,
                                   zonesByDisplay: zonesByDisplay,
                                   fingerprint: snapshot.fingerprint, revision: dragLayoutRevision,
-                                  placementRevision: revision)
+                                  placementRevision: revision, spaceSnapshot: resolved.spaceSnapshot)
     }
 
     func isCurrentDragLayout(revision: UInt64, fingerprint: String) -> Bool {

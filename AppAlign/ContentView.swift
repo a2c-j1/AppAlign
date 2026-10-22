@@ -35,9 +35,27 @@ struct ContentView: View {
                             .disabled(!layoutController.canEdit || layoutController.selectedDisplayID == nil)
 
                         Button("Refresh Displays") {
-                            layoutController.refreshDisplays()
+                            layoutController.refreshDisplays(force: true)
                         }
                         .disabled(!layoutController.canEdit)
+                    }
+
+                    if SkyLightReadOnlyBackend.currentHostSupportsScopedSpaceUse {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Space別レイアウト（対象環境で動作確認済み）")
+                                .font(.caption.weight(.semibold))
+                            if let display = layoutController.selectedDisplay {
+                                let snapshot = layoutController.spaceSnapshot(for: display)
+                                if snapshot.mode == .validatedScoped, let id = snapshot.spaceID {
+                                    Text("Space別保存が有効 · ID末尾: \(String(id.value.suffix(8)))")
+                                        .font(.caption.monospaced())
+                                } else {
+                                    Text("共通レイアウトを使用 · \(snapshot.reason ?? "この画面のSpaceを取得できません")")
+                                        .font(.caption)
+                                }
+                            }
+                        }
+                        .textSelection(.enabled)
                     }
 
                     HStack {

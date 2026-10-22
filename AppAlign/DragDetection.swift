@@ -207,7 +207,6 @@ extension DragDetectionController {
         guard observers.isEmpty else { return }
         let workspace = NSWorkspace.shared.notificationCenter
         let specs: [(NotificationCenter, Notification.Name)] = [
-            (workspace, NSWorkspace.activeSpaceDidChangeNotification),
             (workspace, NSWorkspace.didTerminateApplicationNotification),
             (.default, NSApplication.didChangeScreenParametersNotification),
             (.default, NSApplication.didBecomeActiveNotification)

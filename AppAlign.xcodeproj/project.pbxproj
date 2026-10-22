@@ -7,6 +7,20 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+			D30000000000000000000002 /* SpaceHelperProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = D30000000000000000000001 /* SpaceHelperProcess.swift */; };
+			D30000000000000000000003 /* SpaceHelperProcess.swift in Tests */ = {isa = PBXBuildFile; fileRef = D30000000000000000000001 /* SpaceHelperProcess.swift */; };
+			D30000000000000000000005 /* SpaceHelperBackendTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = D30000000000000000000004 /* SpaceHelperBackendTests.swift */; };
+			D30000000000000000000009 /* space-probe.swift in Sources */ = {isa = PBXBuildFile; fileRef = D30000000000000000000007 /* space-probe.swift */; };
+			D3000000000000000000000A /* space-probe-core.swift in Sources */ = {isa = PBXBuildFile; fileRef = D30000000000000000000008 /* space-probe-core.swift */; };
+			D3000000000000000000000D /* AppAlignSpaceHelper in Embed Helper Tool */ = {isa = PBXBuildFile; fileRef = D3000000000000000000000B /* AppAlignSpaceHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy,); }; };
+			Y10000000000000000000002 /* AppZoneHistoryPersistenceTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = L20000000000000000000001 /* AppZoneHistoryPersistenceTests.swift */; };
+			Y10000000000000000000001 /* SpaceProviderTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = Y20000000000000000000001 /* SpaceProviderTests.swift */; };
+			Z10000000000000000000001 /* SpaceProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = Z20000000000000000000001 /* SpaceProvider.swift */; };
+			Z10000000000000000000002 /* SpaceProvider.swift in Tests */ = {isa = PBXBuildFile; fileRef = Z20000000000000000000001 /* SpaceProvider.swift */; };
+			Z10000000000000000000003 /* PersistedSpaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = Z20000000000000000000002 /* PersistedSpaceModels.swift */; };
+			Z10000000000000000000004 /* PersistedSpaceModels.swift in Tests */ = {isa = PBXBuildFile; fileRef = Z20000000000000000000002 /* PersistedSpaceModels.swift */; };
+			Z10000000000000000000005 /* PersistentSpaceStoreValidation.swift in Sources */ = {isa = PBXBuildFile; fileRef = Z20000000000000000000003 /* PersistentSpaceStoreValidation.swift */; };
+			Z10000000000000000000006 /* PersistentSpaceStoreValidation.swift in Tests */ = {isa = PBXBuildFile; fileRef = Z20000000000000000000003 /* PersistentSpaceStoreValidation.swift */; };
 			X10000000000000000000001 /* WindowRuntimeObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = X20000000000000000000001 /* WindowRuntimeObservation.swift */; };
 			X10000000000000000000002 /* WindowRuntimeObservation.swift in Tests */ = {isa = PBXBuildFile; fileRef = X20000000000000000000001 /* WindowRuntimeObservation.swift */; };
 			X10000000000000000000003 /* NewWindowMonitorLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = X20000000000000000000002 /* NewWindowMonitorLifecycle.swift */; };
@@ -15,6 +29,8 @@
 			I10000000000000000000002 /* AppZoneHistoryPersistence.swift in Tests */ = {isa = PBXBuildFile; fileRef = I20000000000000000000001 /* AppZoneHistoryPersistence.swift */; };
 			I10000000000000000000003 /* AppHistoryLayoutIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = I20000000000000000000002 /* AppHistoryLayoutIntegration.swift */; };
 			I10000000000000000000004 /* AppHistoryLayoutIntegration.swift in Tests */ = {isa = PBXBuildFile; fileRef = I20000000000000000000002 /* AppHistoryLayoutIntegration.swift */; };
+			V10000000000000000000051 /* EditorDeltaPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = V20000000000000000000051 /* EditorDeltaPersistence.swift */; };
+			V10000000000000000000052 /* EditorDeltaPersistence.swift in Tests */ = {isa = PBXBuildFile; fileRef = V20000000000000000000051 /* EditorDeltaPersistence.swift */; };
 			E10000000000000000000001 /* LayoutHotkeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000001 /* LayoutHotkeys.swift */; };
 			E10000000000000000000002 /* OrderedInteractionInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000002 /* OrderedInteractionInbox.swift */; };
 			E10000000000000000000003 /* OrderedInteractionTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = E20000000000000000000003 /* OrderedInteractionTests.swift */; };
@@ -144,10 +160,20 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+			D30000000000000000000001 /* SpaceHelperProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceHelperProcess.swift; sourceTree = "<group>"; };
+			D30000000000000000000004 /* SpaceHelperBackendTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceHelperBackendTests.swift; sourceTree = "<group>"; };
+			D30000000000000000000007 /* space-probe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = space-probe.swift; sourceTree = "<group>"; };
+			D30000000000000000000008 /* space-probe-core.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = space-probe-core.swift; sourceTree = "<group>"; };
+			D3000000000000000000000B /* AppAlignSpaceHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = AppAlignSpaceHelper; sourceTree = BUILT_PRODUCTS_DIR; };
+			Y20000000000000000000001 /* SpaceProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceProviderTests.swift; sourceTree = "<group>"; };
+			Z20000000000000000000001 /* SpaceProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceProvider.swift; sourceTree = "<group>"; };
+			Z20000000000000000000002 /* PersistedSpaceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistedSpaceModels.swift; sourceTree = "<group>"; };
+			Z20000000000000000000003 /* PersistentSpaceStoreValidation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistentSpaceStoreValidation.swift; sourceTree = "<group>"; };
 			X20000000000000000000001 /* WindowRuntimeObservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowRuntimeObservation.swift; sourceTree = "<group>"; };
 			X20000000000000000000002 /* NewWindowMonitorLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewWindowMonitorLifecycle.swift; sourceTree = "<group>"; };
 			I20000000000000000000001 /* AppZoneHistoryPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppZoneHistoryPersistence.swift; sourceTree = "<group>"; };
 			I20000000000000000000002 /* AppHistoryLayoutIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppHistoryLayoutIntegration.swift; sourceTree = "<group>"; };
+			V20000000000000000000051 /* EditorDeltaPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDeltaPersistence.swift; sourceTree = "<group>"; };
 			E20000000000000000000001 /* LayoutHotkeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutHotkeys.swift; sourceTree = "<group>"; };
 			E20000000000000000000002 /* OrderedInteractionInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderedInteractionInbox.swift; sourceTree = "<group>"; };
 			E20000000000000000000003 /* OrderedInteractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderedInteractionTests.swift; sourceTree = "<group>"; };
@@ -242,6 +268,7 @@
 /* Begin PBXFrameworksBuildPhase section */
 			A30000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 			A30000000000000000000002 /* AppAlignTests Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+			D30000000000000000000012 /* AppAlignSpaceHelper Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -250,6 +277,8 @@
 				children = (
 					A40000000000000000000002 /* AppAlign */,
 					B40000000000000000000001 /* AppAlignTests */,
+					D30000000000000000000006 /* Space Probe Sources */,
+					D30000000000000000000016 /* Space Helper Tests */,
 					B2000000000000000000000B /* THIRD_PARTY_NOTICES.md */,
 					A40000000000000000000003 /* Products */,
 				);
@@ -270,10 +299,14 @@
 					B20000000000000000000005 /* LayoutEngine.swift */,
 					B20000000000000000000006 /* LayoutTemplates.swift */,
 					B20000000000000000000007 /* LayoutController.swift */,
+					Z20000000000000000000001 /* SpaceProvider.swift */,
+					Z20000000000000000000002 /* PersistedSpaceModels.swift */,
+					Z20000000000000000000003 /* PersistentSpaceStoreValidation.swift */,
 					B20000000000000000000008 /* LayoutPreview.swift */,
 					B2000000000000000000000C /* Persistence.swift */,
 					I20000000000000000000001 /* AppZoneHistoryPersistence.swift */,
 					I20000000000000000000002 /* AppHistoryLayoutIntegration.swift */,
+					V20000000000000000000051 /* EditorDeltaPersistence.swift */,
 					B20000000000000000000010 /* LayoutEditing.swift */,
 					B20000000000000000000011 /* LayoutEditorModel.swift */,
 					B20000000000000000000014 /* ZoneNavigator.swift */,
@@ -309,6 +342,7 @@
 					H20000000000000000000002 /* AutoRestoreController.swift */,
 					J20000000000000000000001 /* WindowRuntimeState.swift */,
 					K20000000000000000000001 /* AccessibilityHistoryPermissionMonitor.swift */,
+					D30000000000000000000001 /* SpaceHelperProcess.swift */,
 					A20000000000000000000003 /* Assets.xcassets */,
 				);
 				path = AppAlign;
@@ -316,15 +350,27 @@
 			};
 			A40000000000000000000003 /* Products */ = {
 				isa = PBXGroup;
-				children = (A20000000000000000000004 /* AppAlign.app */, B2000000000000000000000A /* AppAlignTests.xctest */,);
+				children = (A20000000000000000000004 /* AppAlign.app */, B2000000000000000000000A /* AppAlignTests.xctest */, D3000000000000000000000B /* AppAlignSpaceHelper */,);
 				name = Products;
 				sourceTree = "<group>";
 			};
 			B40000000000000000000001 /* AppAlignTests */ = {
 				isa = PBXGroup;
-				children = (B20000000000000000000009 /* LayoutEngineTests.swift */, B2000000000000000000000D /* PersistenceTests.swift */, N20000000000000000000001 /* AppHistoryCoordinatorTests.swift */, M20000000000000000000001 /* LayoutPersistenceControllerTests.swift */, L20000000000000000000001 /* AppZoneHistoryPersistenceTests.swift */, B20000000000000000000012 /* LayoutEditorTests.swift */, B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */, B20000000000000000000015 /* ZoneNavigatorTests.swift */, B2000000000000000000001A /* KeyboardSettingsTests.swift */, B2000000000000000000001B /* KeyboardSnapControllerTests.swift */, P20000000000000000000001 /* KeyboardManualPlacementTests.swift */, O20000000000000000000001 /* KeyboardManualHistoryWaitTests.swift */, B2000000000000000000001F /* GlobalHotkeysTests.swift */, B20000000000000000000020 /* KeyboardIntegrationTests.swift */, B20000000000000000000021 /* KeyboardLifecycleTests.swift */, C40000000000000000000001 /* DragDetectionTests.swift */, C40000000000000000000002 /* RuntimeWindowOwnershipTests.swift */, C40000000000000000000003 /* DragTestSupport.swift */, C40000000000000000000004 /* InputMonitorLifecycleTests.swift */, C40000000000000000000005 /* DragSnapTests.swift */, C40000000000000000000006 /* DragDetectorSnapAcceptanceTests.swift */, C40000000000000000000007 /* PlacementValidityTests.swift */, C40000000000000000000008 /* MultiDisplayTests.swift */, C40000000000000000000009 /* DisplayConfigurationControllerTests.swift */, E20000000000000000000003 /* OrderedInteractionTests.swift */, E20000000000000000000004 /* LayoutHotkeysTests.swift */, E20000000000000000000005 /* FlagsSubscriptionTests.swift */, G20000000000000000000001 /* ZoneSelectionBoundaryTests.swift */, G20000000000000000000002 /* KeyboardExtensionRaceTests.swift */, G20000000000000000000003 /* KeyboardExtensionAwaitTests.swift */, H20000000000000000000003 /* NewWindowMonitorTests.swift */, Q20000000000000000000001 /* NewWindowMonitorCoreTests.swift */, R20000000000000000000001 /* NewWindowMonitorAutoRestoreTests.swift */, S20000000000000000000001 /* NewWindowMonitorTestSupport.swift */, T20000000000000000000001 /* NewWindowMonitorRuntimeOwnerTests.swift */, W20000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift */,  K20000000000000000000002 /* AccessibilityHistoryPermissionMonitorTests.swift */,);
+				children = (Y20000000000000000000001 /* SpaceProviderTests.swift */, B20000000000000000000009 /* LayoutEngineTests.swift */, B2000000000000000000000D /* PersistenceTests.swift */, N20000000000000000000001 /* AppHistoryCoordinatorTests.swift */, M20000000000000000000001 /* LayoutPersistenceControllerTests.swift */, L20000000000000000000001 /* AppZoneHistoryPersistenceTests.swift */, B20000000000000000000012 /* LayoutEditorTests.swift */, B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */, B20000000000000000000015 /* ZoneNavigatorTests.swift */, B2000000000000000000001A /* KeyboardSettingsTests.swift */, B2000000000000000000001B /* KeyboardSnapControllerTests.swift */, P20000000000000000000001 /* KeyboardManualPlacementTests.swift */, O20000000000000000000001 /* KeyboardManualHistoryWaitTests.swift */, B2000000000000000000001F /* GlobalHotkeysTests.swift */, B20000000000000000000020 /* KeyboardIntegrationTests.swift */, B20000000000000000000021 /* KeyboardLifecycleTests.swift */, C40000000000000000000001 /* DragDetectionTests.swift */, C40000000000000000000002 /* RuntimeWindowOwnershipTests.swift */, C40000000000000000000003 /* DragTestSupport.swift */, C40000000000000000000004 /* InputMonitorLifecycleTests.swift */, C40000000000000000000005 /* DragSnapTests.swift */, C40000000000000000000006 /* DragDetectorSnapAcceptanceTests.swift */, C40000000000000000000007 /* PlacementValidityTests.swift */, C40000000000000000000008 /* MultiDisplayTests.swift */, C40000000000000000000009 /* DisplayConfigurationControllerTests.swift */, E20000000000000000000003 /* OrderedInteractionTests.swift */, E20000000000000000000004 /* LayoutHotkeysTests.swift */, E20000000000000000000005 /* FlagsSubscriptionTests.swift */, G20000000000000000000001 /* ZoneSelectionBoundaryTests.swift */, G20000000000000000000002 /* KeyboardExtensionRaceTests.swift */, G20000000000000000000003 /* KeyboardExtensionAwaitTests.swift */, H20000000000000000000003 /* NewWindowMonitorTests.swift */, Q20000000000000000000001 /* NewWindowMonitorCoreTests.swift */, R20000000000000000000001 /* NewWindowMonitorAutoRestoreTests.swift */, S20000000000000000000001 /* NewWindowMonitorTestSupport.swift */, T20000000000000000000001 /* NewWindowMonitorRuntimeOwnerTests.swift */, W20000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift */,  K20000000000000000000002 /* AccessibilityHistoryPermissionMonitorTests.swift */,);
 				path = AppAlignTests;
 				sourceTree = "<group>";
+			};
+			D30000000000000000000006 /* Space Probe Sources */ = {
+				isa = PBXGroup;
+				children = (D30000000000000000000007 /* space-probe.swift */, D30000000000000000000008 /* space-probe-core.swift */,);
+				path = scripts;
+				sourceTree = "<group>";
+			};
+			D30000000000000000000016 /* Space Helper Tests */ = {
+				isa = PBXGroup;
+				children = (D30000000000000000000004 /* SpaceHelperBackendTests.swift */,);
+				path = AppAlignTests;
+				sourceTree = SOURCE_ROOT;
 			};
 /* End PBXGroup section */
 
@@ -345,11 +391,15 @@
 					B10000000000000000000005 /* LayoutEngine.swift in Sources */,
 					B10000000000000000000006 /* LayoutTemplates.swift in Sources */,
 					B10000000000000000000007 /* LayoutController.swift in Sources */,
+					Z10000000000000000000001 /* SpaceProvider.swift in Sources */,
+					Z10000000000000000000003 /* PersistedSpaceModels.swift in Sources */,
+					Z10000000000000000000005 /* PersistentSpaceStoreValidation.swift in Sources */,
 					B10000000000000000000008 /* LayoutPreview.swift in Sources */,
 					D1000000000000000000000D /* DisplayLayoutRefresh.swift in Sources */,
 					B10000000000000000000010 /* Persistence.swift in Sources */,
 					I10000000000000000000001 /* AppZoneHistoryPersistence.swift in Sources */,
 					I10000000000000000000003 /* AppHistoryLayoutIntegration.swift in Sources */,
+					V10000000000000000000051 /* EditorDeltaPersistence.swift in Sources */,
 					B10000000000000000000016 /* LayoutEditing.swift in Sources */,
 					B10000000000000000000017 /* LayoutEditorModel.swift in Sources */,
 					B1000000000000000000001C /* ZoneNavigator.swift in Sources */,
@@ -374,6 +424,7 @@
 					D10000000000000000000001 /* DragCommit.swift in Sources */,
 					D10000000000000000000006 /* PlacementCommitTicket.swift in Sources */,
 					D10000000000000000000009 /* DisplayConfigurationController.swift in Sources */,
+					D30000000000000000000002 /* SpaceHelperProcess.swift in Sources */,
 					D1000000000000000000000A /* MultiDisplayNavigator.swift in Sources */,
 					D10000000000000000000002 /* DragLayoutSnapshot.swift in Sources */,
 					D10000000000000000000003 /* DragSettings.swift in Sources */,
@@ -404,8 +455,13 @@
 					B10000000000000000000011 /* Persistence.swift in Tests */,
 					I10000000000000000000002 /* AppZoneHistoryPersistence.swift in Tests */,
 					I10000000000000000000004 /* AppHistoryLayoutIntegration.swift in Tests */,
+					V10000000000000000000052 /* EditorDeltaPersistence.swift in Tests */,
 					B10000000000000000000012 /* DisplayProvider.swift in Tests */,
 					B10000000000000000000013 /* LayoutController.swift in Tests */,
+					Z10000000000000000000002 /* SpaceProvider.swift in Tests */,
+					Z10000000000000000000004 /* PersistedSpaceModels.swift in Tests */,
+					Z10000000000000000000006 /* PersistentSpaceStoreValidation.swift in Tests */,
+					Y10000000000000000000001 /* SpaceProviderTests.swift in Tests */,
 					D1000000000000000000000E /* DisplayLayoutRefresh.swift in Tests */,
 					B10000000000000000000014 /* WindowManagement.swift in Tests */,
 					B10000000000000000000015 /* PersistenceTests.swift in Tests */,
@@ -477,6 +533,8 @@
 					X10000000000000000000002 /* WindowRuntimeObservation.swift in Tests */,
 					X10000000000000000000004 /* NewWindowMonitorLifecycle.swift in Tests */,
 					V10000000000000000000002 /* WorkspaceNewWindowProcessProvider.swift in Tests */,
+					D30000000000000000000003 /* SpaceHelperProcess.swift in Tests */,
+					D30000000000000000000005 /* SpaceHelperBackendTests.swift in Tests */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};
@@ -490,9 +548,10 @@
 						A50000000000000000000001 /* Sources */,
 						A30000000000000000000001 /* Frameworks */,
 						A80000000000000000000001 /* Resources */,
+						D3000000000000000000000C /* Embed Helper Tool */,
 					);
 					buildRules = ();
-					dependencies = ();
+					dependencies = (D3000000000000000000000E /* PBXTargetDependency */,);
 					name = AppAlign;
 					productName = AppAlign;
 					productReference = A20000000000000000000004 /* AppAlign.app */;
@@ -512,6 +571,20 @@
 				productName = AppAlignTests;
 				productReference = B2000000000000000000000A /* AppAlignTests.xctest */;
 				productType = "com.apple.product-type.bundle.unit-test";
+			};
+			D30000000000000000000010 /* AppAlignSpaceHelper */ = {
+				isa = PBXNativeTarget;
+				buildConfigurationList = D30000000000000000000013 /* AppAlignSpaceHelper configuration list */;
+				buildPhases = (
+					D30000000000000000000011 /* AppAlignSpaceHelper Sources */,
+					D30000000000000000000012 /* AppAlignSpaceHelper Frameworks */,
+				);
+				buildRules = ();
+				dependencies = ();
+				name = AppAlignSpaceHelper;
+				productName = AppAlignSpaceHelper;
+				productReference = D3000000000000000000000B /* AppAlignSpaceHelper */;
+				productType = "com.apple.product-type.tool";
 			};
 /* End PBXNativeTarget section */
 
@@ -533,7 +606,7 @@
 					productRefGroup = A40000000000000000000003 /* Products */;
 					projectDirPath = "";
 					projectRoot = "";
-				targets = (A60000000000000000000001 /* AppAlign */, B60000000000000000000001 /* AppAlignTests */,);
+			targets = (A60000000000000000000001 /* AppAlign */, B60000000000000000000001 /* AppAlignTests */, D30000000000000000000010 /* AppAlignSpaceHelper */,);
 				};
 /* End PBXProject section */
 
@@ -551,6 +624,48 @@
 				runOnlyForDeploymentPostprocessing = 0;
 			};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+			D3000000000000000000000C /* Embed Helper Tool */ = {
+				isa = PBXCopyFilesBuildPhase;
+				buildActionMask = 2147483647;
+				dstPath = "";
+				dstSubfolderSpec = 6;
+				files = (D3000000000000000000000D /* AppAlignSpaceHelper in Embed Helper Tool */,);
+				name = "Embed Helper Tool";
+				runOnlyForDeploymentPostprocessing = 0;
+			};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section for AppAlignSpaceHelper */
+			D30000000000000000000011 /* AppAlignSpaceHelper Sources */ = {
+				isa = PBXSourcesBuildPhase;
+				buildActionMask = 2147483647;
+				files = (
+					D30000000000000000000009 /* space-probe.swift in Sources */,
+					D3000000000000000000000A /* space-probe-core.swift in Sources */,
+				);
+				runOnlyForDeploymentPostprocessing = 0;
+			};
+/* End helper source phase */
+
+/* Begin PBXContainerItemProxy section */
+			D3000000000000000000000F /* PBXContainerItemProxy */ = {
+				isa = PBXContainerItemProxy;
+				containerPortal = A90000000000000000000001 /* Project object */;
+				proxyType = 1;
+				remoteGlobalIDString = D30000000000000000000010;
+				remoteInfo = AppAlignSpaceHelper;
+			};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+			D3000000000000000000000E /* PBXTargetDependency */ = {
+				isa = PBXTargetDependency;
+				target = D30000000000000000000010 /* AppAlignSpaceHelper */;
+				targetProxy = D3000000000000000000000F /* PBXContainerItemProxy */;
+			};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 				AB0000000000000000000001 /* Debug */ = {
@@ -605,12 +720,15 @@
 				AB0000000000000000000004 /* Project Release */ = {isa = XCBuildConfiguration; buildSettings = {}; name = Release; };
 				B80000000000000000000001 /* AppAlignTests Debug */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = jp.a2c.AppAlignTests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_VERSION = 6.0; }; name = Debug; };
 				B80000000000000000000002 /* AppAlignTests Release */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = jp.a2c.AppAlignTests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_VERSION = 6.0; }; name = Release; };
+				D30000000000000000000014 /* AppAlignSpaceHelper Debug */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = NO; MACOSX_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = jp.a2c.AppAlignSpaceHelper; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; }; name = Debug; };
+				D30000000000000000000015 /* AppAlignSpaceHelper Release */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = NO; MACOSX_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = jp.a2c.AppAlignSpaceHelper; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
 				A70000000000000000000003 /* Project configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (AB0000000000000000000003 /* Project Debug */, AB0000000000000000000004 /* Project Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
 			A70000000000000000000002 /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (AB0000000000000000000001 /* Debug */, AB0000000000000000000002 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
 			B70000000000000000000001 /* AppAlignTests configuration list */ = {isa = XCConfigurationList; buildConfigurations = (B80000000000000000000001 /* Debug */, B80000000000000000000002 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+                D30000000000000000000013 /* AppAlignSpaceHelper configuration list */ = {isa = XCConfigurationList; buildConfigurations = (D30000000000000000000014 /* AppAlignSpaceHelper Debug */, D30000000000000000000015 /* AppAlignSpaceHelper Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
 /* End XCConfigurationList section */
 	};
 	rootObject = A90000000000000000000001 /* Project object */;

@@ -18,7 +18,9 @@ struct AppAlignApp: App {
     init() {
         let displayProvider = DisplayProvider()
         let validity = PlacementValidity()
-        let layout = LayoutController(displayProvider: displayProvider, placementValidity: validity)
+        let spaceProvider = SpaceProvider.production()
+        let layout = LayoutController(displayProvider: displayProvider, spaceProvider: spaceProvider,
+                                      placementValidity: validity)
         let runtime = AccessibilityWindowRuntime()
         let autoTicketRegistry = AutoRestoreTicketRegistry()
         let autoRestore = AutoRestoreController(layout: layout, runtime: runtime,
@@ -43,6 +45,7 @@ struct AppAlignApp: App {
                                             refreshDisplayConfiguration: { layout.refreshDisplays() },
                                             manualRuntime: runtime)
         placement.cancelAutomaticRestores = { autoRestore.cancelAll() }
+        layout.invalidateManualCapture = { [weak placement] in placement?.clearCapture() }
         placement.onSuccessfulPlacement = { _, context in
             layout.acceptSuccessfulAppPlacement(context.historyLease, zoneIDs: context.zoneIDs)
         }
@@ -180,8 +183,8 @@ private func startAfterPersistentLoad(_ context: HistoryLifecycleContext) {
         }
         await context.layout.loadPersistentState()
         guard !context.delegate.isTerminating else { return }
-        context.delegate.applyHistoryLifecycle?()
         context.displayConfiguration.start()
+        context.delegate.applyHistoryLifecycle?()
         context.hotkeys.start()
         context.layoutHotkeys.start()
     }

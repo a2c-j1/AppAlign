@@ -6,6 +6,7 @@ struct LayoutEditorView: View {
     @ObservedObject private var controller: LayoutController
     @StateObject private var model: LayoutEditorModel
     @State private var targetDisplayID: DisplaySelectionID
+    @State private var targetScope: PersistedSpaceScope
     @State private var selectedLayoutID: UUID
     @State private var catalog: [PersistedLayout]
     @State private var revision: UInt64 = 0
@@ -31,13 +32,17 @@ struct LayoutEditorView: View {
         _model = StateObject(wrappedValue: LayoutEditorModel(layout: initial,
                                                              workArea: controller.displayProvider.snapshot.displays.first(where: { $0.id == initialDisplayID })?.workArea))
         _targetDisplayID = State(initialValue: initialDisplayID)
+        let initialDisplay = controller.displayProvider.snapshot.displays.first { $0.id == initialDisplayID }
+        _targetScope = State(initialValue: initialDisplay.map { controller.spaceSnapshot(for: $0).persistedScope } ?? .common)
         _selectedLayoutID = State(initialValue: initial.id)
         _catalog = State(initialValue: snapshot.layouts)
         _nameText = State(initialValue: initial.name ?? "")
     }
 
     private var identity: EditorOperationIdentity {
-        EditorOperationIdentity(token: editorToken, targetDisplay: targetDisplayID, revision: revision)
+        EditorOperationIdentity(token: editorToken, targetDisplay: targetDisplayID, revision: revision,
+                                targetScope: targetScope,
+                                configurationRevision: controller.placementValidity.revision.configuration)
     }
 
     @State private var editorToken = UUID()
@@ -82,6 +87,13 @@ struct LayoutEditorView: View {
             model.cancelGesture()
             if let area { model.updateWorkArea(area) }
         }
+        .onChange(of: selectedDisplay.flatMap { controller.spaceSnapshot(for: $0).persistedScope }) { _, scope in
+            guard let scope, scope != targetScope else { return }
+            requestScopeChange(scope)
+        }
+        .onChange(of: controller.placementValidity.revision.configuration) { _, _ in
+            model.cancelGesture()
+        }
         .onChange(of: model.draft) { _, _ in synchronizeFields() }
         .onChange(of: gridAxis) { _, _ in synchronizeRatioField() }
         .interactiveDismissDisabled(hasUnsavedDraft || isBusy || model.isGestureInProgress)
@@ -96,7 +108,6 @@ struct LayoutEditorView: View {
     }
 
 }
-
 extension LayoutEditorView {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -112,6 +123,21 @@ extension LayoutEditorView {
             .labelsHidden()
             .padding(.horizontal, 10)
             .disabled(isBusy)
+
+            Picker("Save assignment to", selection: Binding(
+                get: { targetScope },
+                set: { newScope in requestScopeChange(newScope) }
+            )) {
+                Text("Display common").tag(PersistedSpaceScope.common)
+                if let display = selectedDisplay, controller.spaceSnapshot(for: display).mode == .validatedScoped,
+                   case .space(let id) = controller.spaceSnapshot(for: display).persistedScope {
+                    Text("Current Space").tag(PersistedSpaceScope.space(id))
+                }
+            }
+            .labelsHidden()
+            .padding(.horizontal, 10)
+            .disabled(isBusy || selectedDisplay.map { controller.spaceSnapshot(for: $0).mode != .validatedScoped } != false)
+            .help(selectedDisplay.flatMap { controller.spaceSnapshot(for: $0).reason } ?? "Choose where this layout applies.")
 
             List {
                 Section("Saved") {
@@ -305,6 +331,11 @@ extension LayoutEditorView {
         requestSelection(.display(newDisplay))
     }
 
+    private func requestScopeChange(_ scope: PersistedSpaceScope) {
+        guard scope != targetScope else { return }
+        requestSelection(.scope(scope))
+    }
+
     private func requestSelection(_ selection: PendingEditorSelection) {
         if hasUnsavedDraft {
             pendingSelection = selection
@@ -331,8 +362,24 @@ extension LayoutEditorView {
             revision = 0
             catalog = controller.editorCatalog(for: next).layouts
             let snapshot = controller.editorCatalog(for: next)
+            targetScope = controller.displayProvider.snapshot.displays.first(where: { $0.id == next })
+                .map { controller.spaceSnapshot(for: $0).persistedScope } ?? .common
             let layout = snapshot.layouts.first(where: { $0.id == snapshot.appliedLayoutID }) ?? PersistentStoreCoordinator.defaultLayout()
             model.load(layout, workArea: controller.displayProvider.snapshot.displays.first(where: { $0.id == next })?.workArea)
+            selectedLayoutID = layout.id
+            isNewDraft = false
+            synchronizeFields()
+        case .scope(let next):
+            targetScope = next
+            editorToken = UUID()
+            revision = 0
+            guard let display = selectedDisplay else { return }
+            let snapshot = controller.editorCatalog(for: targetDisplayID, scope: next)
+            catalog = snapshot.layouts
+            let layout = snapshot.layouts.first(where: { $0.id == snapshot.appliedLayoutID })
+                ?? snapshot.layouts.first(where: { $0.id == PersistentStoreCoordinator.defaultLayoutID })
+                ?? PersistentStoreCoordinator.defaultLayout()
+            model.load(layout, workArea: display.workArea)
             selectedLayoutID = layout.id
             isNewDraft = false
             synchronizeFields()
@@ -540,13 +587,4 @@ private extension LayoutDefinition {
         case .canvas(let value), .focus(let value): value.id.rawValue
         }
     }
-}
-
-private enum PendingEditorSelection {
-    case display(DisplaySelectionID)
-    case layout(PersistedLayout)
-    case template(LayoutTemplate)
-    case canvas
-    case delete(UUID)
-    case duplicate(UUID)
 }

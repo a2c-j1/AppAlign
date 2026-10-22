@@ -47,6 +47,24 @@ final class LayoutEditorConcurrencyTests: XCTestCase {
     }
 
     @MainActor
+    func testPendingEditorApplyDoesNotAdoptAfterConfigurationRevisionChanges() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.remove() }
+        let beforeZones = fixture.controller.zones
+        fixture.access.blockNextWrite("assignments.json")
+        let applying = Task { await fixture.controller.applyEditorLayout(fixture.custom.id, identity: fixture.identity()) }
+        try await fixture.access.waitForBlockedWrite()
+
+        _ = fixture.controller.placementValidity.invalidateForConfigurationChange()
+        fixture.access.releaseWrite()
+        if case .success = await applying.value {
+            XCTFail("An apply waiting across a configuration revision must not become current again.")
+        }
+        XCTAssertEqual(fixture.controller.zones, beforeZones, "A stale completion must not publish the old display's zones.")
+        XCTAssertEqual(fixture.controller.selectedDisplayID, fixture.first.id)
+    }
+
+    @MainActor
     func testSupersededApplyRefreshesRuntimeZonesEvenWhenLaterSaveFails() async throws {
         let fixture = try await makeFixture()
         defer { fixture.remove() }
@@ -193,7 +211,7 @@ final class LayoutEditorConcurrencyTests: XCTestCase {
     }
 
     @MainActor
-    private func makeFixture(includeDefault: Bool = true) async throws -> EditorFixture {
+    private func makeFixture(includeDefault: Bool = true, spaceProvider: SpaceProvider? = nil) async throws -> EditorFixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Issue5Review-\(UUID().uuidString)", isDirectory: true)
         let access = EditorControlledFileAccess()
         let coordinator = PersistentStoreCoordinator(directory: directory, fileAccess: access)
@@ -203,21 +221,25 @@ final class LayoutEditorConcurrencyTests: XCTestCase {
         let second = display(uuid: secondUUID, runtimeID: 2, primary: false)
         let custom = layout(name: "Custom")
         let other = layout(name: "Other display")
+        if let spaceProvider { _ = await refreshSpaceProvider(spaceProvider, displays: [firstUUID, secondUUID]) }
         try await coordinator.saveLayoutAndAssignments(
             (includeDefault ? [PersistentStoreCoordinator.defaultLayout()] : []) + [custom, other],
             [PersistedAssignment(displayUUID: secondUUID, spaceScope: .common, layoutID: other.id)]
         )
-        let controller = LayoutController(displayProvider: DisplayProvider(snapshot: DisplaySnapshot(displays: [first, second], primaryFrame: first.frame)), storeCoordinator: coordinator)
+        let controller = LayoutController(displayProvider: DisplayProvider(snapshot: DisplaySnapshot(displays: [first, second], primaryFrame: first.frame)),
+                                          spaceProvider: spaceProvider ?? SpaceProvider(), storeCoordinator: coordinator)
         await controller.loadPersistentState()
         return EditorFixture(directory: directory, access: access, coordinator: coordinator, controller: controller,
                              first: first, second: second, firstUUID: firstUUID, secondUUID: secondUUID, custom: custom, other: other)
     }
 
-    private func layout(name: String) -> PersistedLayout {
+    private func layout(name: String, columns: Int = 3) -> PersistedLayout {
         let id = UUID()
-        let grid = GridLayout(id: LayoutID(rawValue: id), rows: 1, columns: 3, rowPercentages: [10_000],
-                              columnPercentages: [2_500, 5_000, 2_500], cellChildMap: [[7, 15, 1_000]])
-        return PersistedLayout(id: id, definition: .grid(grid), spacing: 0, template: .columns, zoneCount: 3, name: name)
+        let percentages = columns == 3 ? [2_500, 5_000, 2_500] : [5_000, 5_000]
+        let childMap = columns == 3 ? [7, 15, 1_000] : [7, 15]
+        let grid = GridLayout(id: LayoutID(rawValue: id), rows: 1, columns: columns, rowPercentages: [10_000],
+                              columnPercentages: percentages, cellChildMap: [childMap])
+        return PersistedLayout(id: id, definition: .grid(grid), spacing: 0, template: .columns, zoneCount: columns, name: name)
     }
 
     private func named(_ layout: PersistedLayout, _ name: String) throws -> PersistedLayout {
@@ -253,6 +275,56 @@ final class LayoutEditorConcurrencyTests: XCTestCase {
 
 extension LayoutEditorConcurrencyTests {
     @MainActor
+    func testEditorAssignmentDeltaStaysInOriginalSpaceAfterScopeSwitch() async throws {
+        let backend = SwitchingSpaceBackendForEditor()
+        let provider = SpaceProvider.production(backend: backend)
+        let fixture = try await makeFixture(spaceProvider: provider)
+        defer { fixture.remove() }
+        let layoutB = layout(name: "B quick", columns: 2)
+        try await fixture.coordinator.saveLayouts(Array(fixture.controller.savedLayouts.values) + [layoutB])
+        fixture.controller.savedLayouts[layoutB.id] = layoutB
+        let initialSnapshot = DisplaySnapshot(displays: [fixture.first, fixture.second], primaryFrame: fixture.first.frame)
+        fixture.controller.displaysDidPublish(initialSnapshot)
+        let scopeA = try XCTUnwrap(fixture.controller.spaceSnapshot(for: fixture.first).spaceID?.persisted.map(PersistedSpaceScope.space))
+
+        fixture.access.blockNextWrite("assignments.json")
+        let applyingA = Task {
+            await fixture.controller.applyEditorLayout(fixture.custom.id,
+                                                       identity: fixture.identity(scope: scopeA))
+        }
+        try await fixture.access.waitForBlockedWrite()
+
+        backend.set("B")
+        _ = await refreshSpaceProvider(provider, displays: [fixture.firstUUID, fixture.secondUUID])
+        let configurationRevision = fixture.controller.placementValidity.invalidateForConfigurationChange()
+        fixture.controller.displaysDidPublish(initialSnapshot)
+        XCTAssertTrue(fixture.controller.placementValidity.publishConfiguration(revision: configurationRevision))
+        let scopeB = try XCTUnwrap(fixture.controller.spaceSnapshot(for: fixture.first).spaceID?.persisted.map(PersistedSpaceScope.space))
+        XCTAssertNotEqual(scopeA, scopeB)
+        XCTAssertEqual(fixture.controller.applyQuickLayout(layoutB.id, at: CGPoint(x: 10, y: 10))?.id,
+                       layoutB.id, "The B quick save queues behind A's pending editor write.")
+        let layoutInB = fixture.controller.currentLayout.id
+        let zonesInB = fixture.controller.zones.count
+        XCTAssertEqual(layoutInB, layoutB.id)
+        XCTAssertEqual(zonesInB, 2)
+
+        fixture.access.releaseWrite()
+        guard case .failure = await applyingA.value else {
+            XCTFail("A completed write must not be adopted into B's editor UI after the Space changed.")
+            return
+        }
+        XCTAssertEqual(fixture.controller.currentLayout.id, layoutInB)
+        XCTAssertEqual(fixture.controller.zones.count, zonesInB)
+
+        await fixture.controller.saveChain?.value
+        let restored = try await fixture.coordinator.load()
+        XCTAssertEqual(restored.assignments[PersistedAssignmentKey(displayUUID: fixture.firstUUID, spaceScope: scopeA)]?.layoutID,
+                       fixture.custom.id)
+        XCTAssertEqual(restored.assignments[PersistedAssignmentKey(displayUUID: fixture.firstUUID, spaceScope: scopeB)]?.layoutID,
+                       layoutB.id)
+    }
+
+    @MainActor
     func testQuickLayoutSwitchInvalidatesSharedTicketBeforePublishingAssignment() async throws {
         let fixture = try await makeFixture()
         defer { fixture.remove() }
@@ -275,7 +347,7 @@ extension LayoutEditorConcurrencyTests {
         await fixture.controller.saveChain?.value
         let persisted = try await fixture.coordinator.load()
         XCTAssertEqual(persisted.assignments[fixture.firstUUID]?.layoutID, fixture.custom.id)
-        XCTAssertNil(fixture.controller.quickLayoutOverrides[fixture.first.id], "A matching successful save can clear the active override.")
+        XCTAssertNil(fixture.controller.quickLayoutOverrides[fixture.controller.overrideKey(for: fixture.first)], "A matching successful save can clear the active override.")
         oldTicket.finish()
     }
     @MainActor
@@ -294,7 +366,7 @@ extension LayoutEditorConcurrencyTests {
         let persisted = try await fixture.coordinator.load()
         XCTAssertEqual(persisted.assignments[fixture.firstUUID]?.layoutID, fixture.custom.id)
         XCTAssertEqual(fixture.controller.appliedDragLayoutSnapshot(at: CGPoint(x: 20, y: 20))?.layout.id, fixture.custom.id)
-        XCTAssertNil(fixture.controller.quickLayoutOverrides[fixture.first.id])
+        XCTAssertNil(fixture.controller.quickLayoutOverrides[fixture.controller.overrideKey(for: fixture.first)])
     }
 
     @MainActor
@@ -314,7 +386,7 @@ extension LayoutEditorConcurrencyTests {
         XCTAssertTrue(fixture.controller.canRetrySave, "Catalog-only writes must leave the failed quick assignment retryable.")
         XCTAssertFalse(fixture.controller.lastSaveSucceeded, "Catalog-only writes must not mark the paired quick assignment durable.")
         XCTAssertEqual(fixture.controller.assignments[fixture.firstUUID]?.layoutID, fixture.custom.id)
-        XCTAssertEqual(fixture.controller.quickLayoutOverrides[fixture.first.id]?.id, fixture.custom.id)
+        XCTAssertEqual(fixture.controller.quickLayoutOverrides[fixture.controller.overrideKey(for: fixture.first)]?.id, fixture.custom.id)
 
         let retried = await fixture.controller.retryFailedSave()
         XCTAssertTrue(retried)
@@ -383,6 +455,18 @@ extension LayoutEditorConcurrencyTests {
     }
 }
 
+private final class SwitchingSpaceBackendForEditor: ReadOnlySpaceBackend, @unchecked Sendable {
+    let identifier = "editor-fake"
+    let canAdoptStableIdentifiers = true
+    private let lock = NSLock()
+    private var value = "A"
+
+    func set(_ value: String) { lock.lock(); self.value = value; lock.unlock() }
+    func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue? {
+        lock.withLock { ReadOnlySpaceValue(id: value, kind: .regular) }
+    }
+}
+
 @MainActor
 private struct EditorFixture {
     let directory: URL
@@ -396,8 +480,10 @@ private struct EditorFixture {
     let custom: PersistedLayout
     let other: PersistedLayout
 
-    func identity(token: UUID = UUID(), revision: UInt64 = 1, display: DisplaySelectionID? = nil) -> EditorOperationIdentity {
-        EditorOperationIdentity(token: token, targetDisplay: display ?? first.id, revision: revision)
+    func identity(token: UUID = UUID(), revision: UInt64 = 1, display: DisplaySelectionID? = nil,
+                  scope: PersistedSpaceScope = .common) -> EditorOperationIdentity {
+        EditorOperationIdentity(token: token, targetDisplay: display ?? first.id, revision: revision,
+                                targetScope: scope, configurationRevision: controller.placementValidity.revision.configuration)
     }
 
     func remove() { access.releaseWrite(); try? FileManager.default.removeItem(at: directory) }
