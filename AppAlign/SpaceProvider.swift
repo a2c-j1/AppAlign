@@ -74,16 +74,17 @@ struct LayoutOverrideKey: Hashable, Sendable {
 protocol ReadOnlySpaceBackend: Sendable {
     var identifier: String { get }
     var canAdoptStableIdentifiers: Bool { get }
+    var allowsScopedQueries: Bool { get }
     /// Synchronous private IPC/helper waits must run on a dedicated serial worker, never
     /// MainActor or a cooperative executor. Return only after query work and any child
     /// exit/reap complete; the controller retains its single running slot until then.
-    /// The current SkyLight backend is wired to the bundled helper but its adoption gate
-    /// is closed, so it performs no query.
+    /// Normal SkyLight launches are disabled; an explicit host-limited preview can query.
     func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue?
     func snapshot(for displayUUID: UUID, deadline: UInt64) async throws -> ReadOnlySpaceValue?
 }
 
 extension ReadOnlySpaceBackend {
+    var allowsScopedQueries: Bool { canAdoptStableIdentifiers }
     func snapshot(for displayUUID: UUID, deadline _: UInt64) async throws -> ReadOnlySpaceValue? {
         try await snapshot(for: displayUUID)
     }
@@ -108,28 +109,44 @@ struct SpaceProviderCandidate: Equatable, Sendable {
     let snapshots: [UUID: DisplaySpaceSnapshot]
 }
 
-/// An intentionally closed gate until the private ABI and IDs have been verified on
-/// the target macOS 27 build 26A434 + M1 + Dell setup. This implementation never resolves or
-/// calls a SkyLight symbol on unverified systems.
+/// Formal adoption remains closed. Explicit preview queries use a separate saved namespace
+/// on the observed macOS 27 build 26A434 arm64 host; reboot stability is still unverified.
 struct SkyLightReadOnlyBackend: ReadOnlySpaceBackend {
-    let identifier = "skylight-read-only"
+    var identifier: String { previewEnabled ? "skylight-preview-27-26A434" : "skylight-read-only" }
     let isValidatedForCurrentSystem = false
+    let previewEnabled: Bool
+
+    static var previewRequested: Bool {
+        ProcessInfo.processInfo.arguments.contains("--appalign-space-preview")
+    }
+
+    static func permitsPreview(requested: Bool, host: SpaceHelperHostIdentity?, architecture: String) -> Bool {
+        requested && host == .supported && architecture == "arm64"
+    }
     let runner: SpaceHelperProcessRunner
 
-    init(runner: SpaceHelperProcessRunner = SpaceHelperProcessRunner()) {
+    init(runner: SpaceHelperProcessRunner = SpaceHelperProcessRunner(),
+         previewRequested: Bool = SkyLightReadOnlyBackend.previewRequested) {
         self.runner = runner
+        #if arch(arm64)
+        let architecture = "arm64"
+        #else
+        let architecture = "unsupported"
+        #endif
+        previewEnabled = Self.permitsPreview(requested: previewRequested,
+                                            host: SpaceHelperHostIdentity.current(), architecture: architecture)
     }
 
     var canAdoptStableIdentifiers: Bool { isValidatedForCurrentSystem }
+    var allowsScopedQueries: Bool { isValidatedForCurrentSystem || previewEnabled }
 
     func snapshot(for displayUUID: UUID) async throws -> ReadOnlySpaceValue? {
         try await snapshot(for: displayUUID, deadline: UInt64.max)
     }
 
     func snapshot(for displayUUID: UUID, deadline: UInt64) async throws -> ReadOnlySpaceValue? {
-        // Production lookup remains disabled until the isolated probe establishes the
-        // required OS-specific ABI and stable IDs. This policy also prevents child launch.
-        guard isValidatedForCurrentSystem else { return nil }
+        // Normal launches remain disabled. Preview is an explicit experiment, not formal adoption.
+        guard allowsScopedQueries else { return nil }
         return try await runner.snapshot(for: displayUUID, deadline: deadline)
     }
 }
@@ -153,7 +170,7 @@ final class SpaceProvider {
     static func production(backend: (any ReadOnlySpaceBackend)? = SkyLightReadOnlyBackend(),
                            notificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter) -> SpaceProvider {
         let provider = SpaceProvider(backend: backend, notificationCenter: notificationCenter)
-        if backend?.canAdoptStableIdentifiers == true { provider.requestScopedMode() }
+        if backend?.allowsScopedQueries == true { provider.requestScopedMode() }
         return provider
     }
 
@@ -196,7 +213,7 @@ final class SpaceProvider {
     nonisolated func readCandidate(for request: SpaceProviderRefreshRequest,
                                    deadline: UInt64) async -> SpaceProviderCandidate {
         var result: [UUID: DisplaySpaceSnapshot] = [:]
-        if request.scopedModeRequested, let backend = request.backend, backend.canAdoptStableIdentifiers {
+        if request.scopedModeRequested, let backend = request.backend, backend.allowsScopedQueries {
             let initialTime = DispatchTime.now().uptimeNanoseconds
             let available = deadline > initialTime ? deadline - initialTime : 0
             let reserve = min(100_000_000, available / 10)

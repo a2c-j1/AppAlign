@@ -3,6 +3,7 @@ import Foundation
 import XCTest
 
 final class SpaceHelperBackendTests: XCTestCase {
+
     func testResponseDecoderReturnsOnlyCanonicalRegularSpaceUUID() throws {
         let displayID = UUID()
         let spaceUUID = "5EA7DC96-5689-1D28-6AF8-DB244D30E11E"
@@ -202,7 +203,7 @@ final class SpaceHelperBackendTests: XCTestCase {
         let runner = SpaceHelperProcessRunner(testExecutableURL: helperURL,
                                               testArgumentPrefix: ["-c", "exec /bin/sleep 20"],
                                               childStarted: { recorder.set($0) })
-        let backend = SkyLightReadOnlyBackend(runner: runner)
+        let backend = SkyLightReadOnlyBackend(runner: runner, previewRequested: false)
         let gatedValue = try await backend.snapshot(for: UUID(), deadline: deadline(after: 1_000_000_000))
         XCTAssertNil(gatedValue)
         XCTAssertNil(recorder.pid, "The product adoption gate is false and must prevent helper launch.")
@@ -322,5 +323,23 @@ private actor BudgetRecordingBackend: ReadOnlySpaceBackend {
             return nil
         }
         return try await snapshot(for: displayUUID)
+    }
+}
+
+final class SpacePreviewPolicyTests: XCTestCase {
+    func testPreviewRequiresExplicitOptInAndObservedHost() {
+        XCTAssertTrue(SkyLightReadOnlyBackend.permitsPreview(requested: true, host: .supported, architecture: "arm64"))
+        XCTAssertFalse(SkyLightReadOnlyBackend.permitsPreview(requested: false, host: .supported, architecture: "arm64"))
+        XCTAssertFalse(SkyLightReadOnlyBackend.permitsPreview(requested: true, host: nil, architecture: "arm64"))
+        XCTAssertFalse(SkyLightReadOnlyBackend.permitsPreview(requested: true, host: .supported, architecture: "x86_64"))
+        XCTAssertFalse(SkyLightReadOnlyBackend.permitsPreview(requested: true,
+            host: SpaceHelperHostIdentity(major: 27, build: "other"), architecture: "arm64"))
+        let preview = SkyLightReadOnlyBackend(previewRequested: true)
+        XCTAssertFalse(preview.canAdoptStableIdentifiers)
+        if preview.previewEnabled {
+            XCTAssertTrue(preview.allowsScopedQueries)
+            XCTAssertEqual(preview.identifier, "skylight-preview-27-26A434")
+            XCTAssertNotEqual(preview.identifier, SkyLightReadOnlyBackend(previewRequested: false).identifier)
+        }
     }
 }

@@ -40,6 +40,24 @@ struct ContentView: View {
                         .disabled(!layoutController.canEdit)
                     }
 
+                    if SkyLightReadOnlyBackend.previewRequested {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Space preview — 再起動後の同一性は未確認")
+                                .font(.caption.weight(.semibold))
+                            if let display = layoutController.selectedDisplay {
+                                let snapshot = layoutController.spaceSnapshot(for: display)
+                                if snapshot.mode == .validatedScoped, let id = snapshot.spaceID {
+                                    Text("Space別保存が有効 · ID末尾: \(String(id.value.suffix(8)))")
+                                        .font(.caption.monospaced())
+                                } else {
+                                    Text("共通レイアウトを使用 · \(snapshot.reason ?? "この画面のSpaceを取得できません")")
+                                        .font(.caption)
+                                }
+                            }
+                        }
+                        .textSelection(.enabled)
+                    }
+
                     HStack {
                         Picker("Template", selection: $layoutController.template) {
                             ForEach(LayoutTemplate.allCases) { template in

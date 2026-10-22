@@ -115,3 +115,12 @@ SwiftFormatは95 files / 0 changes、SwiftLintは95 files / 0 violations、Semgr
 1. 対象Macで`sw_vers -productVersion; sw_vers -buildVersion; uname -m`を確認する。公開CoreGraphicsの`CGGetOnlineDisplayList` + `CGDisplayCreateUUIDFromDisplayID`でM1内蔵画面とDellのdisplay UUIDを得て、UUIDと接続構成を作業記録に残す。
 2. 統括・ユーザーがGUIでSpace A→B→Aを確認する際、各切替後に各display UUIDで`python3 scripts/space-probe.py --expected-os-major 27 --expected-build 26A434 --display-uuid <DISPLAY_UUID>`を実行する。9-field JSONのraw ID/type/UUID candidateが同じ論理Spaceへどう対応するか記録する。probe自体はSpaceを切り替えない。
 3. 同じ論理Spaceでprobeプロセス再起動とOS再起動の前後を照合する。raw ID/type/UUID candidateとdisplay UUIDの対応がA-B-A、process restart、OS restartで再現し、失敗条件でdegraded fallbackすることを確認するまで採用しない。API利用不可時はdegradedの基本配置だけを使い、history/auto/Space保存を止め、復帰後は保存済みcommon/Space assignmentへ戻ることを確認する。
+
+
+## 2026-10-22 ユーザー実機確認用preview
+
+ユーザーの既存試用版置換依頼に対応。`--appalign-space-preview`の完全一致引数とmacOS 27 build 26A434 / arm64でのみSpace照会を許可。正式採用gateはfalseを維持し、保存backend namespaceは`skylight-preview-27-26A434`で共通・正式保存と分離する。通常起動では照会しない。状態とID末尾を設定画面に表示する。
+
+署名有効arm64/jobs2で304テスト成功、失敗0・skip0。テストを独立クラスへ移動した後のSpacePreviewPolicyTestsも成功。SwiftFormat・SwiftLint・Semgrep成功、bundle/helper署名とhelper --help成功。ユーザーのA→B→A・再起動後の同一性確認は未完了。TCC reset・identity変更・#29修正なし。
+
+確認手順：メニューバーAppAlign→Settings→Dellを選択。通常SpaceでSpace別保存有効のID末尾を確認。Edit Layoutで新しいlayoutを作り、Save assignment to: Current Spaceで保存・適用。別Spaceでも異なるlayoutを作りA→B→AでレイアウトとID末尾を照合。取得不能Spaceは共通fallback。既存common layoutを直接編集しない。
