@@ -115,14 +115,16 @@ enum KeyboardSnapError: LocalizedError {
 struct KeyboardEnvironment {
     let frontmostPID: @MainActor () -> pid_t?
     let isAccessibilityTrusted: @MainActor () -> Bool
+    let focusedWindowIdentity: @MainActor (pid_t) async -> Int?
     let ownPID: pid_t
     let bundleIdentifier: @MainActor (pid_t) -> String?
-
-    init(frontmostPID: @escaping @MainActor () -> pid_t?,
-         isAccessibilityTrusted: @escaping @MainActor () -> Bool, ownPID: pid_t,
+    init(frontmostPID: @escaping @MainActor () -> pid_t?, isAccessibilityTrusted: @escaping @MainActor () -> Bool,
+         focusedWindowIdentity: @escaping @MainActor (pid_t) async -> Int? = WindowRepository.focusedWindowIdentity,
+         ownPID: pid_t,
          bundleIdentifier: @escaping @MainActor (pid_t) -> String? = { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }) {
         self.frontmostPID = frontmostPID
         self.isAccessibilityTrusted = isAccessibilityTrusted
+        self.focusedWindowIdentity = focusedWindowIdentity
         self.ownPID = ownPID
         self.bundleIdentifier = bundleIdentifier
     }

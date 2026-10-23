@@ -35,7 +35,6 @@ final class DisplayConfigurationController {
     private let sampleDisplayConfiguration: @MainActor () -> DisplaySnapshot
     private let refreshDeadlineNanoseconds: UInt64
     private var observers: [ObserverRegistration] = []
-    private var pollingTimer: Timer?
     private var sleeping = false
     private var pendingRevision: UInt64?
     private var callbackEpoch: UInt64 = 0
@@ -144,12 +143,9 @@ final class DisplayConfigurationController {
         }
         let revision = beginInvalidation()
         enqueueRefresh(sampleDisplayConfiguration(), revision: revision)
-        startPolling()
     }
 
     func shutdown() {
-        pollingTimer?.invalidate()
-        pollingTimer = nil
         callbackEpoch &+= 1
         invalidateRefreshRequests()
         callbackContext.deactivate()
@@ -341,17 +337,6 @@ extension DisplayConfigurationController {
         return deadline > now ? deadline - now : 0
     }
 
-    private func startPolling() {
-        guard pollingTimer == nil, !sleeping, !callbackContext.isSleeping else { return }
-        let epoch = callbackEpoch
-        pollingTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.callbackEpoch == epoch else { return }
-                _ = self.refreshIfChanged()
-            }
-        }
-    }
-
     private func recordMonitoringDiagnostic(_ message: String) {
         guard !monitoringDiagnostics.contains(message) else { return }
         if monitoringDiagnostics.count >= 4 { monitoringDiagnostics.removeFirst() }
@@ -374,13 +359,10 @@ extension DisplayConfigurationController {
             sleeping = state.sleeping
             if sleeping {
                 historyPermissionPollingSuspendedChanged?(true)
-                pollingTimer?.invalidate()
-                pollingTimer = nil
                 return
             }
             historyPermissionPollingSuspendedChanged?(false)
             refreshAfterSignal(revision: currentRevision)
-            startPolling()
             return
         }
 

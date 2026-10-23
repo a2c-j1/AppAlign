@@ -271,11 +271,9 @@ struct AXWindow: @unchecked Sendable {
 
 struct WindowRepository {
     let messagingTimeout: Float
-
     init(messagingTimeout: Float = 0.5) {
         self.messagingTimeout = messagingTimeout
     }
-
     func focusedWindow(applicationPID: pid_t) throws -> AXWindow {
         let applicationElement = AXUIElementCreateApplication(applicationPID)
         let timeoutResult = AXUIElementSetMessagingTimeout(applicationElement, messagingTimeout)
@@ -324,7 +322,6 @@ struct WindowRepository {
             pid: pid
         )
     }
-
     func applicationWindows(applicationPID: pid_t, timeout: Float? = nil,
                             deadline: UInt64? = nil) throws -> [AXWindow] {
         let timeout = timeout ?? messagingTimeout
@@ -341,6 +338,9 @@ struct WindowRepository {
         }
         return elements.map { AXWindow(applicationElement: applicationElement, element: $0, pid: applicationPID,
                                        messagingTimeout: timeout, operationDeadline: deadline) }
+    }
+    static func focusedWindowIdentity(_ processID: pid_t) async -> Int? {
+        await Task.detached(priority: .utility) { (try? WindowRepository(messagingTimeout: 0.5).focusedWindow(applicationPID: processID)).map { Int(CFHash($0.element)) } }.value
     }
 }
 

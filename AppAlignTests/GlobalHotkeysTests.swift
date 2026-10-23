@@ -187,7 +187,8 @@ final class GlobalHotkeysTests: XCTestCase {
             let environment = FakeKeyboardEnvironment()
             let keyboardEnvironment = KeyboardEnvironment(
                 frontmostPID: { environment.frontmostPID },
-                isAccessibilityTrusted: { environment.isTrusted }, ownPID: 100
+                isAccessibilityTrusted: { environment.isTrusted },
+                focusedWindowIdentity: { _ in await environment.readFocusedWindowIdentity() }, ownPID: 100
             )
             let snapController = KeyboardSnapController(layoutController: layout, backend: backend, environment: keyboardEnvironment)
             let registrar = FakeHotKeyRegistrar(systemConflict: systemConflict, registrationStatus: registrationStatus)
@@ -255,9 +256,132 @@ final class GlobalHotkeysTests: XCTestCase {
 }
 
 @MainActor
+extension GlobalHotkeysTests {
+    func testEnvironmentPollingSkipsUnchangedFocusedWindowProbe() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.remove() }
+        fixture.hotkeys.start()
+        let registered = await fixture.waitForActiveRegistrations()
+        XCTAssertTrue(registered)
+
+        let initialProbeCount = await fixture.backend.focusProbeCount()
+        let unchangedEnvironmentDetected = await fixture.hotkeys.pollEnvironmentForTesting()
+        XCTAssertFalse(unchangedEnvironmentDetected)
+        try await Task.sleep(for: .milliseconds(50))
+        let unchangedProbeCount = await fixture.backend.focusProbeCount()
+        XCTAssertEqual(unchangedProbeCount, initialProbeCount)
+
+        fixture.environment.frontmostPID = 201
+        let changedEnvironmentDetected = await fixture.hotkeys.pollEnvironmentForTesting()
+        XCTAssertTrue(changedEnvironmentDetected)
+        let changedEnvironmentWasProbed = await fixture.backend.waitForFocusProbeCount(greaterThan: initialProbeCount)
+        XCTAssertTrue(changedEnvironmentWasProbed)
+    }
+
+    func testFocusedWindowChangesWithinSameProcessReconcileInBothDirections() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.remove() }
+        fixture.hotkeys.start()
+        let initiallyRegistered = await fixture.waitForActiveRegistrations()
+        XCTAssertTrue(initiallyRegistered)
+        let initialFocusIdentityDetected = await fixture.hotkeys.pollEnvironmentForTesting()
+        XCTAssertFalse(initialFocusIdentityDetected)
+
+        await fixture.backend.setFocusedWindowEligible(false)
+        fixture.environment.focusedWindowIdentity = 2
+        let focusedWindowChangeDetected = await fixture.hotkeys.pollEnvironmentForTesting()
+        XCTAssertTrue(focusedWindowChangeDetected)
+        let ineligibleWindowReleasedHotkeys = await fixture.waitForNoActiveRegistrations()
+        XCTAssertTrue(ineligibleWindowReleasedHotkeys)
+        XCTAssertTrue(fixture.registrar.activeIDs.isEmpty)
+
+        await fixture.backend.setFocusedWindowEligible(true)
+        fixture.environment.focusedWindowIdentity = 3
+        let focusedWindowRestoreDetected = await fixture.hotkeys.pollEnvironmentForTesting()
+        XCTAssertTrue(focusedWindowRestoreDetected)
+        let eligibleWindowRegistered = await fixture.waitForActiveRegistrations()
+        XCTAssertTrue(eligibleWindowRegistered)
+    }
+
+    func testAccessibilityPermissionRevocationAndRestoreWithinSameProcess() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.remove() }
+        fixture.hotkeys.start()
+        let initiallyRegistered = await fixture.waitForActiveRegistrations()
+        XCTAssertTrue(initiallyRegistered)
+
+        fixture.environment.isTrusted = false
+        let revokedPermissionDetected = await fixture.hotkeys.pollEnvironmentForTesting()
+        XCTAssertTrue(revokedPermissionDetected)
+        let revokedPermissionReleasedHotkeys = await fixture.waitForNoActiveRegistrations()
+        XCTAssertTrue(revokedPermissionReleasedHotkeys)
+
+        fixture.environment.isTrusted = true
+        let restoredPermissionDetected = await fixture.hotkeys.pollEnvironmentForTesting()
+        XCTAssertTrue(restoredPermissionDetected)
+        let restoredPermissionRegisteredHotkeys = await fixture.waitForActiveRegistrations()
+        XCTAssertTrue(restoredPermissionRegisteredHotkeys)
+    }
+
+    func testDelayedFocusedWindowIdentityIsDiscardedAfterProcessChanges() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.remove() }
+        fixture.hotkeys.start()
+        let initiallyRegistered = await fixture.waitForActiveRegistrations()
+        XCTAssertTrue(initiallyRegistered)
+        _ = await fixture.hotkeys.pollEnvironmentForTesting()
+        let initialProbeCount = await fixture.backend.focusProbeCount()
+
+        fixture.environment.blockNextFocusIdentityRead()
+        let stalePoll = Task { await fixture.hotkeys.pollEnvironmentForTesting() }
+        let identityReadStarted = await fixture.environment.waitForFocusIdentityRead()
+        XCTAssertTrue(identityReadStarted)
+
+        fixture.environment.frontmostPID = 201
+        let processChangeDetected = await fixture.hotkeys.pollEnvironmentForTesting()
+        XCTAssertTrue(processChangeDetected)
+        let newProcessWasProbed = await fixture.backend.waitForFocusProbeCount(greaterThan: initialProbeCount)
+        XCTAssertTrue(newProcessWasProbed)
+
+        let probesAfterProcessChange = await fixture.backend.focusProbeCount()
+        fixture.environment.releaseBlockedFocusIdentityRead()
+        _ = await stalePoll.value
+        try await Task.sleep(for: .milliseconds(50))
+        let probesAfterStaleResponse = await fixture.backend.focusProbeCount()
+        XCTAssertEqual(probesAfterStaleResponse, probesAfterProcessChange)
+    }
+}
+
+@MainActor
 private final class FakeKeyboardEnvironment {
     var frontmostPID: pid_t? = 200
     var isTrusted = true
+    var focusedWindowIdentity: Int? = 1
+    private var blocksNextFocusIdentityRead = false
+    private var focusIdentityReadStarted = false
+    private var focusIdentityReadContinuation: CheckedContinuation<Int?, Never>?
+
+    func blockNextFocusIdentityRead() { blocksNextFocusIdentityRead = true }
+
+    func readFocusedWindowIdentity() async -> Int? {
+        guard blocksNextFocusIdentityRead else { return focusedWindowIdentity }
+        blocksNextFocusIdentityRead = false
+        focusIdentityReadStarted = true
+        return await withCheckedContinuation { focusIdentityReadContinuation = $0 }
+    }
+
+    func waitForFocusIdentityRead() async -> Bool {
+        for _ in 0 ..< 100 {
+            if focusIdentityReadStarted { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return false
+    }
+
+    func releaseBlockedFocusIdentityRead() {
+        focusIdentityReadContinuation?.resume(returning: focusedWindowIdentity)
+        focusIdentityReadContinuation = nil
+    }
 }
 
 @MainActor
@@ -297,6 +421,8 @@ private actor HotkeyFakeWindowBackend: KeyboardWindowOperating {
     private let token = RuntimeWindowToken(id: UUID(), pid: 200)
     private var frame: CGRect
     private var writes = 0
+    private var focusProbes = 0
+    private var focusedWindowEligible = true
     private var blockFocus = false
     private var focusStarted = false
     private var focusContinuation: CheckedContinuation<RuntimeWindowSnapshot, Never>?
@@ -310,13 +436,27 @@ private actor HotkeyFakeWindowBackend: KeyboardWindowOperating {
 
     func blockNextPreflight() { blockPreflight = true }
 
+    func setFocusedWindowEligible(_ eligible: Bool) { focusedWindowEligible = eligible }
+
     func focusedWindow(applicationPID: pid_t, ownPID: pid_t) async throws -> RuntimeWindowSnapshot {
+        focusProbes += 1
+        guard focusedWindowEligible else { throw WindowManagementError.invalidFocusedWindow }
         if blockFocus {
             blockFocus = false
             focusStarted = true
             return await withCheckedContinuation { focusContinuation = $0 }
         }
         return RuntimeWindowSnapshot(token: token, frame: frame)
+    }
+
+    func focusProbeCount() -> Int { focusProbes }
+
+    func waitForFocusProbeCount(greaterThan count: Int) async -> Bool {
+        for _ in 0 ..< 100 {
+            if focusProbes > count { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return false
     }
 
     func waitForFocusProbe() async -> Bool {

@@ -161,6 +161,9 @@ final class GlobalHotkeys: ObservableObject {
     private var lastObservedPID: pid_t?
     private var lastObservedTrust: Bool?
     private var lastObservedEnabled: Bool?
+    private var lastObservedFocusedWindowIdentity: Int?
+    private var hasObservedFocusedWindowIdentity = false
+    private var isCheckingFocusedWindowIdentity = false
 
     init(
         layoutController: LayoutController,
@@ -216,15 +219,7 @@ final class GlobalHotkeys: ObservableObject {
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.started, self.runGeneration == run else { return }
-                if self.environmentDidChange() {
-                    self.lifecycleGeneration &+= 1
-                    self.snapController.invalidatePendingOperations()
-                    if self.environment.frontmostPID() == self.ownPID || !self.environment.isAccessibilityTrusted() || !self.settingsController.keyboardSettings.isEnabled {
-                        self.pause("Shortcuts are paused while AppAlign is frontmost, Accessibility is unavailable, or shortcuts are disabled.")
-                    }
-                }
-                guard !self.isReconciling else { return }
-                self.reconcile()
+                await self.pollEnvironment()
             }
         }
         reconcile()
@@ -396,6 +391,11 @@ final class GlobalHotkeys: ObservableObject {
 }
 
 extension GlobalHotkeys {
+    @discardableResult
+    func pollEnvironmentForTesting() async -> Bool {
+        await pollEnvironment()
+    }
+
     func setDragGateClosed(_ closed: Bool) {
         guard dragGateClosed != closed else { return }
         dragGateClosed = closed
@@ -412,6 +412,41 @@ extension GlobalHotkeys {
 }
 
 private extension GlobalHotkeys {
+    @discardableResult
+    func pollEnvironment() async -> Bool {
+        if environmentDidChange() {
+            lifecycleGeneration &+= 1
+            snapController.invalidatePendingOperations()
+            lastObservedFocusedWindowIdentity = nil
+            hasObservedFocusedWindowIdentity = false
+            if environment.frontmostPID() == ownPID || !environment.isAccessibilityTrusted() || !settingsController.keyboardSettings.isEnabled {
+                pause("Shortcuts are paused while AppAlign is frontmost, Accessibility is unavailable, or shortcuts are disabled.")
+            }
+            reconcile()
+            return true
+        }
+
+        guard !isCheckingFocusedWindowIdentity,
+              let pid = environment.frontmostPID(), pid != ownPID,
+              environment.isAccessibilityTrusted(), settingsController.keyboardSettings.isEnabled else { return false }
+        isCheckingFocusedWindowIdentity = true
+        let requestedRun = runGeneration
+        let identity = await environment.focusedWindowIdentity(pid)
+        isCheckingFocusedWindowIdentity = false
+        guard started, runGeneration == requestedRun,
+              environment.frontmostPID() == pid, environment.isAccessibilityTrusted(),
+              settingsController.keyboardSettings.isEnabled else { return false }
+
+        let changed = hasObservedFocusedWindowIdentity && identity != lastObservedFocusedWindowIdentity
+        lastObservedFocusedWindowIdentity = identity
+        hasObservedFocusedWindowIdentity = true
+        guard changed else { return false }
+        lifecycleGeneration &+= 1
+        snapController.invalidatePendingOperations()
+        reconcile()
+        return true
+    }
+
     func availableWindowShortcuts(_ shortcuts: [KeyboardSnapAction: KeyboardShortcut]) -> [KeyboardSnapAction: KeyboardShortcut] {
         guard settingsController.layoutHotkeySettings.isEnabled else { return shortcuts }
         let layoutShortcuts = Set(settingsController.layoutHotkeySettings.bindings.values)
@@ -419,9 +454,14 @@ private extension GlobalHotkeys {
     }
 
     func rememberEnvironment() {
-        lastObservedPID = environment.frontmostPID()
-        lastObservedTrust = environment.isAccessibilityTrusted()
-        lastObservedEnabled = settingsController.keyboardSettings.isEnabled
+        let pid = environment.frontmostPID()
+        let isTrusted = environment.isAccessibilityTrusted()
+        let isEnabled = settingsController.keyboardSettings.isEnabled
+        lastObservedPID = pid
+        lastObservedTrust = isTrusted
+        lastObservedEnabled = isEnabled
+        lastObservedFocusedWindowIdentity = nil
+        hasObservedFocusedWindowIdentity = false
     }
 
     func environmentDidChange() -> Bool {
