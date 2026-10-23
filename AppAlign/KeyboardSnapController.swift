@@ -119,7 +119,7 @@ struct KeyboardEnvironment {
     let ownPID: pid_t
     let bundleIdentifier: @MainActor (pid_t) -> String?
     init(frontmostPID: @escaping @MainActor () -> pid_t?, isAccessibilityTrusted: @escaping @MainActor () -> Bool,
-         focusedWindowIdentity: @escaping @MainActor (pid_t) async -> Int? = FocusedWindowIdentity.read,
+         focusedWindowIdentity: @escaping @MainActor (pid_t) async -> Int? = WindowRepository.focusedWindowIdentity,
          ownPID: pid_t,
          bundleIdentifier: @escaping @MainActor (pid_t) -> String? = { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }) {
         self.frontmostPID = frontmostPID

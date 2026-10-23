@@ -2,21 +2,6 @@ import AppKit
 import Carbon.HIToolbox
 import Combine
 import Foundation
-import ApplicationServices
-
-enum FocusedWindowIdentity {
-    static func read(_ processID: pid_t) async -> Int? {
-        await Task.detached(priority: .utility) {
-            let application = AXUIElementCreateApplication(processID)
-            guard AXUIElementSetMessagingTimeout(application, 0.5) == .success else { return nil }
-            var focusedWindow: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString,
-                                                &focusedWindow) == .success,
-                  let focusedWindow else { return nil }
-            return Int(CFHash(focusedWindow))
-        }.value
-    }
-}
 
 @MainActor
 protocol HotKeyRegistering: AnyObject {
