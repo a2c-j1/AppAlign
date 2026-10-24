@@ -75,7 +75,7 @@ final class DragDetectionController: ObservableObject {
     private var pendingHover: DragInputEvent?
     private var lastHover: DragInputEvent?
     private static let prewarmInterval: UInt64 = 100_000_000
-    private static let cacheFreshness: UInt64 = 100_000_000
+    private static let cacheFreshness: UInt64 = 500_000_000
     private var lastPrewarmRequest: UInt64 = 0
     private var cleanupQueue: [DragLeaseID] = []
     private var cleanupInFlight = false

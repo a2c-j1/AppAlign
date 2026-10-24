@@ -318,17 +318,17 @@ final class DragPrewarmTests: XCTestCase {
         try await warm(fixture)
         XCTAssertEqual(fixture.controller.prewarmCacheCount, 1)
         await fixture.reader.blockCapture()
-        await fixture.reader.setCapturedAt(100_000_100)
+        await fixture.reader.setCapturedAt(400_000_100)
         await fixture.reader.setFrame(CGRect(x: 10, y: 0, width: 400, height: 300))
-        await fixture.reader.setRevision(1, changedAt: 100_000_050)
-        fixture.send(.leftDown, gesture: 1, timestamp: 100_000_010)
+        await fixture.reader.setRevision(1, changedAt: 400_000_050)
+        fixture.send(.leftDown, gesture: 1, timestamp: 400_000_010)
         try await spin { await fixture.reader.captureBlocked }
-        fixture.send(.leftDragged, gesture: 1, point: CGPoint(x: 10, y: 0), timestamp: 100_000_050)
+        fixture.send(.leftDragged, gesture: 1, point: CGPoint(x: 10, y: 0), timestamp: 400_000_050)
         await fixture.reader.resumeCapture()
         try await spin { fixture.controller.captureRequestCount == 0 && fixture.controller.frameRequestCount == 0 }
-        fixture.send(.leftDragged, gesture: 1, point: CGPoint(x: 10, y: 0), timestamp: 100_000_200)
+        fixture.send(.leftDragged, gesture: 1, point: CGPoint(x: 10, y: 0), timestamp: 400_000_200)
         try await spin { fixture.controller.frameRequestCount == 0 }
-        fixture.send(.leftUp, gesture: 1, timestamp: 100_000_300)
+        fixture.send(.leftUp, gesture: 1, timestamp: 400_000_300)
         let events = fixture.controller.lifecycleEvents
         XCTAssertEqual(events.filter { $0.kind == .began }.count, 1)
         XCTAssertEqual(events.filter { $0.kind == .ended }.count, 1)
@@ -346,7 +346,7 @@ final class DragPrewarmTests: XCTestCase {
             if invalidation == 1 { await fixture.reader.setFrame(CGRect(x: 0, y: 0, width: 500, height: 300)) }
             if invalidation == 2 { await fixture.reader.setRevision(1, changedAt: 100_000_005) }
             if invalidation == 3 { fixture.context.fingerprint = "different" }
-            let down: UInt64 = invalidation == 4 ? 300_000_010 : 100_000_010
+            let down: UInt64 = invalidation == 4 ? 700_000_010 : 100_000_010
             await fixture.reader.blockCapture()
             await fixture.reader.setCapturedAt(down + 100)
             fixture.send(.leftDown, gesture: 1, timestamp: down)
