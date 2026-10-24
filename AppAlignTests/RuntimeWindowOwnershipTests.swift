@@ -302,6 +302,8 @@ extension RuntimeWindowOwnershipTests {
         let frame = CGRect(x: 0, y: 0, width: 800, height: 600)
         XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 40, y: 12), hitRole: "AXTextField", ancestorRoles: ["AXTextField", "AXWebArea", "AXWindow"]))
         XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 80, y: 12), hitRole: "AXTab", ancestorRoles: ["AXTab", "AXTabGroup", "AXWindow"]))
+        XCTAssertTrue(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 80, y: 12), hitRole: "AXStaticText", ancestorRoles: ["AXStaticText", "AXWindow"]))
+        XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 80, y: 12), hitRole: "AXStaticText", ancestorRoles: ["AXStaticText", "AXWebArea", "AXWindow"]))
         XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 80, y: 140), hitRole: "AXImage", ancestorRoles: ["AXImage", "AXWebArea", "AXWindow"]))
         XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 799, y: 300), hitRole: "AXSplitter", ancestorRoles: ["AXSplitter", "AXWindow"]))
         XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 80, y: 12), hitRole: "AXGroup", ancestorRoles: ["AXGroup", "AXTabGroup", "AXWindow"]))

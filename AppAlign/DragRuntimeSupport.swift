@@ -61,7 +61,7 @@ enum TitleBarHitClassifier {
         "AXRadioButton", "AXScrollArea", "AXScrollBar", "AXSlider", "AXSplitGroup", "AXSplitter",
         "AXTab", "AXTabGroup", "AXTable", "AXTextArea", "AXTextField", "AXWebArea"
     ]
-    private static let positiveFallbackRoles: Set<String> = ["AXGroup", "AXToolbar", "AXWindow"]
+    private static let positiveFallbackRoles: Set<String> = ["AXGroup", "AXStaticText", "AXToolbar", "AXWindow"]
 
     static func isCandidate(frame: CGRect, point: CGPoint, hitRole: String?, ancestorRoles: [String]) -> Bool {
         guard DisplayGeometry.isFinite(frame), frame.width > 12, frame.height > 12,
