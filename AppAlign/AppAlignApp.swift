@@ -184,6 +184,9 @@ private func startAfterPersistentLoad(_ context: HistoryLifecycleContext) {
         }
         await context.layout.loadPersistentState()
         guard !context.delegate.isTerminating else { return }
+        if UserDefaults.standard.bool(forKey: DragDetectionController.enabledDefaultsKey) {
+            context.drag.setEnabled(true)
+        }
         context.displayConfiguration.start()
         context.delegate.applyHistoryLifecycle?()
         context.hotkeys.start()

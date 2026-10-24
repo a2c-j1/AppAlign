@@ -6,6 +6,7 @@ import Foundation
 
 @MainActor
 final class DragDetectionController: ObservableObject {
+    static let enabledDefaultsKey = "dragDetectionEnabled"
     @Published private(set) var statusMessage = "Window dragging detection is off."
     @Published private(set) var isEnabled = false
     @Published private(set) var isRunning = false
