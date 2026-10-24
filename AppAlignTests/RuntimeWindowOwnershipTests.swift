@@ -298,25 +298,6 @@ extension RuntimeWindowOwnershipTests {
         XCTAssertFalse(ownership.isOwned)
     }
 
-    func testTextTabContentAndResizeHitFixturesAreRejectedWithoutTitleBarEvidence() {
-        let frame = CGRect(x: 0, y: 0, width: 800, height: 600)
-        XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 40, y: 12), hitRole: "AXTextField", ancestorRoles: ["AXTextField", "AXWebArea", "AXWindow"]))
-        XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 80, y: 12), hitRole: "AXTab", ancestorRoles: ["AXTab", "AXTabGroup", "AXWindow"]))
-        XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 80, y: 140), hitRole: "AXImage", ancestorRoles: ["AXImage", "AXWebArea", "AXWindow"]))
-        XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 799, y: 300), hitRole: "AXSplitter", ancestorRoles: ["AXSplitter", "AXWindow"]))
-        XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 80, y: 12), hitRole: "AXGroup", ancestorRoles: ["AXGroup", "AXTabGroup", "AXWindow"]))
-        XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 3, y: 12), hitRole: "AXWindow", ancestorRoles: ["AXWindow"]))
-        XCTAssertFalse(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 80, y: 12), hitRole: "AXButton", ancestorRoles: ["AXTitleBar", "AXWindow"]))
-        XCTAssertTrue(TitleBarHitClassifier.isCandidate(frame: frame, point: CGPoint(x: 80, y: 12), hitRole: "AXGroup", ancestorRoles: ["AXTitleBar", "AXWindow"]))
-    }
-
-    func testHitRegionIsSmallAndClippedToWindowTitleBand() {
-        let frame = CGRect(x: 0, y: 0, width: 800, height: 600)
-        let region = TitleBarHitClassifier.hitRegion(frame: frame, point: CGPoint(x: 20, y: 8), isCandidate: true)
-        XCTAssertEqual(region, CGRect(x: 14, y: 2, width: 12, height: 12))
-        XCTAssertTrue(TitleBarHitClassifier.hitRegion(frame: frame, point: CGPoint(x: 20, y: 8), isCandidate: false).isNull)
-    }
-
     func testAXRevisionRemembersResizeAfterLaterMoveAndDestroyedIsSticky() {
         let tracker = AXRevisionTracker()
         tracker.record(kAXResizedNotification as String)

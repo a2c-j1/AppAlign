@@ -70,23 +70,11 @@ struct DragWindowSnapshot: Sendable {
     let token: RuntimeWindowToken
     let lease: DragLeaseID
     let frame: CGRect
-    let hitRole: String?
-    let ancestorRoles: [String]
-    let hitInTitleBar: Bool
-    let capturedAt: UInt64
-    let hitRegion: CGRect
-    let revision: UInt64
-    let lastChangedAt: UInt64
-    let changeWasResize: Bool
-    let notificationsVerified: Bool
-    let revisionChanges: [WindowRevisionChange]
 }
 
 protocol DragWindowReading: Sendable {
-    func window(at point: CGPoint, ownPID: pid_t, downTimestamp: UInt64) async throws -> DragWindowSnapshot
+    func window(at point: CGPoint, ownPID: pid_t) async throws -> DragWindowSnapshot
     func releaseDragLease(_ lease: DragLeaseID) async
-    func isWriteInProgress() async -> Bool
-    func frame(for token: RuntimeWindowToken, lease: DragLeaseID) async throws -> CGRect
 }
 
 protocol KeyboardWindowOperating: WindowHistoryLeaseOperating {

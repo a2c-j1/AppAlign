@@ -139,7 +139,10 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle("Detect title-bar window drags", isOn: Binding(
                         get: { dragDetectionController.isEnabled },
-                        set: { dragDetectionController.setEnabled($0) }
+                        set: {
+                            UserDefaults.standard.set($0, forKey: DragDetectionController.enabledDefaultsKey)
+                            dragDetectionController.setEnabled($0)
+                        }
                     ))
                     Toggle("Require Shift", isOn: Binding(
                         get: { dragSnapController.settings.requireShift },
@@ -190,11 +193,14 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                         Spacer()
                         if !dragDetectionController.isRunning {
-                            Button("Retry") { dragDetectionController.retry() }
+                            Button("Retry") {
+                                UserDefaults.standard.set(true, forKey: DragDetectionController.enabledDefaultsKey)
+                                dragDetectionController.retry()
+                            }
                         }
                     }
                     Text(dragSnapController.statusMessage).font(.caption).foregroundStyle(.secondary)
-                    Text("Input Monitoring observes pointer events. Accessibility identifies the window under the pointer. Both permissions are requested only when this feature is enabled. AppAlign never changes or injects input.")
+                    Text("Accessibility lets AppAlign observe pointer events and identify the window under the pointer. It is requested only when this feature is enabled. AppAlign never changes or injects input.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

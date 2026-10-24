@@ -3,9 +3,9 @@ import XCTest
 
 @MainActor
 func spin(_ condition: () async -> Bool) async throws {
-    for _ in 0 ..< 10_000 {
+    for _ in 0 ..< 2_000 {
         if await condition() { return }
-        await Task.yield()
+        try await Task.sleep(nanoseconds: 1_000_000)
     }
     throw DragTestError.timeout
 }
@@ -14,14 +14,16 @@ enum DragTestError: Error { case timeout, unavailable }
 
 @MainActor
 final class DragContext {
-    var input = true
     var accessibility = true
     var released = true
     var fingerprint = "display-1"
-    var inputRequests = 0
     var accessibilityRequests = 0
     var gate = false
     var invalidations = 0
+    var downWindow: DownWindowBaseline? = DownWindowBaseline(
+        pid: 2, frame: CGRect(x: 0, y: 0, width: 400, height: 300), windowID: 42
+    )
+    var windowFrame: CGRect? = CGRect(x: 0, y: 0, width: 400, height: 300)
 }
 
 @MainActor
@@ -48,9 +50,14 @@ final class DragFixture {
     init() {
         let context = context
         controller = DragDetectionController(reader: reader, monitor: monitor, environment: DragEnvironment(
-            inputGranted: { context.input }, accessibilityGranted: { context.accessibility }, requestInput: { context.inputRequests += 1 },
-            requestAccessibility: { context.accessibilityRequests += 1 }, buttonsReleased: { context.released },
-            displayFingerprint: { context.fingerprint }, now: { 100 }), ownPID: 1, installsObservers: false)
+            accessibilityGranted: { context.accessibility }, requestAccessibility: { context.accessibilityRequests += 1 },
+            buttonsReleased: { context.released },
+            displayFingerprint: { context.fingerprint }, now: { 100 },
+            downWindow: { _, _ in context.downWindow },
+            windowFrame: { id, pid in
+                guard context.downWindow?.windowID == id, context.downWindow?.pid == pid else { return nil }
+                return context.windowFrame
+            }), ownPID: 1, installsObservers: false)
         controller.dragGateChanged = { context.gate = $0 }
         controller.invalidateKeyboard = { context.invalidations += 1 }
     }
@@ -62,12 +69,10 @@ final class DragFixture {
     }
     func becomeMoving() async throws {
         send(.leftDown, gesture: 1)
-        try await spin { controller.captureRequestCount == 0 }
-        await reader.setFrame(CGRect(x: 10, y: 0, width: 400, height: 300))
-        for _ in 0 ..< 2 {
-            send(.leftDragged, gesture: 1, point: CGPoint(x: 10, y: 0))
-            try await spin { controller.frameRequestCount == 0 }
-        }
+        let moved = CGRect(x: 10, y: 0, width: 400, height: 300)
+        context.windowFrame = moved
+        await reader.setFrame(moved)
+        send(.leftDragged, gesture: 1, point: CGPoint(x: 10, y: 0))
         XCTAssertTrue(controller.lifecycleEvents.contains { $0.kind == .began })
     }
 }
@@ -81,38 +86,19 @@ actor FakeDragReader: DragWindowReading, DragCommitOperating, KeyboardWindowOper
     private var historyRetainBarrier: CheckedContinuation<Void, Never>?
     private var historyRetainArrival: CheckedContinuation<Void, Never>?
     private var currentFrame = CGRect(x: 0, y: 0, width: 400, height: 300)
-    private var capturedAt: UInt64 = 1
-    private var verified = true
-    private var notificationsVerified = true
-    private var revision: UInt64 = 0
-    private var changedAt: UInt64 = 0
-    private var resized = false
-    private var revisionChanges: [WindowRevisionChange] = []
     private var ownership = RuntimeWindowOwnership()
     private var pauseCommit = false
     private var commitBarrier: CheckedContinuation<Void, Never>?
     private(set) var commitCount = 0
-    private var hitFails = false
-    private var hitResponses: [Bool] = []
-    private var frameFails = false
     private var pauseCapture = false
-    private var pauseFrame = false
-    private var pauseRelease = false
     private var captureBarrier: CheckedContinuation<Void, Never>?
-    private var frameBarrier: CheckedContinuation<Void, Never>?
-    private var releaseBarrier: CheckedContinuation<Void, Never>?
     private(set) var captureCount = 0
-    private(set) var frameCount = 0
     var captureBlocked: Bool { captureBarrier != nil }
-    var frameBlocked: Bool { frameBarrier != nil }
-    var releaseBlocked: Bool { releaseBarrier != nil }
     var historyRetainBlocked: Bool { historyRetainBarrier != nil }
     var historyLeaseCount: Int { historyLeases.count }
     var commitBlocked: Bool { commitBarrier != nil }
     var leaseCount: Int { leases.count }
     func blockCapture() { pauseCapture = true }
-    func blockFrame() { pauseFrame = true }
-    func blockRelease() { pauseRelease = true }
     func blockHistoryRetain() { pauseHistoryRetain = true }
     func waitForHistoryRetain() async {
         if !pauseHistoryRetain { return }
@@ -120,24 +106,11 @@ actor FakeDragReader: DragWindowReading, DragCommitOperating, KeyboardWindowOper
     }
     func releaseHistoryRetain() { historyRetainBarrier?.resume(); historyRetainBarrier = nil }
     func resumeCapture() { captureBarrier?.resume(); captureBarrier = nil }
-    func resumeFrame() { frameBarrier?.resume(); frameBarrier = nil }
-    func resumeRelease() { releaseBarrier?.resume(); releaseBarrier = nil }
     func blockCommit() { pauseCommit = true }
     func resumeCommit() { commitBarrier?.resume(); commitBarrier = nil }
     var ownerSnapshot: RuntimeWindowOwnership { ownership }
     func setFrame(_ frame: CGRect) { currentFrame = frame }
-    func switchToken() { token = RuntimeWindowToken(id: UUID(), pid: 2) }
     func focusDifferentWindow() { focusedToken = RuntimeWindowToken(id: UUID(), pid: 3) }
-    func setRevision(_ revision: UInt64, changedAt: UInt64, resized: Bool = false) {
-        self.revision = revision; self.changedAt = changedAt; self.resized = resized
-        revisionChanges.append(WindowRevisionChange(revision: revision, timestamp: changedAt, kind: resized ? .resized : .moved))
-    }
-    func setNotificationsVerified(_ value: Bool) { notificationsVerified = value }
-    func setCapturedAt(_ time: UInt64) { capturedAt = time }
-    func setHitResponses(_ values: [Bool]) { hitResponses = values }
-    func setHit(verified: Bool, fail: Bool) { self.verified = verified; hitFails = fail }
-    func failFrame() { frameFails = true; resumeFrame() }
-    func isWriteInProgress() async -> Bool { false }
     func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async -> Bool {
         if pauseHistoryRetain {
             pauseHistoryRetain = false
@@ -175,25 +148,15 @@ actor FakeDragReader: DragWindowReading, DragCommitOperating, KeyboardWindowOper
     func discard(_ token: RuntimeWindowToken) { if self.token == token { ownership.discardKeyboard() } }
     func shutdown() {}
     func discardProcess(_ pid: pid_t) { if token.pid == pid { ownership.discardKeyboard() } }
-    func window(at point: CGPoint, ownPID: pid_t, downTimestamp: UInt64) async throws -> DragWindowSnapshot {
+    func window(at point: CGPoint, ownPID: pid_t) async throws -> DragWindowSnapshot {
         captureCount += 1
         if pauseCapture { pauseCapture = false; await withCheckedContinuation { captureBarrier = $0 } }
-        if hitFails { throw DragTestError.unavailable }
-        let verifiedHit = hitResponses.isEmpty ? verified : hitResponses.removeFirst()
-        let lease = DragLeaseID(rawValue: UUID()); leases.insert(lease); ownership.retainDrag(lease)
-        return DragWindowSnapshot(token: token, lease: lease, frame: currentFrame, hitRole: "AXTitleBar",
-                                  ancestorRoles: ["AXTitleBar", "AXWindow"], hitInTitleBar: verifiedHit, capturedAt: capturedAt,
-                                  hitRegion: CGRect(x: -6, y: -6, width: 12, height: 12), revision: revision, lastChangedAt: changedAt,
-                                  changeWasResize: resized, notificationsVerified: notificationsVerified, revisionChanges: revisionChanges)
-    }
-    func frame(for token: RuntimeWindowToken, lease: DragLeaseID) async throws -> CGRect {
-        frameCount += 1
-        if pauseFrame { pauseFrame = false; await withCheckedContinuation { frameBarrier = $0 } }
-        guard leases.contains(lease), !frameFails else { throw DragTestError.unavailable }
-        return currentFrame
+        let lease = DragLeaseID(rawValue: UUID())
+        leases.insert(lease)
+        ownership.retainDrag(lease)
+        return DragWindowSnapshot(token: token, lease: lease, frame: currentFrame)
     }
     func releaseDragLease(_ lease: DragLeaseID) async {
-        if pauseRelease { pauseRelease = false; await withCheckedContinuation { releaseBarrier = $0 } }
         leases.remove(lease)
         ownership.releaseDrag(lease)
     }

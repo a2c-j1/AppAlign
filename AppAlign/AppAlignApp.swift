@@ -67,6 +67,7 @@ struct AppAlignApp: App {
         drag.dragGateChanged = { gate.setDrag($0) }
         dragSnap.gateChanged = { gate.setCommit($0) }
         drag.onWillEnd = { dragSnap.prepareCommit($0) }
+        drag.onWillResolveWindow = { dragSnap.hideOverlayForWindowLookup() }
         drag.onAcceptedInput = { dragSnap.acceptedInput($0) }
         drag.onCommitCancelled = { dragSnap.cancel(reason: $0) }
         drag.onLifecycle = { dragSnap.lifecycle($0) }
@@ -183,6 +184,9 @@ private func startAfterPersistentLoad(_ context: HistoryLifecycleContext) {
         }
         await context.layout.loadPersistentState()
         guard !context.delegate.isTerminating else { return }
+        if UserDefaults.standard.bool(forKey: DragDetectionController.enabledDefaultsKey) {
+            context.drag.setEnabled(true)
+        }
         context.displayConfiguration.start()
         context.delegate.applyHistoryLifecycle?()
         context.hotkeys.start()

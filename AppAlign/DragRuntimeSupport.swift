@@ -1,7 +1,67 @@
+import AppKit
 @preconcurrency import ApplicationServices
 import CoreGraphics
 import Dispatch
 import Foundation
+
+struct DownWindowBaseline: Sendable {
+    let pid: pid_t
+    let frame: CGRect
+    let windowID: CGWindowID
+}
+
+enum DownWindowCapture {
+    static func capture(at point: CGPoint, excluding ownPID: pid_t) -> DownWindowBaseline? {
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
+        for window in windows {
+            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
+                  let bounds = window[kCGWindowBounds as String] as? [String: NSNumber],
+                  let originX = bounds["X"], let originY = bounds["Y"],
+                  let width = bounds["Width"], let height = bounds["Height"] else { continue }
+            let frame = CGRect(x: originX.doubleValue, y: originY.doubleValue, width: width.doubleValue, height: height.doubleValue)
+            guard DisplayGeometry.isFinite(frame), frame.width > 12, frame.height > 12, frame.contains(point) else { continue }
+            guard let pid = window[kCGWindowOwnerPID as String] as? pid_t, pid != ownPID else { return nil }
+            guard let number = window[kCGWindowNumber as String] as? NSNumber else { return nil }
+            return DownWindowBaseline(pid: pid, frame: frame, windowID: number.uint32Value)
+        }
+        return nil
+    }
+
+    static func frame(for windowID: CGWindowID, pid: pid_t) -> CGRect? {
+        guard let windows = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
+              let window = windows.first,
+              let number = window[kCGWindowNumber as String] as? NSNumber, number.uint32Value == windowID,
+              let owner = window[kCGWindowOwnerPID as String] as? pid_t, owner == pid,
+              let bounds = window[kCGWindowBounds as String] as? [String: NSNumber],
+              let originX = bounds["X"], let originY = bounds["Y"],
+              let width = bounds["Width"], let height = bounds["Height"] else { return nil }
+        let frame = CGRect(x: originX.doubleValue, y: originY.doubleValue,
+                           width: width.doubleValue, height: height.doubleValue)
+        return DisplayGeometry.isFinite(frame) && frame.width > 0 && frame.height > 0 ? frame : nil
+    }
+}
+
+@MainActor
+struct DragEnvironment {
+    var accessibilityGranted: @MainActor () -> Bool
+    var requestAccessibility: @MainActor () -> Void
+    var buttonsReleased: @MainActor () -> Bool
+    var displayFingerprint: @MainActor () -> String
+    var now: @MainActor () -> UInt64
+    var downWindow: @MainActor (CGPoint, pid_t) -> DownWindowBaseline? = { _, _ in nil }
+    var windowFrame: @MainActor (CGWindowID, pid_t) -> CGRect? = { _, _ in nil }
+
+    static func live(displayProvider: DisplayProvider? = nil) -> DragEnvironment {
+        let displays = displayProvider ?? DisplayProvider()
+        return DragEnvironment(accessibilityGranted: { AXIsProcessTrusted() }, requestAccessibility: {
+                                   let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true as CFBoolean] as CFDictionary
+                                   _ = AXIsProcessTrustedWithOptions(options)
+                               }, buttonsReleased: { NSEvent.pressedMouseButtons == 0 }, displayFingerprint: { displays.snapshot.fingerprint },
+                               now: { DispatchTime.now().uptimeNanoseconds },
+                               downWindow: { DownWindowCapture.capture(at: $0, excluding: $1) },
+                               windowFrame: { DownWindowCapture.frame(for: $0, pid: $1) })
+    }
+}
 
 protocol WindowHistoryLeaseOperating: Sendable {
     func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async -> Bool
@@ -52,35 +112,6 @@ struct RuntimeWindowOwnership: Sendable {
         dragCommits.insert(commit)
         dragLeases.remove(lease)
         return true
-    }
-}
-
-enum TitleBarHitClassifier {
-    private static let excludedRoles: Set<String> = [
-        "AXButton", "AXCheckBox", "AXComboBox", "AXLink", "AXMenuButton", "AXPopUpButton",
-        "AXRadioButton", "AXScrollArea", "AXScrollBar", "AXSlider", "AXSplitGroup", "AXSplitter",
-        "AXTab", "AXTabGroup", "AXTable", "AXTextArea", "AXTextField", "AXWebArea"
-    ]
-    private static let positiveFallbackRoles: Set<String> = ["AXGroup", "AXToolbar", "AXWindow"]
-
-    static func isCandidate(frame: CGRect, point: CGPoint, hitRole: String?, ancestorRoles: [String]) -> Bool {
-        guard DisplayGeometry.isFinite(frame), frame.width > 12, frame.height > 12,
-              point.x > frame.minX + 6, point.x < frame.maxX - 6,
-              point.y > frame.minY + 6, point.y < frame.maxY - 6,
-              point.y <= frame.minY + min(40, frame.height * 0.12),
-              hitRole.map({ !excludedRoles.contains($0) }) ?? true,
-              !ancestorRoles.contains(where: excludedRoles.contains) else { return false }
-        if ancestorRoles.contains("AXTitleBar") { return true }
-        guard let hitRole else { return false }
-        return positiveFallbackRoles.contains(hitRole)
-    }
-
-    static func hitRegion(frame: CGRect, point: CGPoint, isCandidate: Bool) -> CGRect {
-        guard isCandidate else { return .null }
-        let topBand = CGRect(x: frame.minX, y: frame.minY, width: frame.width,
-                             height: min(40, frame.height * 0.12))
-        let aroundPoint = CGRect(x: point.x - 6, y: point.y - 6, width: 12, height: 12)
-        return aroundPoint.intersection(frame).intersection(topBand)
     }
 }
 

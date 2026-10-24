@@ -28,8 +28,6 @@ actor AccessibilityWindowRuntime: KeyboardWindowOperating {
     var historyDestroyNotificationsEnabled = true
     var historyDestroyLifecycleRevision: UInt64 = 0
     var historyDestroySinks = Set<RuntimeWindowToken>()
-    var writeInProgress = false
-    var lastWriteEndNanoseconds: UInt64 = 0
     let repository = WindowRepository(messagingTimeout: 0.5)
     let mover: any WindowPlacementOperating
     let historyMover: any WindowPlacementOperating
