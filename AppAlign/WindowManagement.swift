@@ -525,7 +525,7 @@ extension AccessibilityWindowRuntime {
             throw WindowManagementError.noCapturedWindow
         }
         do {
-            let frame = try record.window.stableFrame()
+            let frame = try record.window.frame()
             guard Self.isFinite(frame), frame.width > 0, frame.height > 0 else {
                 throw WindowManagementError.invalidFocusedWindow
             }

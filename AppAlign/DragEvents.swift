@@ -118,6 +118,17 @@ struct DragPointerPath: Sendable {
         return points.isEmpty ? [latest.point] : points
     }
 
+    func recent(now: UInt64, including request: DragInputEvent) -> [CGPoint] {
+        let end = max(now, samples.last?.timestamp ?? 0)
+        let cutoff = end > Self.retention ? end - Self.retention : 0
+        var retained = samples.filter { $0.timestamp >= cutoff }
+        if !retained.contains(where: { $0.timestamp == request.timestamp && $0.point == request.location }) {
+            let index = retained.firstIndex(where: { $0.timestamp > request.timestamp }) ?? retained.endIndex
+            retained.insert(Sample(timestamp: request.timestamp, point: request.location), at: index)
+        }
+        return retained.map(\.point)
+    }
+
     static func closestDelta(to frameDelta: CGPoint, down: CGPoint, points: [CGPoint]) -> CGPoint {
         guard let first = points.first else { return .zero }
         var closest = CGPoint(x: first.x - down.x, y: first.y - down.y)

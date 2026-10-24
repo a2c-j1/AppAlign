@@ -414,4 +414,22 @@ final class DragPointerPathTests: XCTestCase {
         XCTAssertEqual(path.recent(now: 500_000_000), [CGPoint(x: 20, y: 0), CGPoint(x: 45, y: 0)])
         XCTAssertEqual(path.recent(now: 1_000_000_000), [CGPoint(x: 45, y: 0)])
     }
+
+    func testSlowFrameReadRetainsItsRequestPoint() {
+        var path = DragPointerPath()
+        let request = DragInputEvent(kind: .leftDragged, location: CGPoint(x: 10, y: 0), timestamp: 100_000_000)
+        path.append(request)
+        path.append(DragInputEvent(kind: .leftDragged, location: CGPoint(x: 45, y: 0), timestamp: 405_000_000))
+
+        let points = path.recent(now: 405_000_000, including: request)
+        XCTAssertEqual(points, [CGPoint(x: 10, y: 0), CGPoint(x: 45, y: 0)])
+
+        let frame = CGRect(x: 100, y: 80, width: 400, height: 300)
+        var detector = DragStateMachine()
+        _ = detector.down(session: 1, point: .zero, frame: frame, titleBarHit: true, epoch: 1)
+        _ = detector.observe(session: 1, point: CGPoint(x: 10, y: 0), frame: frame.offsetBy(dx: 10, dy: 0), epoch: 1)
+        _ = detector.observe(session: 1, point: CGPoint(x: 10, y: 0), frame: frame.offsetBy(dx: 10, dy: 0), epoch: 1)
+        XCTAssertEqual(detector.observe(session: 1, point: request.location, latestPoint: CGPoint(x: 45, y: 0),
+                                        pointerPath: points, frame: frame.offsetBy(dx: 10, dy: 0), epoch: 1).map(\.kind), [.updated])
+    }
 }
