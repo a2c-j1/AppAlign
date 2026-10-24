@@ -20,6 +20,7 @@ final class DragContext {
     var accessibilityRequests = 0
     var gate = false
     var invalidations = 0
+    var downWindow: DownWindowBaseline?
 }
 
 @MainActor
@@ -48,7 +49,8 @@ final class DragFixture {
         controller = DragDetectionController(reader: reader, monitor: monitor, environment: DragEnvironment(
             accessibilityGranted: { context.accessibility }, requestAccessibility: { context.accessibilityRequests += 1 },
             buttonsReleased: { context.released },
-            displayFingerprint: { context.fingerprint }, now: { 100 }), ownPID: 1, installsObservers: false)
+            displayFingerprint: { context.fingerprint }, now: { 100 },
+            downWindow: { _, _ in context.downWindow }), ownPID: 1, installsObservers: false)
         controller.dragGateChanged = { context.gate = $0 }
         controller.invalidateKeyboard = { context.invalidations += 1 }
     }

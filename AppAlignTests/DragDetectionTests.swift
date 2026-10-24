@@ -140,6 +140,45 @@ final class DragDetectionTests: XCTestCase {
     }
 
     @MainActor
+    func testMouseDownWindowFrameAllowsDelayedAXCapture() async throws {
+        let fixture = DragFixture(); fixture.start()
+        fixture.context.downWindow = DownWindowBaseline(pid: 2, frame: CGRect(x: 0, y: 0, width: 400, height: 300), capturedAt: 110)
+        await fixture.reader.blockCapture()
+        fixture.send(.leftDown, gesture: 1, point: CGPoint(x: 30, y: 20), timestamp: 100)
+        try await spin { await fixture.reader.captureBlocked }
+        fixture.send(.leftDragged, gesture: 1, point: CGPoint(x: 40, y: 20), timestamp: 150)
+        await fixture.reader.setCapturedAt(200)
+        await fixture.reader.setFrame(CGRect(x: 10, y: 0, width: 400, height: 300))
+        await fixture.reader.resumeCapture()
+        try await spin { fixture.controller.captureRequestCount == 0 && fixture.controller.frameRequestCount == 0 }
+        fixture.send(.leftDragged, gesture: 1, point: CGPoint(x: 40, y: 20), timestamp: 250)
+        try await spin { fixture.controller.frameRequestCount == 0 }
+        XCTAssertEqual(fixture.controller.lifecycleEvents.filter { $0.kind == .began }.count, 1)
+        XCTAssertEqual(fixture.controller.lifecycleEvents.first { $0.kind == .began }?.frame, fixture.context.downWindow?.frame)
+        fixture.send(.leftUp, gesture: 1, point: CGPoint(x: 40, y: 20), timestamp: 300)
+        XCTAssertEqual(fixture.controller.lifecycleEvents.filter { $0.kind == .ended }.count, 1)
+        fixture.stop()
+    }
+
+    @MainActor
+    func testMouseDownWindowCannotAuthorizeAnotherProcess() async throws {
+        let fixture = DragFixture(); fixture.start()
+        fixture.context.downWindow = DownWindowBaseline(pid: 3, frame: CGRect(x: 0, y: 0, width: 400, height: 300), capturedAt: 110)
+        await fixture.reader.blockCapture()
+        fixture.send(.leftDown, gesture: 1, point: CGPoint(x: 30, y: 20), timestamp: 100)
+        try await spin { await fixture.reader.captureBlocked }
+        fixture.send(.leftDragged, gesture: 1, point: CGPoint(x: 40, y: 20), timestamp: 150)
+        await fixture.reader.setCapturedAt(200)
+        await fixture.reader.setFrame(CGRect(x: 10, y: 0, width: 400, height: 300))
+        await fixture.reader.resumeCapture()
+        try await spin { fixture.controller.captureRequestCount == 0 }
+        XCTAssertEqual(fixture.controller.state, .idle)
+        XCTAssertFalse(fixture.controller.lifecycleEvents.contains { $0.kind == .began })
+        try await spin { await fixture.reader.leaseCount == 0 }
+        fixture.stop()
+    }
+
+    @MainActor
     func testTenThousandMovesKeepOneReadAndOnePendingPoint() async throws {
         let fixture = DragFixture(); fixture.start()
         fixture.send(.leftDown, gesture: 1)

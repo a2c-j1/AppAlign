@@ -5,24 +5,6 @@ import CoreGraphics
 import Foundation
 
 @MainActor
-struct DragEnvironment {
-    var accessibilityGranted: @MainActor () -> Bool
-    var requestAccessibility: @MainActor () -> Void
-    var buttonsReleased: @MainActor () -> Bool
-    var displayFingerprint: @MainActor () -> String
-    var now: @MainActor () -> UInt64
-
-    static func live(displayProvider: DisplayProvider? = nil) -> DragEnvironment {
-        let displays = displayProvider ?? DisplayProvider()
-        return DragEnvironment(accessibilityGranted: { AXIsProcessTrusted() }, requestAccessibility: {
-                                   let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true as CFBoolean] as CFDictionary
-                                   _ = AXIsProcessTrustedWithOptions(options)
-                               }, buttonsReleased: { NSEvent.pressedMouseButtons == 0 }, displayFingerprint: { displays.snapshot.fingerprint },
-                               now: { DispatchTime.now().uptimeNanoseconds })
-    }
-}
-
-@MainActor
 final class DragDetectionController: ObservableObject {
     @Published private(set) var statusMessage = "Window dragging detection is off."
     @Published private(set) var isEnabled = false
@@ -46,6 +28,7 @@ final class DragDetectionController: ObservableObject {
         var frame: CGRect?
         var originalFrame: CGRect?
         var baseline: DragWindowSnapshot?
+        var downWindow: DownWindowBaseline?
         var validationRetries = 0
     }
     private let reader: any DragWindowReading
@@ -310,6 +293,7 @@ extension DragDetectionController {
                 prewarmCache = nil
             } else { discardPrewarm() }
         }
+        if current.baseline == nil { current.downWindow = environment.downWindow(event.location, ownPID) }
         gesture = current
         onAcceptedInput?(event)
         guard gesture?.session == current.session, gesture?.inputID == current.inputID else { return }
@@ -317,11 +301,7 @@ extension DragDetectionController {
         pumpCapture()
     }
     private func canRetryValidation(_ value: Gesture) -> Bool {
-        value.baseline != nil && value.validationRetries == 0 && value.latest.location != value.down.location
-    }
-
-    private func shouldRetrySnapshot(_ snapshot: DragWindowSnapshot, for value: Gesture) -> Bool {
-        canRetryValidation(value) && (value.baseline?.token != snapshot.token || !snapshot.hitInTitleBar)
+        (value.baseline != nil || value.downWindow != nil) && value.validationRetries == 0 && value.latest.location != value.down.location
     }
 
     private func pumpCapture() {
@@ -346,31 +326,22 @@ extension DragDetectionController {
                     self.queueRelease(hit.lease)
                     return
                 }
-                if let baseline = live.baseline {
-                    if self.shouldRetrySnapshot(hit, for: live) {
-                        self.queueRelease(hit.lease)
-                        live.validationRetries = 1
-                        self.gesture = live
-                        return
-                    }
-                    guard self.validateCache(baseline, against: hit, down: live.down) else {
-                        self.queueRelease(hit.lease)
-                        guard self.gesture?.session == session else { return }
-                        self.cancel(reason: "The prewarm target, size, or revision changed.")
-                        return
-                    }
-                } else if let motion = live.firstMotion, hit.capturedAt >= motion {
+                let originalFrame: CGRect
+                let context = DragBaselineValidation.CaptureContext(prewarm: live.baseline, downWindow: live.downWindow,
+                                                                    hit: hit, down: live.down, latest: live.latest,
+                                                                    firstMotion: live.firstMotion, mayRetry: self.canRetryValidation(live))
+                switch DragBaselineValidation.decide(context) {
+                case let .accepted(frame): originalFrame = frame
+                case .retry:
                     self.queueRelease(hit.lease)
-                    guard self.gesture?.session == session else { return }
-                    self.cancel(reason: "The initial frame was unavailable before window movement.")
+                    live.validationRetries = 1
+                    self.gesture = live
+                    return
+                case let .rejected(reason):
+                    self.queueRelease(hit.lease)
+                    self.cancel(reason: reason)
                     return
                 }
-                guard hit.hitInTitleBar else {
-                    self.queueRelease(hit.lease)
-                    self.cancel(reason: "The pointer did not hit a verified title-bar candidate.")
-                    return
-                }
-                let originalFrame = live.baseline?.frame ?? hit.frame
                 let oldBaselineLease = live.baseline?.lease
                 live.baseline = nil
                 live.hit = hit; live.frame = hit.frame; live.originalFrame = originalFrame
@@ -483,16 +454,6 @@ extension DragDetectionController {
         let old = prewarmCache?.hit.lease
         prewarmCache = nil
         if let old { queueRelease(old) }
-    }
-
-    private func validateCache(_ cached: DragWindowSnapshot, against live: DragWindowSnapshot, down: DragInputEvent) -> Bool {
-        guard cached.token == live.token, live.notificationsVerified, live.hitInTitleBar,
-              abs(cached.frame.width - live.frame.width) <= 2, abs(cached.frame.height - live.frame.height) <= 2 else { return false }
-        guard live.revision >= cached.revision else { return false }
-        let changes = live.revisionChanges.filter { $0.revision > cached.revision }
-        guard UInt64(changes.count) == live.revision - cached.revision else { return false }
-        if changes.contains(where: { $0.kind != .moved || $0.timestamp <= down.timestamp }) { return false }
-        return true
     }
 
     private func pumpPrewarm() {

@@ -1,7 +1,119 @@
+import AppKit
 @preconcurrency import ApplicationServices
 import CoreGraphics
 import Dispatch
 import Foundation
+
+struct DownWindowBaseline: Sendable {
+    let pid: pid_t
+    let frame: CGRect
+    let capturedAt: UInt64
+}
+
+enum DownWindowCapture {
+    static func capture(at point: CGPoint, excluding ownPID: pid_t) -> DownWindowBaseline? {
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
+        for window in windows {
+            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
+                  let bounds = window[kCGWindowBounds as String] as? [String: NSNumber],
+                  let originX = bounds["X"], let originY = bounds["Y"],
+                  let width = bounds["Width"], let height = bounds["Height"] else { continue }
+            let frame = CGRect(x: originX.doubleValue, y: originY.doubleValue, width: width.doubleValue, height: height.doubleValue)
+            guard DisplayGeometry.isFinite(frame), frame.width > 12, frame.height > 12, frame.contains(point) else { continue }
+            guard let pid = window[kCGWindowOwnerPID as String] as? pid_t, pid != ownPID else { return nil }
+            return DownWindowBaseline(pid: pid, frame: frame, capturedAt: DispatchTime.now().uptimeNanoseconds)
+        }
+        return nil
+    }
+}
+
+enum DragBaselineValidation {
+    struct CaptureContext {
+        let prewarm: DragWindowSnapshot?
+        let downWindow: DownWindowBaseline?
+        let hit: DragWindowSnapshot
+        let down: DragInputEvent
+        let latest: DragInputEvent
+        let firstMotion: UInt64?
+        let mayRetry: Bool
+    }
+
+    enum Decision {
+        case accepted(CGRect)
+        case retry
+        case rejected(String)
+    }
+
+    static func decide(_ context: CaptureContext) -> Decision {
+        let prewarm = context.prewarm
+        let downWindow = context.downWindow
+        let hit = context.hit
+        let down = context.down
+        let latest = context.latest
+        let firstMotion = context.firstMotion
+        let mayRetry = context.mayRetry
+        if let prewarm {
+            if mayRetry, prewarm.token != hit.token || !hit.hitInTitleBar { return .retry }
+            guard validateCache(prewarm, against: hit, down: down) else {
+                return .rejected("The prewarm target, size, or revision changed.")
+            }
+        } else if let downWindow, firstMotion.map({ downWindow.capturedAt < $0 }) ?? true {
+            if mayRetry, hit.token.pid != downWindow.pid || !hit.hitInTitleBar { return .retry }
+            guard validateDownWindow(downWindow, against: hit, down: down, latest: latest) else {
+                return .rejected("The mouse-down window no longer matches the dragged window.")
+            }
+        } else if let firstMotion, hit.capturedAt >= firstMotion {
+            return .rejected("The initial frame was unavailable before window movement.")
+        }
+        guard hit.hitInTitleBar else { return .rejected("The pointer did not hit a verified title-bar candidate.") }
+        return .accepted(prewarm?.frame ?? downWindow?.frame ?? hit.frame)
+    }
+
+    static func validateCache(_ cached: DragWindowSnapshot, against live: DragWindowSnapshot, down: DragInputEvent) -> Bool {
+        guard cached.token == live.token, live.notificationsVerified, live.hitInTitleBar,
+              abs(cached.frame.width - live.frame.width) <= 2, abs(cached.frame.height - live.frame.height) <= 2 else { return false }
+        guard live.revision >= cached.revision else { return false }
+        let changes = live.revisionChanges.filter { $0.revision > cached.revision }
+        guard UInt64(changes.count) == live.revision - cached.revision else { return false }
+        if changes.contains(where: { $0.kind != .moved || $0.timestamp <= down.timestamp }) { return false }
+        return true
+    }
+
+    static func validateDownWindow(_ cached: DownWindowBaseline, against live: DragWindowSnapshot,
+                                   down: DragInputEvent, latest: DragInputEvent) -> Bool {
+        guard cached.pid == live.token.pid, live.hitInTitleBar,
+              abs(cached.frame.width - live.frame.width) <= 2,
+              abs(cached.frame.height - live.frame.height) <= 2,
+              TitleBarHitClassifier.isCandidate(frame: cached.frame, point: down.location,
+                                                hitRole: live.hitRole, ancestorRoles: live.ancestorRoles) else { return false }
+        let frameDelta = CGPoint(x: live.frame.minX - cached.frame.minX, y: live.frame.minY - cached.frame.minY)
+        let pointerDelta = CGPoint(x: latest.location.x - down.location.x, y: latest.location.y - down.location.y)
+        let lengthSquared = pointerDelta.x * pointerDelta.x + pointerDelta.y * pointerDelta.y
+        let fraction = lengthSquared > 0
+            ? min(1, max(0, (frameDelta.x * pointerDelta.x + frameDelta.y * pointerDelta.y) / lengthSquared)) : 0
+        return hypot(frameDelta.x - fraction * pointerDelta.x, frameDelta.y - fraction * pointerDelta.y) <= 8
+    }
+}
+
+@MainActor
+struct DragEnvironment {
+    var accessibilityGranted: @MainActor () -> Bool
+    var requestAccessibility: @MainActor () -> Void
+    var buttonsReleased: @MainActor () -> Bool
+    var displayFingerprint: @MainActor () -> String
+    var now: @MainActor () -> UInt64
+    var downWindow: @MainActor (CGPoint, pid_t) -> DownWindowBaseline? = { _, _ in nil }
+
+    static func live(displayProvider: DisplayProvider? = nil) -> DragEnvironment {
+        let displays = displayProvider ?? DisplayProvider()
+        return DragEnvironment(accessibilityGranted: { AXIsProcessTrusted() }, requestAccessibility: {
+                                   let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true as CFBoolean] as CFDictionary
+                                   _ = AXIsProcessTrustedWithOptions(options)
+                               }, buttonsReleased: { NSEvent.pressedMouseButtons == 0 }, displayFingerprint: { displays.snapshot.fingerprint },
+                               now: { DispatchTime.now().uptimeNanoseconds },
+                               downWindow: { DownWindowCapture.capture(at: $0, excluding: $1) })
+    }
+}
 
 protocol WindowHistoryLeaseOperating: Sendable {
     func retainHistoryLease(_ token: RuntimeWindowToken, lease: RuntimeHistoryLeaseID) async -> Bool
