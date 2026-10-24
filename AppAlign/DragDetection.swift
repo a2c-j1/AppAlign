@@ -422,7 +422,8 @@ extension DragDetectionController {
                 let frame = try await reader.frame(for: hit.token, lease: hit.lease)
                 guard self.gesture?.session == session, self.isRunning else { return }
                 self.gesture?.frame = frame
-                let events = self.machine.observe(session: session, point: point, frame: frame, epoch: self.environmentGeneration)
+                let events = self.machine.observe(session: session, point: point, latestPoint: self.gesture?.latest.location,
+                                                  frame: frame, epoch: self.environmentGeneration)
                 if events.contains(where: { $0.kind == .cancelled }) {
                     let decorated = self.decorate(events, using: self.gesture)
                     self.detachGesture()

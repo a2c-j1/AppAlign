@@ -113,7 +113,7 @@ struct DragStateMachine: Sendable {
         return previous
     }
 
-    mutating func observe(session: UInt64, point: CGPoint, frame: CGRect, epoch: UInt64) -> [DragLifecycleEvent] {
+    mutating func observe(session: UInt64, point: CGPoint, latestPoint: CGPoint? = nil, frame: CGRect, epoch: UInt64) -> [DragLifecycleEvent] {
         let original: CGRect
         let down: CGPoint
         let moving: Bool
@@ -130,11 +130,21 @@ struct DragStateMachine: Sendable {
         }
         let pointerDelta = CGPoint(x: point.x - down.x, y: point.y - down.y)
         let frameDelta = CGPoint(x: frame.minX - original.minX, y: frame.minY - original.minY)
-        guard hypot(frameDelta.x - pointerDelta.x, frameDelta.y - pointerDelta.y) <= 8 else {
+        // AX can report a frame from any time during the asynchronous read. Match
+        // it against the pointer's path over that interval, not only the point
+        // that initiated the read.
+        let end = latestPoint ?? point
+        let travel = CGPoint(x: end.x - point.x, y: end.y - point.y)
+        let lengthSquared = travel.x * travel.x + travel.y * travel.y
+        let fraction = lengthSquared > 0
+            ? min(1, max(0, ((frameDelta.x - pointerDelta.x) * travel.x + (frameDelta.y - pointerDelta.y) * travel.y) / lengthSquared))
+            : 0
+        let matchedDelta = CGPoint(x: pointerDelta.x + fraction * travel.x, y: pointerDelta.y + fraction * travel.y)
+        guard hypot(frameDelta.x - matchedDelta.x, frameDelta.y - matchedDelta.y) <= 8 else {
             confirmingSamples = 0
             return moving ? cancel(reason: "The window no longer follows the pointer.") : []
         }
-        guard hypot(frameDelta.x, frameDelta.y) >= 3, hypot(pointerDelta.x, pointerDelta.y) >= 3 else { return [] }
+        guard hypot(frameDelta.x, frameDelta.y) >= 3, hypot(matchedDelta.x, matchedDelta.y) >= 3 else { return [] }
         if !moving {
             confirmingSamples += 1
             guard confirmingSamples >= 2 else { return [] }

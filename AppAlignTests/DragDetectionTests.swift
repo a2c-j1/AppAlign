@@ -54,6 +54,24 @@ final class DragDetectionTests: XCTestCase {
         XCTAssertEqual(machine.finish().map(\.kind), [.cancelled])
     }
 
+    func testFrameReadMatchesPointerMovementDuringTheRead() {
+        var machine = DragStateMachine()
+        let frame = CGRect(x: 100, y: 80, width: 400, height: 300)
+        _ = machine.down(session: 1, point: CGPoint(x: 150, y: 90), frame: frame, titleBarHit: true, epoch: 1)
+        let first = frame.offsetBy(dx: 20, dy: 0)
+        XCTAssertTrue(machine.observe(session: 1, point: CGPoint(x: 170, y: 90), frame: first, epoch: 1).isEmpty)
+        XCTAssertEqual(machine.observe(session: 1, point: CGPoint(x: 170, y: 90), frame: first, epoch: 1).map(\.kind), [.began, .updated])
+
+        // The AX frame was sampled after the request point, while another drag
+        // event moved the pointer ahead. This is still the same window drag.
+        let later = frame.offsetBy(dx: 40, dy: 0)
+        XCTAssertEqual(machine.observe(session: 1, point: CGPoint(x: 170, y: 90),
+                                       latestPoint: CGPoint(x: 200, y: 90), frame: later, epoch: 1).map(\.kind), [.updated])
+        // A frame away from the pointer's path remains a cancellation.
+        XCTAssertEqual(machine.observe(session: 1, point: CGPoint(x: 200, y: 90),
+                                       latestPoint: CGPoint(x: 210, y: 90), frame: frame.offsetBy(dx: 80, dy: 0), epoch: 1).map(\.kind), [.cancelled])
+    }
+
     @MainActor
     func testAccessibilityRequestIsExplicitAndRunningWaitsForTapReady() {
         let fixture = DragFixture()
