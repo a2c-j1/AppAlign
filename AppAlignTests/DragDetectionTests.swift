@@ -67,9 +67,17 @@ final class DragDetectionTests: XCTestCase {
         let later = frame.offsetBy(dx: 40, dy: 0)
         XCTAssertEqual(machine.observe(session: 1, point: CGPoint(x: 170, y: 90),
                                        latestPoint: CGPoint(x: 200, y: 90), frame: later, epoch: 1).map(\.kind), [.updated])
-        // A frame away from the pointer's path remains a cancellation.
+        // A moving frame may briefly lead or lag the pointer path.
+        let divergent = frame.offsetBy(dx: 80, dy: 0)
         XCTAssertEqual(machine.observe(session: 1, point: CGPoint(x: 200, y: 90),
-                                       latestPoint: CGPoint(x: 210, y: 90), frame: frame.offsetBy(dx: 80, dy: 0), epoch: 1).map(\.kind), [.cancelled])
+                                       latestPoint: CGPoint(x: 210, y: 90), frame: divergent, epoch: 1).map(\.kind), [.updated])
+        // A stationary frame that remains detached for successive reads cancels.
+        for _ in 0 ..< 2 {
+            XCTAssertEqual(machine.observe(session: 1, point: CGPoint(x: 200, y: 90),
+                                           latestPoint: CGPoint(x: 210, y: 90), frame: divergent, epoch: 1).map(\.kind), [.updated])
+        }
+        XCTAssertEqual(machine.observe(session: 1, point: CGPoint(x: 200, y: 90),
+                                       latestPoint: CGPoint(x: 210, y: 90), frame: divergent, epoch: 1).map(\.kind), [.cancelled])
     }
 
     @MainActor

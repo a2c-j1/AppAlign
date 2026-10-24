@@ -118,9 +118,8 @@ struct DragPointerPath: Sendable {
         return points.isEmpty ? [latest.point] : points
     }
 
-    func recent(now: UInt64, including request: DragInputEvent) -> [CGPoint] {
-        let end = max(now, samples.last?.timestamp ?? 0)
-        let cutoff = end > Self.retention ? end - Self.retention : 0
+    func duringFrameRead(startedAt: UInt64, including request: DragInputEvent) -> [CGPoint] {
+        let cutoff = startedAt > Self.retention ? startedAt - Self.retention : 0
         var retained = samples.filter { $0.timestamp >= cutoff }
         if !retained.contains(where: { $0.timestamp == request.timestamp && $0.point == request.location }) {
             let index = retained.firstIndex(where: { $0.timestamp > request.timestamp }) ?? retained.endIndex
@@ -157,11 +156,15 @@ struct DragStateMachine: Sendable {
     }
     private(set) var state: State = .idle
     private var confirmingSamples = 0
+    private var stationaryMismatchCount = 0
+    private var lastObservedFrame: CGRect?
 
     mutating func down(session: UInt64, point: CGPoint, frame: CGRect, titleBarHit: Bool, epoch: UInt64) -> [DragLifecycleEvent] {
         let previous = cancel(reason: "A new mouse-down replaced the prior gesture.")
         guard titleBarHit else { return previous }
         confirmingSamples = 0
+        stationaryMismatchCount = 0
+        lastObservedFrame = frame
         state = .candidate(session: session, down: point, original: frame, epoch: epoch)
         return previous
     }
@@ -187,10 +190,17 @@ struct DragStateMachine: Sendable {
         // recent pointer trajectory, including bends, rather than one segment.
         let matchedDelta = DragPointerPath.closestDelta(to: frameDelta, down: down,
                                                        points: pointerPath ?? [point, latestPoint ?? point])
-        guard hypot(frameDelta.x - matchedDelta.x, frameDelta.y - matchedDelta.y) <= 12 else {
+        if hypot(frameDelta.x - matchedDelta.x, frameDelta.y - matchedDelta.y) > 12 {
             confirmingSamples = 0
-            return moving ? cancel(reason: "The window no longer follows the pointer.") : []
+            guard moving else { return [] }
+            let stationary = lastObservedFrame.map { hypot(frame.minX - $0.minX, frame.minY - $0.minY) < 1 } ?? false
+            stationaryMismatchCount = stationary ? stationaryMismatchCount + 1 : 0
+            lastObservedFrame = frame
+            if stationaryMismatchCount >= 3 { return cancel(reason: "The window no longer follows the pointer.") }
+            return [DragLifecycleEvent(kind: .updated, session: session, frame: frame, reason: nil)]
         }
+        stationaryMismatchCount = 0
+        lastObservedFrame = frame
         guard hypot(frameDelta.x, frameDelta.y) >= 3, hypot(matchedDelta.x, matchedDelta.y) >= 3 else { return [] }
         if !moving {
             confirmingSamples += 1
@@ -216,7 +226,7 @@ struct DragStateMachine: Sendable {
         default: return []
         }
         state = moved && reason == nil ? .committing : .cancelled
-        defer { state = .idle; confirmingSamples = 0 }
+        defer { state = .idle; confirmingSamples = 0; stationaryMismatchCount = 0; lastObservedFrame = nil }
         return [DragLifecycleEvent(kind: moved && reason == nil ? .ended : .cancelled, session: session, frame: nil,
                                    reason: reason ?? (moved ? nil : "The gesture did not become a window move."))]
     }

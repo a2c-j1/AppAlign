@@ -402,6 +402,10 @@ final class DragPointerPathTests: XCTestCase {
         let path = [CGPoint(x: -587, y: -322), CGPoint(x: -623.1, y: -344.5), CGPoint(x: -680.8, y: -377.8)]
         XCTAssertEqual(delayed.observe(session: 2, point: path[1], latestPoint: path[2], pointerPath: path,
                                        frame: frame.offsetBy(dx: -587, dy: -322), epoch: 1).map(\.kind), [.updated])
+        for _ in 0 ..< 2 {
+            XCTAssertEqual(delayed.observe(session: 2, point: path[1], latestPoint: path[2], pointerPath: Array(path.dropFirst()),
+                                           frame: frame.offsetBy(dx: -587, dy: -322), epoch: 1).map(\.kind), [.updated])
+        }
         XCTAssertEqual(delayed.observe(session: 2, point: path[1], latestPoint: path[2], pointerPath: Array(path.dropFirst()),
                                        frame: frame.offsetBy(dx: -587, dy: -322), epoch: 1).map(\.kind), [.cancelled])
     }
@@ -421,7 +425,7 @@ final class DragPointerPathTests: XCTestCase {
         path.append(request)
         path.append(DragInputEvent(kind: .leftDragged, location: CGPoint(x: 45, y: 0), timestamp: 405_000_000))
 
-        let points = path.recent(now: 405_000_000, including: request)
+        let points = path.duringFrameRead(startedAt: 100_000_000, including: request)
         XCTAssertEqual(points, [CGPoint(x: 10, y: 0), CGPoint(x: 45, y: 0)])
 
         let frame = CGRect(x: 100, y: 80, width: 400, height: 300)
@@ -431,5 +435,27 @@ final class DragPointerPathTests: XCTestCase {
         _ = detector.observe(session: 1, point: CGPoint(x: 10, y: 0), frame: frame.offsetBy(dx: 10, dy: 0), epoch: 1)
         XCTAssertEqual(detector.observe(session: 1, point: request.location, latestPoint: CGPoint(x: 45, y: 0),
                                         pointerPath: points, frame: frame.offsetBy(dx: 10, dy: 0), epoch: 1).map(\.kind), [.updated])
+    }
+
+    func testFrameReadKeepsPointerHistoryBeforeRequestAndToleratesMovingDivergence() {
+        var path = DragPointerPath()
+        let earlier = DragInputEvent(kind: .leftDragged, location: CGPoint(x: -136, y: -306), timestamp: 100_000_000)
+        let request = DragInputEvent(kind: .leftDragged, location: CGPoint(x: -138.6, y: -355.7), timestamp: 350_000_000)
+        path.append(earlier)
+        path.append(request)
+        path.append(DragInputEvent(kind: .leftDragged, location: CGPoint(x: -127.5, y: -438), timestamp: 450_000_000))
+        XCTAssertEqual(path.duringFrameRead(startedAt: 350_000_000, including: request).first, earlier.location)
+
+        let frame = CGRect(x: 100, y: 80, width: 400, height: 300)
+        var detector = DragStateMachine()
+        _ = detector.down(session: 1, point: .zero, frame: frame, titleBarHit: true, epoch: 1)
+        let first = frame.offsetBy(dx: -20, dy: -20)
+        _ = detector.observe(session: 1, point: CGPoint(x: -20, y: -20), frame: first, epoch: 1)
+        _ = detector.observe(session: 1, point: CGPoint(x: -20, y: -20), frame: first, epoch: 1)
+        let diverged = [CGPoint(x: -138.6, y: -355.7), CGPoint(x: -127.5, y: -438)]
+        for offset in [CGPoint(x: -136, y: -306), CGPoint(x: -135, y: -320), CGPoint(x: -134, y: -334)] {
+            XCTAssertEqual(detector.observe(session: 1, point: request.location, latestPoint: diverged[1],
+                                            pointerPath: diverged, frame: frame.offsetBy(dx: offset.x, dy: offset.y), epoch: 1).map(\.kind), [.updated])
+        }
     }
 }

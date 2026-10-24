@@ -378,6 +378,7 @@ extension DragDetectionController {
         pendingFrameEvent = nil
         let session = current.session
         let point = event.location
+        let requestStartedAt = environment.now()
         Task { @MainActor [weak self, reader] in
             guard let self else { return }
             defer {
@@ -397,7 +398,7 @@ extension DragDetectionController {
                 let frame = try await reader.frame(for: hit.token, lease: hit.lease)
                 guard self.gesture?.session == session, self.isRunning else { return }
                 self.gesture?.frame = frame
-                let path = self.gesture?.pointerPath.recent(now: self.environment.now(), including: event)
+                let path = self.gesture?.pointerPath.duringFrameRead(startedAt: requestStartedAt, including: event)
                 let events = self.machine.observe(session: session, point: point, latestPoint: self.gesture?.latest.location,
                                                   pointerPath: path, frame: frame, epoch: self.environmentGeneration)
                 if events.contains(where: { $0.kind == .cancelled }) {
