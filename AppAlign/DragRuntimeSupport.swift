@@ -34,6 +34,7 @@ enum DragBaselineValidation {
         let hit: DragWindowSnapshot
         let down: DragInputEvent
         let latest: DragInputEvent
+        let pointerPath: [CGPoint]
         let firstMotion: UInt64?
         let mayRetry: Bool
     }
@@ -59,7 +60,8 @@ enum DragBaselineValidation {
             }
         } else if let downWindow, firstMotion.map({ downWindow.capturedAt < $0 }) ?? true {
             if mayRetry, hit.token.pid != downWindow.pid || !hit.hitInTitleBar { return .retry }
-            guard validateDownWindow(downWindow, against: hit, down: down, latest: latest) else {
+            guard validateDownWindow(downWindow, against: hit, down: down, latest: latest,
+                                     pointerPath: context.pointerPath) else {
                 return .rejected("The mouse-down window no longer matches the dragged window.")
             }
         } else if let firstMotion, hit.capturedAt >= firstMotion {
@@ -80,18 +82,16 @@ enum DragBaselineValidation {
     }
 
     static func validateDownWindow(_ cached: DownWindowBaseline, against live: DragWindowSnapshot,
-                                   down: DragInputEvent, latest: DragInputEvent) -> Bool {
+                                   down: DragInputEvent, latest: DragInputEvent, pointerPath: [CGPoint]) -> Bool {
         guard cached.pid == live.token.pid, live.hitInTitleBar,
               abs(cached.frame.width - live.frame.width) <= 2,
               abs(cached.frame.height - live.frame.height) <= 2,
               TitleBarHitClassifier.isCandidate(frame: cached.frame, point: down.location,
                                                 hitRole: live.hitRole, ancestorRoles: live.ancestorRoles) else { return false }
         let frameDelta = CGPoint(x: live.frame.minX - cached.frame.minX, y: live.frame.minY - cached.frame.minY)
-        let pointerDelta = CGPoint(x: latest.location.x - down.location.x, y: latest.location.y - down.location.y)
-        let lengthSquared = pointerDelta.x * pointerDelta.x + pointerDelta.y * pointerDelta.y
-        let fraction = lengthSquared > 0
-            ? min(1, max(0, (frameDelta.x * pointerDelta.x + frameDelta.y * pointerDelta.y) / lengthSquared)) : 0
-        return hypot(frameDelta.x - fraction * pointerDelta.x, frameDelta.y - fraction * pointerDelta.y) <= 8
+        let matchedDelta = DragPointerPath.closestDelta(to: frameDelta, down: down.location,
+                                                       points: pointerPath.isEmpty ? [down.location, latest.location] : pointerPath)
+        return hypot(frameDelta.x - matchedDelta.x, frameDelta.y - matchedDelta.y) <= 12
     }
 }
 

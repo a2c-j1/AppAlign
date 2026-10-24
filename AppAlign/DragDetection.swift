@@ -29,6 +29,7 @@ final class DragDetectionController: ObservableObject {
         var originalFrame: CGRect?
         var baseline: DragWindowSnapshot?
         var downWindow: DownWindowBaseline?
+        var pointerPath = DragPointerPath()
         var validationRetries = 0
     }
     private let reader: any DragWindowReading
@@ -263,6 +264,7 @@ extension DragDetectionController {
         if event.kind == .leftDown { begin(event); return }
         guard var current = gesture, event.gesture == current.inputID else { return }
         current.latest = event
+        if event.kind == .leftDragged { current.pointerPath.append(event) }
         gesture = current
         onAcceptedInput?(event)
         guard let live = gesture, live.session == current.session, live.inputID == current.inputID else { return }
@@ -283,6 +285,7 @@ extension DragDetectionController {
         sessionGeneration &+= 1
         var current = Gesture(session: sessionGeneration, inputID: event.gesture, down: event,
                               fingerprint: environment.displayFingerprint(), latest: event)
+        current.pointerPath.append(event)
         pendingHover = nil
         if let cached = prewarmCache {
             if cached.hit.notificationsVerified, cached.hit.capturedAt < event.timestamp,
@@ -329,6 +332,7 @@ extension DragDetectionController {
                 let originalFrame: CGRect
                 let context = DragBaselineValidation.CaptureContext(prewarm: live.baseline, downWindow: live.downWindow,
                                                                     hit: hit, down: live.down, latest: live.latest,
+                                                                    pointerPath: live.pointerPath.recent(now: self.environment.now()),
                                                                     firstMotion: live.firstMotion, mayRetry: self.canRetryValidation(live))
                 switch DragBaselineValidation.decide(context) {
                 case let .accepted(frame): originalFrame = frame
@@ -393,8 +397,9 @@ extension DragDetectionController {
                 let frame = try await reader.frame(for: hit.token, lease: hit.lease)
                 guard self.gesture?.session == session, self.isRunning else { return }
                 self.gesture?.frame = frame
+                let path = self.gesture?.pointerPath.recent(now: self.environment.now())
                 let events = self.machine.observe(session: session, point: point, latestPoint: self.gesture?.latest.location,
-                                                  frame: frame, epoch: self.environmentGeneration)
+                                                  pointerPath: path, frame: frame, epoch: self.environmentGeneration)
                 if events.contains(where: { $0.kind == .cancelled }) {
                     let decorated = self.decorate(events, using: self.gesture)
                     self.detachGesture()

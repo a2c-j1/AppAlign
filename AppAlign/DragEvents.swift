@@ -95,6 +95,48 @@ struct DragLifecycleEvent: Sendable, Equatable {
     var displayFingerprint: String = ""
 }
 
+struct DragPointerPath: Sendable {
+    private struct Sample: Sendable {
+        let timestamp: UInt64
+        let point: CGPoint
+    }
+
+    private var samples: [Sample] = []
+    private static let retention: UInt64 = 300_000_000
+    private static let capacity = 128
+
+    mutating func append(_ event: DragInputEvent) {
+        samples.append(Sample(timestamp: event.timestamp, point: event.location))
+        if samples.count > Self.capacity { samples.removeFirst(samples.count - Self.capacity) }
+    }
+
+    func recent(now: UInt64) -> [CGPoint] {
+        guard let latest = samples.last else { return [] }
+        let end = max(now, latest.timestamp)
+        let cutoff = end > Self.retention ? end - Self.retention : 0
+        let points = samples.filter { $0.timestamp >= cutoff }.map(\.point)
+        return points.isEmpty ? [latest.point] : points
+    }
+
+    static func closestDelta(to frameDelta: CGPoint, down: CGPoint, points: [CGPoint]) -> CGPoint {
+        guard let first = points.first else { return .zero }
+        var closest = CGPoint(x: first.x - down.x, y: first.y - down.y)
+        var bestDistance = hypot(frameDelta.x - closest.x, frameDelta.y - closest.y)
+        for (start, end) in zip(points, points.dropFirst()) {
+            let startDelta = CGPoint(x: start.x - down.x, y: start.y - down.y)
+            let travel = CGPoint(x: end.x - start.x, y: end.y - start.y)
+            let lengthSquared = travel.x * travel.x + travel.y * travel.y
+            let fraction = lengthSquared > 0
+                ? min(1, max(0, ((frameDelta.x - startDelta.x) * travel.x + (frameDelta.y - startDelta.y) * travel.y) / lengthSquared))
+                : 0
+            let candidate = CGPoint(x: startDelta.x + fraction * travel.x, y: startDelta.y + fraction * travel.y)
+            let distance = hypot(frameDelta.x - candidate.x, frameDelta.y - candidate.y)
+            if distance < bestDistance { closest = candidate; bestDistance = distance }
+        }
+        return closest
+    }
+}
+
 struct DragStateMachine: Sendable {
     enum State: Sendable, Equatable {
         case idle
@@ -113,7 +155,8 @@ struct DragStateMachine: Sendable {
         return previous
     }
 
-    mutating func observe(session: UInt64, point: CGPoint, latestPoint: CGPoint? = nil, frame: CGRect, epoch: UInt64) -> [DragLifecycleEvent] {
+    mutating func observe(session: UInt64, point: CGPoint, latestPoint: CGPoint? = nil,
+                          pointerPath: [CGPoint]? = nil, frame: CGRect, epoch: UInt64) -> [DragLifecycleEvent] {
         let original: CGRect
         let down: CGPoint
         let moving: Bool
@@ -128,19 +171,12 @@ struct DragStateMachine: Sendable {
         guard abs(frame.width - original.width) <= 2, abs(frame.height - original.height) <= 2 else {
             return cancel(reason: "The gesture resized the window.")
         }
-        let pointerDelta = CGPoint(x: point.x - down.x, y: point.y - down.y)
         let frameDelta = CGPoint(x: frame.minX - original.minX, y: frame.minY - original.minY)
-        // AX can report a frame from any time during the asynchronous read. Match
-        // it against the pointer's path over that interval, not only the point
-        // that initiated the read.
-        let end = latestPoint ?? point
-        let travel = CGPoint(x: end.x - point.x, y: end.y - point.y)
-        let lengthSquared = travel.x * travel.x + travel.y * travel.y
-        let fraction = lengthSquared > 0
-            ? min(1, max(0, ((frameDelta.x - pointerDelta.x) * travel.x + (frameDelta.y - pointerDelta.y) * travel.y) / lengthSquared))
-            : 0
-        let matchedDelta = CGPoint(x: pointerDelta.x + fraction * travel.x, y: pointerDelta.y + fraction * travel.y)
-        guard hypot(frameDelta.x - matchedDelta.x, frameDelta.y - matchedDelta.y) <= 8 else {
+        // AX frame reads can lag input by multiple events. Compare against the
+        // recent pointer trajectory, including bends, rather than one segment.
+        let matchedDelta = DragPointerPath.closestDelta(to: frameDelta, down: down,
+                                                       points: pointerPath ?? [point, latestPoint ?? point])
+        guard hypot(frameDelta.x - matchedDelta.x, frameDelta.y - matchedDelta.y) <= 12 else {
             confirmingSamples = 0
             return moving ? cancel(reason: "The window no longer follows the pointer.") : []
         }

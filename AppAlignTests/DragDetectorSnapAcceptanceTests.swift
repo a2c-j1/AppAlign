@@ -381,3 +381,37 @@ extension DragFinalReleaseAcceptanceTests {
         XCTAssertEqual(writes, 1)
     }
 }
+
+final class DragPointerPathTests: XCTestCase {
+    func testRecentPointerPathMatchesCurvedAndDelayedWindowFrames() {
+        let frame = CGRect(x: 100, y: 80, width: 400, height: 300)
+        var curved = DragStateMachine()
+        _ = curved.down(session: 1, point: .zero, frame: frame, titleBarHit: true, epoch: 1)
+        let first = frame.offsetBy(dx: 20, dy: 0)
+        _ = curved.observe(session: 1, point: CGPoint(x: 20, y: 0), frame: first, epoch: 1)
+        _ = curved.observe(session: 1, point: CGPoint(x: 20, y: 0), frame: first, epoch: 1)
+        let curve = [CGPoint(x: 79.6, y: -37.6), CGPoint(x: 150, y: -60), CGPoint(x: 277.7, y: -71.5)]
+        XCTAssertEqual(curved.observe(session: 1, point: curve[0], latestPoint: curve[2], pointerPath: curve,
+                                      frame: frame.offsetBy(dx: 150, dy: -60), epoch: 1).map(\.kind), [.updated])
+
+        var delayed = DragStateMachine()
+        _ = delayed.down(session: 2, point: .zero, frame: frame, titleBarHit: true, epoch: 1)
+        let moved = frame.offsetBy(dx: -20, dy: -20)
+        _ = delayed.observe(session: 2, point: CGPoint(x: -20, y: -20), frame: moved, epoch: 1)
+        _ = delayed.observe(session: 2, point: CGPoint(x: -20, y: -20), frame: moved, epoch: 1)
+        let path = [CGPoint(x: -587, y: -322), CGPoint(x: -623.1, y: -344.5), CGPoint(x: -680.8, y: -377.8)]
+        XCTAssertEqual(delayed.observe(session: 2, point: path[1], latestPoint: path[2], pointerPath: path,
+                                       frame: frame.offsetBy(dx: -587, dy: -322), epoch: 1).map(\.kind), [.updated])
+        XCTAssertEqual(delayed.observe(session: 2, point: path[1], latestPoint: path[2], pointerPath: Array(path.dropFirst()),
+                                       frame: frame.offsetBy(dx: -587, dy: -322), epoch: 1).map(\.kind), [.cancelled])
+    }
+
+    func testPointerPathExpiresOldSamplesAndKeepsLatest() {
+        var path = DragPointerPath()
+        for (time, offsetX) in [(100_000_000, 10), (200_000_000, 20), (450_000_000, 45)] {
+            path.append(DragInputEvent(kind: .leftDragged, location: CGPoint(x: offsetX, y: 0), timestamp: UInt64(time)))
+        }
+        XCTAssertEqual(path.recent(now: 500_000_000), [CGPoint(x: 20, y: 0), CGPoint(x: 45, y: 0)])
+        XCTAssertEqual(path.recent(now: 1_000_000_000), [CGPoint(x: 45, y: 0)])
+    }
+}
