@@ -6,9 +6,7 @@ import Foundation
 
 @MainActor
 struct DragEnvironment {
-    var inputGranted: @MainActor () -> Bool
     var accessibilityGranted: @MainActor () -> Bool
-    var requestInput: @MainActor () -> Void
     var requestAccessibility: @MainActor () -> Void
     var buttonsReleased: @MainActor () -> Bool
     var displayFingerprint: @MainActor () -> String
@@ -16,8 +14,7 @@ struct DragEnvironment {
 
     static func live(displayProvider: DisplayProvider? = nil) -> DragEnvironment {
         let displays = displayProvider ?? DisplayProvider()
-        return DragEnvironment(inputGranted: { CGPreflightListenEventAccess() }, accessibilityGranted: { AXIsProcessTrusted() },
-                               requestInput: { CGRequestListenEventAccess() }, requestAccessibility: {
+        return DragEnvironment(accessibilityGranted: { AXIsProcessTrusted() }, requestAccessibility: {
                                    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true as CFBoolean] as CFDictionary
                                    _ = AXIsProcessTrustedWithOptions(options)
                                }, buttonsReleased: { NSEvent.pressedMouseButtons == 0 }, displayFingerprint: { displays.snapshot.fingerprint },
@@ -111,13 +108,8 @@ final class DragDetectionController: ObservableObject {
         if !enabled { stopMonitoring(reason: "Window dragging detection was stopped."); return }
         guard !quitPaused else { return }
         // Permission prompts occur only in this explicit user operation.
-        if !environment.inputGranted() {
-            statusMessage = "Input Monitoring lets AppAlign observe mouse gestures without changing input. Grant access, then choose Retry."
-            environment.requestInput()
-            return
-        }
         if !environment.accessibilityGranted() {
-            statusMessage = "Accessibility lets AppAlign identify and inspect the window under the pointer. Grant access, then choose Retry."
+            statusMessage = "Accessibility lets AppAlign observe drags and inspect the window under the pointer. Grant access, then choose Retry."
             environment.requestAccessibility()
             return
         }
@@ -146,8 +138,8 @@ final class DragDetectionController: ObservableObject {
     }
     private func startMonitoring() {
         guard isEnabled, !quitPaused, !isRunning, !starting else { return }
-        guard environment.inputGranted(), environment.accessibilityGranted() else {
-            statusMessage = "Input Monitoring and Accessibility are required. Choose Retry after granting access."
+        guard environment.accessibilityGranted() else {
+            statusMessage = "Accessibility is required. Choose Retry after granting access."
             return
         }
         guard environment.buttonsReleased() else {
@@ -174,9 +166,9 @@ final class DragDetectionController: ObservableObject {
             statusMessage = "Listening for title-bar drags. Input is observed without suppression or injection."
             if installsObservers { installObservers(run: runGeneration) }
         case let .failed(reason):
-            stopMonitoring(reason: "Input Monitoring could not start: \(reason). Choose Retry.")
+            stopMonitoring(reason: "Drag monitoring could not start: \(reason). Choose Retry.")
         case let .interrupted(reason):
-            stopMonitoring(reason: "Input Monitoring stopped: \(reason). Choose Retry.")
+            stopMonitoring(reason: "Drag monitoring stopped: \(reason). Choose Retry.")
             if reason == "timeout", timeoutRetries == 0 {
                 timeoutRetries += 1
                 startMonitoring()
@@ -245,8 +237,8 @@ extension DragDetectionController {
     }
 
     func checkHealth() {
-        guard environment.inputGranted(), environment.accessibilityGranted() else {
-            stopMonitoring(reason: "Input Monitoring or Accessibility permission was revoked. Choose Retry.")
+        guard environment.accessibilityGranted() else {
+            stopMonitoring(reason: "Accessibility permission was revoked. Choose Retry.")
             invalidateKeyboard?()
             return
         }
@@ -509,7 +501,7 @@ extension DragDetectionController {
 
     private func pumpPrewarm() {
         guard !captureInFlight, cleanupQueue.count < 2, let hover = pendingHover, hover.buttonMask == 0, isRunning,
-              environment.inputGranted(), environment.accessibilityGranted() else { return }
+              environment.accessibilityGranted() else { return }
         guard hover.timestamp >= lastPrewarmRequest, hover.timestamp - lastPrewarmRequest >= Self.prewarmInterval else { return }
         pendingHover = nil
         lastPrewarmRequest = hover.timestamp

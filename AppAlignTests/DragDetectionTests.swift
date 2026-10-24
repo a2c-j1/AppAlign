@@ -55,15 +55,12 @@ final class DragDetectionTests: XCTestCase {
     }
 
     @MainActor
-    func testPermissionRequestsAreExplicitAndRunningWaitsForTapReady() {
+    func testAccessibilityRequestIsExplicitAndRunningWaitsForTapReady() {
         let fixture = DragFixture()
-        fixture.context.input = false
+        fixture.context.accessibility = false
         fixture.controller.setEnabled(true)
-        XCTAssertEqual(fixture.context.inputRequests, 1)
-        XCTAssertEqual(fixture.monitor.starts, 0)
-        fixture.context.input = true; fixture.context.accessibility = false
-        fixture.controller.retry()
         XCTAssertEqual(fixture.context.accessibilityRequests, 1)
+        XCTAssertEqual(fixture.monitor.starts, 0)
         fixture.context.accessibility = true
         fixture.controller.retry()
         XCTAssertEqual(fixture.monitor.starts, 1)

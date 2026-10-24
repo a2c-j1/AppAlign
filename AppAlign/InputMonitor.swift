@@ -267,7 +267,7 @@ final class InputMonitorCore: @unchecked Sendable {
         lock.unlock()
         guard mayStart else { return }
         guard let newResource = resourceFactory.make(self, requestedGeneration) else {
-            deliverStatus(.failed("macOS could not create the listen-only event tap. Check Input Monitoring permission and choose Retry."), generation: requestedGeneration)
+            deliverStatus(.failed("macOS could not create the listen-only event tap. Check Accessibility permission and choose Retry."), generation: requestedGeneration)
             return
         }
         lock.lock()
@@ -289,7 +289,7 @@ final class InputMonitorCore: @unchecked Sendable {
             lock.unlock()
             newResource.stop()
             newResource.invalidate()
-            deliverStatus(.failed("macOS did not enable the listen-only event tap. Check Input Monitoring permission and choose Retry."), generation: requestedGeneration)
+            deliverStatus(.failed("macOS did not enable the listen-only event tap. Check Accessibility permission and choose Retry."), generation: requestedGeneration)
             return
         }
 

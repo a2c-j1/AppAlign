@@ -194,7 +194,7 @@ struct ContentView: View {
                         }
                     }
                     Text(dragSnapController.statusMessage).font(.caption).foregroundStyle(.secondary)
-                    Text("Input Monitoring observes pointer events. Accessibility identifies the window under the pointer. Both permissions are requested only when this feature is enabled. AppAlign never changes or injects input.")
+                    Text("Accessibility lets AppAlign observe pointer events and identify the window under the pointer. It is requested only when this feature is enabled. AppAlign never changes or injects input.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

@@ -14,11 +14,9 @@ enum DragTestError: Error { case timeout, unavailable }
 
 @MainActor
 final class DragContext {
-    var input = true
     var accessibility = true
     var released = true
     var fingerprint = "display-1"
-    var inputRequests = 0
     var accessibilityRequests = 0
     var gate = false
     var invalidations = 0
@@ -48,8 +46,8 @@ final class DragFixture {
     init() {
         let context = context
         controller = DragDetectionController(reader: reader, monitor: monitor, environment: DragEnvironment(
-            inputGranted: { context.input }, accessibilityGranted: { context.accessibility }, requestInput: { context.inputRequests += 1 },
-            requestAccessibility: { context.accessibilityRequests += 1 }, buttonsReleased: { context.released },
+            accessibilityGranted: { context.accessibility }, requestAccessibility: { context.accessibilityRequests += 1 },
+            buttonsReleased: { context.released },
             displayFingerprint: { context.fingerprint }, now: { 100 }), ownPID: 1, installsObservers: false)
         controller.dragGateChanged = { context.gate = $0 }
         controller.invalidateKeyboard = { context.invalidations += 1 }

@@ -98,7 +98,7 @@ struct KeyboardSettingsView: View {
                             layoutShortcutRow(layout)
                         }
                         Text(layoutHotkeys.statusMessage).font(.caption).foregroundStyle(.secondary)
-                        Text("Each shortcut applies its saved layout to the display under the pointer. Drag detection keeps its existing Input Monitoring permission and input is never suppressed.")
+                        Text("Each shortcut applies its saved layout to the display under the pointer. Drag detection uses Accessibility permission and input is never suppressed.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
