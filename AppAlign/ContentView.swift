@@ -193,7 +193,10 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                         Spacer()
                         if !dragDetectionController.isRunning {
-                            Button("Retry") { dragDetectionController.retry() }
+                            Button("Retry") {
+                                UserDefaults.standard.set(true, forKey: DragDetectionController.enabledDefaultsKey)
+                                dragDetectionController.retry()
+                            }
                         }
                     }
                     Text(dragSnapController.statusMessage).font(.caption).foregroundStyle(.secondary)

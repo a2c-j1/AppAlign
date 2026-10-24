@@ -47,6 +47,7 @@ final class DragDetectionController: ObservableObject {
     private var quitPaused = false
     private var timeoutRetries = 0
     private var starting = false
+    private var startRetryTimer: Timer?
     private var permissionTimer: Timer?
     private var observationTimer: Timer?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
@@ -70,8 +71,9 @@ final class DragDetectionController: ObservableObject {
         if !enabled { stopMonitoring(reason: "Window dragging detection was stopped."); return }
         guard !quitPaused else { return }
         guard environment.accessibilityGranted() else {
-            statusMessage = "Accessibility lets AppAlign observe drags and inspect windows. Grant access, then choose Retry."
+            statusMessage = "Waiting for Accessibility access to start drag detection."
             environment.requestAccessibility()
+            waitForStartPrerequisites()
             return
         }
         startMonitoring()
@@ -94,13 +96,16 @@ final class DragDetectionController: ObservableObject {
     private func startMonitoring() {
         guard isEnabled, !quitPaused, !isRunning, !starting else { return }
         guard environment.accessibilityGranted() else {
-            statusMessage = "Accessibility is required. Choose Retry after granting access."
+            statusMessage = "Waiting for Accessibility access to start drag detection."
+            waitForStartPrerequisites()
             return
         }
         guard environment.buttonsReleased() else {
-            statusMessage = "Release mouse buttons, then choose Retry to begin a fresh gesture."
+            statusMessage = "Release mouse buttons to start drag detection."
+            waitForStartPrerequisites()
             return
         }
+        startRetryTimer?.invalidate(); startRetryTimer = nil
         runGeneration &+= 1
         let run = runGeneration
         inputEpoch = nil
@@ -139,6 +144,7 @@ final class DragDetectionController: ObservableObject {
         starting = false
         isRunning = false
         monitor.stop()
+        startRetryTimer?.invalidate(); startRetryTimer = nil
         permissionTimer?.invalidate(); permissionTimer = nil
         observationTimer?.invalidate(); observationTimer = nil
         for (center, observer) in observers { center.removeObserver(observer) }
@@ -261,6 +267,20 @@ final class DragDetectionController: ObservableObject {
             onLifecycle?(event)
         }
         if let reason = events.last?.reason { statusMessage = reason }
+    }
+}
+
+@MainActor
+private extension DragDetectionController {
+    func waitForStartPrerequisites() {
+        guard startRetryTimer == nil else { return }
+        startRetryTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isEnabled, !self.quitPaused,
+                      self.environment.accessibilityGranted(), self.environment.buttonsReleased() else { return }
+                self.startMonitoring()
+            }
+        }
     }
 }
 

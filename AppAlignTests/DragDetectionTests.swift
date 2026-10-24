@@ -46,6 +46,30 @@ final class DragDetectionTests: XCTestCase {
     }
 
     @MainActor
+    func testMonitoringStartsWhenAccessibilityBecomesAvailable() async throws {
+        let fixture = DragFixture()
+        fixture.context.accessibility = false
+        fixture.controller.setEnabled(true)
+        XCTAssertEqual(fixture.monitor.starts, 0)
+        fixture.context.accessibility = true
+        try await spin { fixture.monitor.starts == 1 }
+        fixture.monitor.status(.ready)
+        XCTAssertTrue(fixture.controller.isRunning)
+        fixture.stop()
+    }
+
+    @MainActor
+    func testMonitoringStartsAfterMouseButtonIsReleased() async throws {
+        let fixture = DragFixture()
+        fixture.context.released = false
+        fixture.controller.setEnabled(true)
+        XCTAssertEqual(fixture.monitor.starts, 0)
+        fixture.context.released = true
+        try await spin { fixture.monitor.starts == 1 }
+        fixture.stop()
+    }
+
+    @MainActor
     func testSameWindowIDMovesWithPointerAndResolvesAfterRelease() async throws {
         let fixture = DragFixture()
         fixture.start()
