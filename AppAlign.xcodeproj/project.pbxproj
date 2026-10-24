@@ -62,7 +62,7 @@
 			U10000000000000000000001 /* KeyboardSnapGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = U20000000000000000000001 /* KeyboardSnapGeometry.swift */; };
 			U10000000000000000000002 /* KeyboardSnapGeometry.swift in Tests */ = {isa = PBXBuildFile; fileRef = U20000000000000000000001 /* KeyboardSnapGeometry.swift */; };
 		V10000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = V20000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift */; };
-		V10000000000000000000002 /* WorkspaceNewWindowProcessProvider.swift in Tests */ = {isa = PBXBuildFile; fileRef = W20000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift */; };
+		V10000000000000000000002 /* WorkspaceNewWindowProcessProvider.swift in Tests */ = {isa = PBXBuildFile; fileRef = V20000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift */; };
 			F10000000000000000000003 /* KeyboardExtension.swift in Tests */ = {isa = PBXBuildFile; fileRef = F20000000000000000000001 /* KeyboardExtension.swift */; };
 			F10000000000000000000004 /* LayoutControllerTransactions.swift in Tests */ = {isa = PBXBuildFile; fileRef = F20000000000000000000002 /* LayoutControllerTransactions.swift */; };
 			G10000000000000000000001 /* ZoneSelectionBoundaryTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = G20000000000000000000001 /* ZoneSelectionBoundaryTests.swift */; };
@@ -262,7 +262,6 @@
 			T20000000000000000000001 /* NewWindowMonitorRuntimeOwnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewWindowMonitorRuntimeOwnerTests.swift; sourceTree = "<group>"; };
 			U20000000000000000000001 /* KeyboardSnapGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardSnapGeometry.swift; sourceTree = "<group>"; };
 		V20000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceNewWindowProcessProvider.swift; sourceTree = "<group>"; };
-		W20000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../AppAlign/WorkspaceNewWindowProcessProvider.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -278,7 +277,6 @@
 					A40000000000000000000002 /* AppAlign */,
 					B40000000000000000000001 /* AppAlignTests */,
 					D30000000000000000000006 /* Space Probe Sources */,
-					D30000000000000000000016 /* Space Helper Tests */,
 					B2000000000000000000000B /* THIRD_PARTY_NOTICES.md */,
 					A40000000000000000000003 /* Products */,
 				);
@@ -287,65 +285,37 @@
 			A40000000000000000000002 /* AppAlign */ = {
 				isa = PBXGroup;
 				children = (
-					A20000000000000000000001 /* AppAlignApp.swift */,
-					A20000000000000000000002 /* ContentView.swift */,
-					A20000000000000000000006 /* LayoutEditorView.swift */,
-					A20000000000000000000007 /* LayoutEditorPreview.swift */,
-					A20000000000000000000005 /* WindowManagement.swift */,
-					B20000000000000000000001 /* DisplayModels.swift */,
-					B20000000000000000000002 /* DisplayGeometry.swift */,
-					B20000000000000000000003 /* DisplayProvider.swift */,
-					B20000000000000000000004 /* LayoutModels.swift */,
-					B20000000000000000000005 /* LayoutEngine.swift */,
-					B20000000000000000000006 /* LayoutTemplates.swift */,
-					B20000000000000000000007 /* LayoutController.swift */,
-					Z20000000000000000000001 /* SpaceProvider.swift */,
-					Z20000000000000000000002 /* PersistedSpaceModels.swift */,
-					Z20000000000000000000003 /* PersistentSpaceStoreValidation.swift */,
-					B20000000000000000000008 /* LayoutPreview.swift */,
-					B2000000000000000000000C /* Persistence.swift */,
-					I20000000000000000000001 /* AppZoneHistoryPersistence.swift */,
-					I20000000000000000000002 /* AppHistoryLayoutIntegration.swift */,
-					V20000000000000000000051 /* EditorDeltaPersistence.swift */,
-					B20000000000000000000010 /* LayoutEditing.swift */,
-					B20000000000000000000011 /* LayoutEditorModel.swift */,
-					B20000000000000000000014 /* ZoneNavigator.swift */,
-					B20000000000000000000016 /* KeyboardSettings.swift */,
-					B20000000000000000000017 /* KeyboardSnapController.swift */, U20000000000000000000001 /* KeyboardSnapGeometry.swift */,
-					B20000000000000000000018 /* GlobalHotkeys.swift */,
-					B20000000000000000000019 /* KeyboardSettingsView.swift */,
-					E20000000000000000000001 /* LayoutHotkeys.swift */,
-					E20000000000000000000002 /* OrderedInteractionInbox.swift */,
-					F20000000000000000000001 /* KeyboardExtension.swift */,
-					F20000000000000000000002 /* LayoutControllerTransactions.swift */,
-					D20000000000000000000009 /* DisplayLayoutRefresh.swift */,
-					B2000000000000000000001C /* KeyboardLayoutSnapshot.swift */,
-					B2000000000000000000001D /* PlacementController.swift */,
-					B2000000000000000000001E /* KeyboardSettingsPersistence.swift */,
-					C30000000000000000000001 /* DragDetection.swift */,
-					C30000000000000000000002 /* InputMonitor.swift */,
-					C30000000000000000000003 /* DragEvents.swift */,
-					C30000000000000000000004 /* DragRuntimeSupport.swift */,
-					C30000000000000000000006 /* WindowPlacement.swift */,
-					D20000000000000000000001 /* DragCommit.swift */,
-					D20000000000000000000006 /* PlacementCommitTicket.swift */,
-					D20000000000000000000007 /* DisplayConfigurationController.swift */,
-					D20000000000000000000008 /* MultiDisplayNavigator.swift */,
-					D20000000000000000000002 /* DragLayoutSnapshot.swift */,
-					D20000000000000000000003 /* DragSettings.swift */,
-					D20000000000000000000004 /* ZoneOverlay.swift */,
-					D20000000000000000000005 /* WindowRuntimeOperations.swift */,
-					H20000000000000000000001 /* NewWindowMonitor.swift */,
-					X20000000000000000000001 /* WindowRuntimeObservation.swift */,
-					X20000000000000000000002 /* NewWindowMonitorLifecycle.swift */,
-					V20000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift */,
-					H20000000000000000000002 /* AutoRestoreController.swift */,
-					J20000000000000000000001 /* WindowRuntimeState.swift */,
-					K20000000000000000000001 /* AccessibilityHistoryPermissionMonitor.swift */,
-					D30000000000000000000001 /* SpaceHelperProcess.swift */,
+					332F02CD809A24EBD74C13C6 /* App */,
+					F3D17365464A76D10D1B1B05 /* Display */,
+					23C2062B645D1DCC1A968B8A /* Drag */,
+					67C47F9B69607594313EB2B1 /* Keyboard */,
+					7F35AD8CC4BCDF719993C86A /* Layout */,
+					C24B4CD5674B2B5FC5BD419E /* Persistence */,
+					2EE33C677E22FF397F711E2B /* Space */,
+					9848074216CEA6E378E026A5 /* Window */,
 					A20000000000000000000003 /* Assets.xcassets */,
 				);
 				path = AppAlign;
+				sourceTree = "<group>";
+			};
+			B40000000000000000000001 /* AppAlignTests */ = {
+				isa = PBXGroup;
+				children = (
+					D7BE9D84EB7EF116642B6C67 /* Display */,
+					55913A962D80619FEF7FC802 /* Drag */,
+					0BDEE7D52F66E86685345038 /* History */,
+					19D43E7BE995EA41AFE8D0CE /* Hotkeys */,
+					016DB2A39BCD78777DBF12AA /* InputMonitoring */,
+					6AA3BA8485F929B2C214ACAB /* Keyboard */,
+					2AF7A4C8419997AAB04140BC /* Layout */,
+					AC15B6C2197F59408FA8C413 /* NewWindowMonitor */,
+					BC0EB43F122F0357745C1203 /* Persistence */,
+					D4EBC247659BF6B70AA4E9E9 /* Placement */,
+					3C9191F3D6A27D947E179FC5 /* Spaces */,
+					2FB9AB79D95FC22B15F2E99D /* WindowRuntime */,
+					F20F8002F1ADD29122FE0594 /* Zones */,
+				);
+				path = AppAlignTests;
 				sourceTree = "<group>";
 			};
 			A40000000000000000000003 /* Products */ = {
@@ -354,23 +324,253 @@
 				name = Products;
 				sourceTree = "<group>";
 			};
-			B40000000000000000000001 /* AppAlignTests */ = {
-				isa = PBXGroup;
-				children = (Y20000000000000000000001 /* SpaceProviderTests.swift */, B20000000000000000000009 /* LayoutEngineTests.swift */, B2000000000000000000000D /* PersistenceTests.swift */, N20000000000000000000001 /* AppHistoryCoordinatorTests.swift */, M20000000000000000000001 /* LayoutPersistenceControllerTests.swift */, L20000000000000000000001 /* AppZoneHistoryPersistenceTests.swift */, B20000000000000000000012 /* LayoutEditorTests.swift */, B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */, B20000000000000000000015 /* ZoneNavigatorTests.swift */, B2000000000000000000001A /* KeyboardSettingsTests.swift */, B2000000000000000000001B /* KeyboardSnapControllerTests.swift */, P20000000000000000000001 /* KeyboardManualPlacementTests.swift */, O20000000000000000000001 /* KeyboardManualHistoryWaitTests.swift */, B2000000000000000000001F /* GlobalHotkeysTests.swift */, B20000000000000000000020 /* KeyboardIntegrationTests.swift */, B20000000000000000000021 /* KeyboardLifecycleTests.swift */, C40000000000000000000001 /* DragDetectionTests.swift */, C40000000000000000000002 /* RuntimeWindowOwnershipTests.swift */, C40000000000000000000003 /* DragTestSupport.swift */, C40000000000000000000004 /* InputMonitorLifecycleTests.swift */, C40000000000000000000005 /* DragSnapTests.swift */, C40000000000000000000006 /* DragDetectorSnapAcceptanceTests.swift */, C40000000000000000000007 /* PlacementValidityTests.swift */, C40000000000000000000008 /* MultiDisplayTests.swift */, C40000000000000000000009 /* DisplayConfigurationControllerTests.swift */, E20000000000000000000003 /* OrderedInteractionTests.swift */, E20000000000000000000004 /* LayoutHotkeysTests.swift */, E20000000000000000000005 /* FlagsSubscriptionTests.swift */, G20000000000000000000001 /* ZoneSelectionBoundaryTests.swift */, G20000000000000000000002 /* KeyboardExtensionRaceTests.swift */, G20000000000000000000003 /* KeyboardExtensionAwaitTests.swift */, H20000000000000000000003 /* NewWindowMonitorTests.swift */, Q20000000000000000000001 /* NewWindowMonitorCoreTests.swift */, R20000000000000000000001 /* NewWindowMonitorAutoRestoreTests.swift */, S20000000000000000000001 /* NewWindowMonitorTestSupport.swift */, T20000000000000000000001 /* NewWindowMonitorRuntimeOwnerTests.swift */, W20000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift */,  K20000000000000000000002 /* AccessibilityHistoryPermissionMonitorTests.swift */,);
-				path = AppAlignTests;
-				sourceTree = "<group>";
-			};
 			D30000000000000000000006 /* Space Probe Sources */ = {
 				isa = PBXGroup;
 				children = (D30000000000000000000007 /* space-probe.swift */, D30000000000000000000008 /* space-probe-core.swift */,);
 				path = scripts;
 				sourceTree = "<group>";
 			};
-			D30000000000000000000016 /* Space Helper Tests */ = {
+			332F02CD809A24EBD74C13C6 /* App */ = {
 				isa = PBXGroup;
-				children = (D30000000000000000000004 /* SpaceHelperBackendTests.swift */,);
-				path = AppAlignTests;
-				sourceTree = SOURCE_ROOT;
+				children = (
+					A20000000000000000000001 /* AppAlignApp.swift */,
+					A20000000000000000000002 /* ContentView.swift */,
+				);
+				path = App;
+				sourceTree = "<group>";
+			};
+			F3D17365464A76D10D1B1B05 /* Display */ = {
+				isa = PBXGroup;
+				children = (
+					D20000000000000000000007 /* DisplayConfigurationController.swift */,
+					B20000000000000000000002 /* DisplayGeometry.swift */,
+					D20000000000000000000009 /* DisplayLayoutRefresh.swift */,
+					B20000000000000000000001 /* DisplayModels.swift */,
+					B20000000000000000000003 /* DisplayProvider.swift */,
+					D20000000000000000000008 /* MultiDisplayNavigator.swift */,
+				);
+				path = Display;
+				sourceTree = "<group>";
+			};
+			23C2062B645D1DCC1A968B8A /* Drag */ = {
+				isa = PBXGroup;
+				children = (
+					D20000000000000000000001 /* DragCommit.swift */,
+					C30000000000000000000001 /* DragDetection.swift */,
+					C30000000000000000000003 /* DragEvents.swift */,
+					D20000000000000000000002 /* DragLayoutSnapshot.swift */,
+					C30000000000000000000004 /* DragRuntimeSupport.swift */,
+					D20000000000000000000003 /* DragSettings.swift */,
+					E20000000000000000000002 /* OrderedInteractionInbox.swift */,
+					D20000000000000000000004 /* ZoneOverlay.swift */,
+				);
+				path = Drag;
+				sourceTree = "<group>";
+			};
+			67C47F9B69607594313EB2B1 /* Keyboard */ = {
+				isa = PBXGroup;
+				children = (
+					B20000000000000000000018 /* GlobalHotkeys.swift */,
+					C30000000000000000000002 /* InputMonitor.swift */,
+					F20000000000000000000001 /* KeyboardExtension.swift */,
+					B2000000000000000000001C /* KeyboardLayoutSnapshot.swift */,
+					B20000000000000000000016 /* KeyboardSettings.swift */,
+					B2000000000000000000001E /* KeyboardSettingsPersistence.swift */,
+					B20000000000000000000019 /* KeyboardSettingsView.swift */,
+					B20000000000000000000017 /* KeyboardSnapController.swift */,
+					U20000000000000000000001 /* KeyboardSnapGeometry.swift */,
+				);
+				path = Keyboard;
+				sourceTree = "<group>";
+			};
+			7F35AD8CC4BCDF719993C86A /* Layout */ = {
+				isa = PBXGroup;
+				children = (
+					B20000000000000000000007 /* LayoutController.swift */,
+					F20000000000000000000002 /* LayoutControllerTransactions.swift */,
+					B20000000000000000000010 /* LayoutEditing.swift */,
+					B20000000000000000000011 /* LayoutEditorModel.swift */,
+					A20000000000000000000007 /* LayoutEditorPreview.swift */,
+					A20000000000000000000006 /* LayoutEditorView.swift */,
+					B20000000000000000000005 /* LayoutEngine.swift */,
+					E20000000000000000000001 /* LayoutHotkeys.swift */,
+					B20000000000000000000004 /* LayoutModels.swift */,
+					B20000000000000000000008 /* LayoutPreview.swift */,
+					B20000000000000000000006 /* LayoutTemplates.swift */,
+					B20000000000000000000014 /* ZoneNavigator.swift */,
+				);
+				path = Layout;
+				sourceTree = "<group>";
+			};
+			C24B4CD5674B2B5FC5BD419E /* Persistence */ = {
+				isa = PBXGroup;
+				children = (
+					I20000000000000000000002 /* AppHistoryLayoutIntegration.swift */,
+					I20000000000000000000001 /* AppZoneHistoryPersistence.swift */,
+					V20000000000000000000051 /* EditorDeltaPersistence.swift */,
+					B2000000000000000000000C /* Persistence.swift */,
+					Z20000000000000000000003 /* PersistentSpaceStoreValidation.swift */,
+				);
+				path = Persistence;
+				sourceTree = "<group>";
+			};
+			2EE33C677E22FF397F711E2B /* Space */ = {
+				isa = PBXGroup;
+				children = (
+					Z20000000000000000000002 /* PersistedSpaceModels.swift */,
+					D30000000000000000000001 /* SpaceHelperProcess.swift */,
+					Z20000000000000000000001 /* SpaceProvider.swift */,
+				);
+				path = Space;
+				sourceTree = "<group>";
+			};
+			9848074216CEA6E378E026A5 /* Window */ = {
+				isa = PBXGroup;
+				children = (
+					K20000000000000000000001 /* AccessibilityHistoryPermissionMonitor.swift */,
+					H20000000000000000000002 /* AutoRestoreController.swift */,
+					H20000000000000000000001 /* NewWindowMonitor.swift */,
+					X20000000000000000000002 /* NewWindowMonitorLifecycle.swift */,
+					D20000000000000000000006 /* PlacementCommitTicket.swift */,
+					B2000000000000000000001D /* PlacementController.swift */,
+					A20000000000000000000005 /* WindowManagement.swift */,
+					C30000000000000000000006 /* WindowPlacement.swift */,
+					X20000000000000000000001 /* WindowRuntimeObservation.swift */,
+					D20000000000000000000005 /* WindowRuntimeOperations.swift */,
+					J20000000000000000000001 /* WindowRuntimeState.swift */,
+					V20000000000000000000001 /* WorkspaceNewWindowProcessProvider.swift */,
+				);
+				path = Window;
+				sourceTree = "<group>";
+			};
+			D7BE9D84EB7EF116642B6C67 /* Display */ = {
+				isa = PBXGroup;
+				children = (
+					C40000000000000000000009 /* DisplayConfigurationControllerTests.swift */,
+					C40000000000000000000008 /* MultiDisplayTests.swift */,
+				);
+				path = Display;
+				sourceTree = "<group>";
+			};
+			55913A962D80619FEF7FC802 /* Drag */ = {
+				isa = PBXGroup;
+				children = (
+					C40000000000000000000001 /* DragDetectionTests.swift */,
+					C40000000000000000000006 /* DragDetectorSnapAcceptanceTests.swift */,
+					C40000000000000000000005 /* DragSnapTests.swift */,
+					C40000000000000000000003 /* DragTestSupport.swift */,
+					E20000000000000000000003 /* OrderedInteractionTests.swift */,
+				);
+				path = Drag;
+				sourceTree = "<group>";
+			};
+			0BDEE7D52F66E86685345038 /* History */ = {
+				isa = PBXGroup;
+				children = (
+					K20000000000000000000002 /* AccessibilityHistoryPermissionMonitorTests.swift */,
+					N20000000000000000000001 /* AppHistoryCoordinatorTests.swift */,
+					L20000000000000000000001 /* AppZoneHistoryPersistenceTests.swift */,
+				);
+				path = History;
+				sourceTree = "<group>";
+			};
+			19D43E7BE995EA41AFE8D0CE /* Hotkeys */ = {
+				isa = PBXGroup;
+				children = (
+					B2000000000000000000001F /* GlobalHotkeysTests.swift */,
+					E20000000000000000000004 /* LayoutHotkeysTests.swift */,
+				);
+				path = Hotkeys;
+				sourceTree = "<group>";
+			};
+			016DB2A39BCD78777DBF12AA /* InputMonitoring */ = {
+				isa = PBXGroup;
+				children = (
+					E20000000000000000000005 /* FlagsSubscriptionTests.swift */,
+					C40000000000000000000004 /* InputMonitorLifecycleTests.swift */,
+				);
+				path = InputMonitoring;
+				sourceTree = "<group>";
+			};
+			6AA3BA8485F929B2C214ACAB /* Keyboard */ = {
+				isa = PBXGroup;
+				children = (
+					G20000000000000000000003 /* KeyboardExtensionAwaitTests.swift */,
+					G20000000000000000000002 /* KeyboardExtensionRaceTests.swift */,
+					B20000000000000000000020 /* KeyboardIntegrationTests.swift */,
+					B20000000000000000000021 /* KeyboardLifecycleTests.swift */,
+					O20000000000000000000001 /* KeyboardManualHistoryWaitTests.swift */,
+					P20000000000000000000001 /* KeyboardManualPlacementTests.swift */,
+					B2000000000000000000001A /* KeyboardSettingsTests.swift */,
+					B2000000000000000000001B /* KeyboardSnapControllerTests.swift */,
+				);
+				path = Keyboard;
+				sourceTree = "<group>";
+			};
+			2AF7A4C8419997AAB04140BC /* Layout */ = {
+				isa = PBXGroup;
+				children = (
+					B20000000000000000000013 /* LayoutEditorConcurrencyTests.swift */,
+					B20000000000000000000012 /* LayoutEditorTests.swift */,
+					B20000000000000000000009 /* LayoutEngineTests.swift */,
+					M20000000000000000000001 /* LayoutPersistenceControllerTests.swift */,
+				);
+				path = Layout;
+				sourceTree = "<group>";
+			};
+			AC15B6C2197F59408FA8C413 /* NewWindowMonitor */ = {
+				isa = PBXGroup;
+				children = (
+					R20000000000000000000001 /* NewWindowMonitorAutoRestoreTests.swift */,
+					Q20000000000000000000001 /* NewWindowMonitorCoreTests.swift */,
+					T20000000000000000000001 /* NewWindowMonitorRuntimeOwnerTests.swift */,
+					S20000000000000000000001 /* NewWindowMonitorTestSupport.swift */,
+					H20000000000000000000003 /* NewWindowMonitorTests.swift */,
+				);
+				path = NewWindowMonitor;
+				sourceTree = "<group>";
+			};
+			BC0EB43F122F0357745C1203 /* Persistence */ = {
+				isa = PBXGroup;
+				children = (
+					B2000000000000000000000D /* PersistenceTests.swift */,
+				);
+				path = Persistence;
+				sourceTree = "<group>";
+			};
+			D4EBC247659BF6B70AA4E9E9 /* Placement */ = {
+				isa = PBXGroup;
+				children = (
+					C40000000000000000000007 /* PlacementValidityTests.swift */,
+				);
+				path = Placement;
+				sourceTree = "<group>";
+			};
+			3C9191F3D6A27D947E179FC5 /* Spaces */ = {
+				isa = PBXGroup;
+				children = (
+					D30000000000000000000004 /* SpaceHelperBackendTests.swift */,
+					Y20000000000000000000001 /* SpaceProviderTests.swift */,
+				);
+				path = Spaces;
+				sourceTree = "<group>";
+			};
+			2FB9AB79D95FC22B15F2E99D /* WindowRuntime */ = {
+				isa = PBXGroup;
+				children = (
+					C40000000000000000000002 /* RuntimeWindowOwnershipTests.swift */,
+				);
+				path = WindowRuntime;
+				sourceTree = "<group>";
+			};
+			F20F8002F1ADD29122FE0594 /* Zones */ = {
+				isa = PBXGroup;
+				children = (
+					B20000000000000000000015 /* ZoneNavigatorTests.swift */,
+					G20000000000000000000001 /* ZoneSelectionBoundaryTests.swift */,
+				);
+				path = Zones;
+				sourceTree = "<group>";
 			};
 /* End PBXGroup section */
 

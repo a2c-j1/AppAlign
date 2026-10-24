@@ -2,7 +2,7 @@
 
 ## PowerToys FancyZones priority-grid preset data
 
-The priority-grid preset table in `AppAlign/LayoutTemplates.swift` is adapted from Microsoft PowerToys FancyZones `LayoutConfigurator.cpp` at commit `1400fd8e999f381329e16e9df4084f7dc588c8a7`:
+The priority-grid preset table in `AppAlign/Layout/LayoutTemplates.swift` is adapted from Microsoft PowerToys FancyZones `LayoutConfigurator.cpp` at commit `1400fd8e999f381329e16e9df4084f7dc588c8a7`:
 
 https://github.com/microsoft/PowerToys/blob/1400fd8e999f381329e16e9df4084f7dc588c8a7/src/modules/fancyzones/FancyZonesLib/LayoutConfigurator.cpp
 
