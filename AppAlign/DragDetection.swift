@@ -190,9 +190,7 @@ final class DragDetectionController: ObservableObject {
         lastHover = nil
         statusMessage = reason
     }
-
 }
-
 @MainActor
 extension DragDetectionController {
     private func installObservers(run: UInt64) {
@@ -392,9 +390,7 @@ extension DragDetectionController {
             }
         }
     }
-
 }
-
 @MainActor
 extension DragDetectionController {
     private func requestFrame(_ event: DragInputEvent) {
@@ -478,7 +474,6 @@ extension DragDetectionController {
         if let oldLease, oldLease != transferring { queueRelease(oldLease) }
         if let baselineLease { queueRelease(baselineLease) }
     }
-
 }
 
 @MainActor
@@ -519,9 +514,22 @@ extension DragDetectionController {
             do {
                 let hit = try await reader.window(at: hover.location, ownPID: self.ownPID, downTimestamp: hover.timestamp)
                 guard self.isRunning, self.runGeneration == run, self.environmentGeneration == environmentEpoch,
-                      self.gesture == nil, self.environment.displayFingerprint() == fingerprint,
+                      self.environment.displayFingerprint() == fingerprint,
                       hit.notificationsVerified, hit.hitInTitleBar else {
                     self.queueRelease(hit.lease)
+                    return
+                }
+                if var current = self.gesture {
+                    guard current.hit == nil, current.baseline == nil,
+                          hover.epoch == current.down.epoch, current.fingerprint == fingerprint,
+                          hit.capturedAt < current.down.timestamp,
+                          current.down.timestamp - hit.capturedAt <= Self.cacheFreshness,
+                          hit.hitRegion.contains(current.down.location) else {
+                        self.queueRelease(hit.lease)
+                        return
+                    }
+                    current.baseline = hit
+                    self.gesture = current
                     return
                 }
                 self.discardPrewarm()

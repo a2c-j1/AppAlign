@@ -287,6 +287,32 @@ extension DragDetectionTests {
 
 final class DragPrewarmTests: XCTestCase {
     @MainActor
+    func testPreDownHoverResultArrivingAfterFirstDragBecomesBaseline() async throws {
+        let fixture = DragFixture(); fixture.start()
+        await fixture.reader.setCapturedAt(100_000_002)
+        await fixture.reader.blockCapture()
+        fixture.send(.mouseMoved, gesture: 0, timestamp: 100_000_001)
+        try await spin { await fixture.reader.captureBlocked }
+        fixture.send(.leftDown, gesture: 1, timestamp: 100_000_010)
+        fixture.send(.leftDragged, gesture: 1, point: CGPoint(x: 10, y: 0), timestamp: 100_000_050)
+        await fixture.reader.blockCapture()
+        await fixture.reader.resumeCapture()
+        try await spin { await fixture.reader.captureBlocked }
+        await fixture.reader.setCapturedAt(100_000_100)
+        await fixture.reader.setFrame(CGRect(x: 10, y: 0, width: 400, height: 300))
+        await fixture.reader.setRevision(1, changedAt: 100_000_050)
+        await fixture.reader.resumeCapture()
+        try await spin { fixture.controller.captureRequestCount == 0 && fixture.controller.frameRequestCount == 0 }
+        fixture.send(.leftDragged, gesture: 1, point: CGPoint(x: 10, y: 0), timestamp: 100_000_200)
+        try await spin { fixture.controller.frameRequestCount == 0 }
+        fixture.send(.leftUp, gesture: 1, timestamp: 100_000_300)
+        XCTAssertEqual(fixture.controller.lifecycleEvents.filter { $0.kind == .began }.count, 1)
+        XCTAssertEqual(fixture.controller.lifecycleEvents.filter { $0.kind == .ended }.count, 1)
+        try await spin { await fixture.reader.leaseCount == 0 }
+        fixture.stop()
+    }
+
+    @MainActor
     func testVerifiedPreDownFrameAllowsDelayedCaptureAfterFirstDrag() async throws {
         let fixture = DragFixture(); fixture.start()
         try await warm(fixture)
