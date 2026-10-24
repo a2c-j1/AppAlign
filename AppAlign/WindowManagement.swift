@@ -348,8 +348,6 @@ private struct AXHitResult {
     let pid: pid_t
     let applicationElement: AXUIElement
     let windowElement: AXUIElement
-    let hitRole: String?
-    let ancestorRoles: [String]
 }
 
 extension AccessibilityWindowRuntime {
@@ -392,8 +390,7 @@ extension AccessibilityWindowRuntime {
         }
     }
 
-    func window(at point: CGPoint, ownPID: pid_t, downTimestamp: UInt64) async throws -> DragWindowSnapshot {
-        guard downTimestamp > lastWriteEndNanoseconds else { throw WindowManagementError.displayConfigurationChanged }
+    func window(at point: CGPoint, ownPID: pid_t) async throws -> DragWindowSnapshot {
         guard AXIsProcessTrusted() else { throw WindowManagementError.accessibilityPermissionRequired }
         let deadline = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
         let hit = try hitTest(point, ownPID: ownPID, deadline: deadline)
@@ -402,63 +399,16 @@ extension AccessibilityWindowRuntime {
                               messagingTimeout: max(0.01, windowTimeout))
         try WindowFilter(ownPID: ownPID).validate(window)
         let frame = try window.stableFrame()
-        let capturedAt = DispatchTime.now().uptimeNanoseconds
-        guard Self.isFinite(frame), frame.width > 0, frame.height > 0 else { throw WindowManagementError.invalidFocusedWindow }
-        let titleBarCandidate = TitleBarHitClassifier.isCandidate(frame: frame, point: point,
-                                                                   hitRole: hit.hitRole, ancestorRoles: hit.ancestorRoles)
+        guard Self.isFinite(frame), frame.width > 0, frame.height > 0,
+              DispatchTime.now().uptimeNanoseconds < deadline else { throw WindowManagementError.invalidFocusedWindow }
         let token = try token(for: window)
-        let lease = DragLeaseID(rawValue: UUID())
-        guard var record = records[token.id] else { throw WindowManagementError.noCapturedWindow }
-        record.ownership.retainDrag(lease)
-        let tracker = record.revisionTracker
-        let hadObserverRegistration = record.observerRegistration != nil
-        if record.observerRegistration?.mode != .full {
-            let previousRegistration = record.observerRegistration
-            let upgradedRegistration = AXObserverRegistration(pid: hit.pid, element: window.element,
-                                                               tracker: tracker, deadline: deadline)
-            if upgradedRegistration?.mode == .full, upgradedRegistration?.notificationsVerified == true {
-                previousRegistration?.invalidate()
-                record.observerRegistration = upgradedRegistration
-            } else {
-                upgradedRegistration?.invalidate()
-                record.observerRegistration = previousRegistration
-            }
-        }
-        if DispatchTime.now().uptimeNanoseconds >= deadline {
-            if !hadObserverRegistration {
-                record.observerRegistration?.invalidate()
-                record.observerRegistration = nil
-            }
-            record.ownership.releaseDrag(lease)
-            records[token.id] = record
-            if !Self.isOwned(record) { records.removeValue(forKey: token.id) }
-            throw WindowManagementError.operationFailed
-        }
-        let notificationsVerified = record.observerRegistration?.mode == .full &&
-            (record.observerRegistration?.notificationsVerified ?? false)
-        records[token.id] = record
-        let revision = tracker.snapshot(since: downTimestamp)
-        guard !revision.destroyed else {
-            record.observerRegistration?.invalidate()
-            records.removeValue(forKey: token.id)
+        guard var record = records[token.id], !record.revisionTracker.snapshot(since: 0).destroyed else {
             throw WindowManagementError.noCapturedWindow
         }
-        let hitRegion = TitleBarHitClassifier.hitRegion(frame: frame, point: point, isCandidate: titleBarCandidate)
-        return DragWindowSnapshot(
-            token: token,
-            lease: lease,
-            frame: frame,
-            hitRole: hit.hitRole,
-            ancestorRoles: hit.ancestorRoles,
-            hitInTitleBar: titleBarCandidate,
-            capturedAt: capturedAt,
-            hitRegion: hitRegion,
-            revision: revision.revision,
-            lastChangedAt: revision.lastChangedAt,
-            changeWasResize: revision.changeWasResize,
-            notificationsVerified: notificationsVerified,
-            revisionChanges: revision.changes
-        )
+        let lease = DragLeaseID(rawValue: UUID())
+        record.ownership.retainDrag(lease)
+        records[token.id] = record
+        return DragWindowSnapshot(token: token, lease: lease, frame: frame)
     }
 
     private func hitTest(_ point: CGPoint, ownPID: pid_t, deadline: UInt64) throws -> AXHitResult {
@@ -477,20 +427,16 @@ extension AccessibilityWindowRuntime {
         let applicationElement = AXUIElementCreateApplication(pid)
         try Self.configure(applicationElement, before: deadline)
         var current: AXUIElement? = hit
-        var roles: [String] = []
         var visited: [AXUIElement] = []
         let associatedTimeout = try Self.remainingTimeout(before: deadline)
         var windowElement: AXUIElement? = try Self.associatedWindow(for: hit, timeout: associatedTimeout)
-        for _ in 0 ..< 24 {
+        for _ in 0 ..< 24 where windowElement == nil {
             guard let element = current else { break }
             guard !visited.contains(where: { CFEqual($0, element) }) else { break }
             visited.append(element)
             let roleTimeout = try Self.remainingTimeout(before: deadline)
             let role = try Self.stringAttribute(kAXRoleAttribute as CFString, from: element, timeout: roleTimeout)
-            if let role {
-                roles.append(role)
-                if role == "AXWindow" { windowElement = windowElement ?? element; break }
-            }
+            if role == "AXWindow" { windowElement = element; break }
             var parentValue: CFTypeRef?
             try Self.configure(element, before: deadline)
             let parentResult = AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parentValue)
@@ -503,38 +449,12 @@ extension AccessibilityWindowRuntime {
             current = parentValue as! AXUIElement
         }
         guard let windowElement else { throw WindowManagementError.invalidFocusedWindow }
-        let hitRoleTimeout = try Self.remainingTimeout(before: deadline)
-        let hitRole = try Self.stringAttribute(kAXRoleAttribute as CFString, from: hit, timeout: hitRoleTimeout)
-        return AXHitResult(pid: pid, applicationElement: applicationElement, windowElement: windowElement,
-                           hitRole: hitRole, ancestorRoles: roles)
+        return AXHitResult(pid: pid, applicationElement: applicationElement, windowElement: windowElement)
     }
 
     func releaseDragLease(_ lease: DragLeaseID) async {
         guard let id = records.first(where: { $0.value.ownership.dragLeases.contains(lease) })?.key else { return }
         releaseOwnership(id: id) { $0.releaseDrag(lease) }
-    }
-
-    func frame(for token: RuntimeWindowToken, lease: DragLeaseID) async throws -> CGRect {
-        guard AXIsProcessTrusted(), let record = records[token.id], record.window.pid == token.pid,
-              record.ownership.dragLeases.contains(lease) else {
-            throw WindowManagementError.noCapturedWindow
-        }
-        if record.revisionTracker.snapshot(since: 0).destroyed {
-            record.observerRegistration?.invalidate()
-            records.removeValue(forKey: token.id)
-            throw WindowManagementError.noCapturedWindow
-        }
-        do {
-            let frame = try record.window.frame()
-            guard Self.isFinite(frame), frame.width > 0, frame.height > 0 else {
-                throw WindowManagementError.invalidFocusedWindow
-            }
-            return frame
-        } catch {
-            record.observerRegistration?.invalidate()
-            records.removeValue(forKey: token.id)
-            throw error
-        }
     }
 
     func handoffDragLease(token: RuntimeWindowToken, sourceLease: DragLeaseID, commitID: DragCommitID,
@@ -575,12 +495,9 @@ extension AccessibilityWindowRuntime {
             throw WindowManagementError.displayConfigurationChanged
         }
 
-        writeInProgress = true
         defer {
-            writeInProgress = false
             let timestamp = DispatchTime.now().uptimeNanoseconds
             record.revisionTracker.recordWrite(at: timestamp)
-            lastWriteEndNanoseconds = timestamp
         }
         let result = try mover.moveDrag(Self.dragWindow(record.window, before: deadline),
                                         to: offer.targetFrame, ticket: offer.ticket)

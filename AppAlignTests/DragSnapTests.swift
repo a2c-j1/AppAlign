@@ -12,6 +12,7 @@ final class DragSnapTests: XCTestCase {
         let snap = DragSnapController(layoutController: layout, runtime: fixture.reader, overlay: overlay)
         let snapGate = TestDragGate()
         fixture.controller.onWillEnd = { snap.prepareCommit($0) }
+        fixture.controller.onWillResolveWindow = { snap.hideOverlayForWindowLookup() }
         fixture.controller.onAcceptedInput = { snap.acceptedInput($0) }
         fixture.controller.onCommitCancelled = { snap.cancel(reason: $0) }
         fixture.controller.onLifecycle = { snap.lifecycle($0) }
@@ -21,12 +22,11 @@ final class DragSnapTests: XCTestCase {
         fixture.start()
         await fixture.reader.focusDifferentWindow()
         fixture.send(.leftDown, gesture: 1, point: CGPoint(x: 20, y: 20))
-        try await spin { fixture.controller.captureRequestCount == 0 }
-        await fixture.reader.setFrame(CGRect(x: 80, y: 0, width: 400, height: 300))
+        let moved = CGRect(x: 80, y: 0, width: 400, height: 300)
+        fixture.context.windowFrame = moved
+        await fixture.reader.setFrame(moved)
         fixture.send(.leftDragged, gesture: 1, point: CGPoint(x: 100, y: 20))
-        try await spin { fixture.controller.frameRequestCount == 0 }
         fixture.send(.leftDragged, gesture: 1, point: CGPoint(x: 100, y: 20))
-        try await spin { fixture.controller.frameRequestCount == 0 }
 
         let shift = CGEventFlags.maskShift.rawValue
         fixture.send(.flagsChanged, gesture: 1, point: CGPoint(x: 100, y: 20), flags: shift)

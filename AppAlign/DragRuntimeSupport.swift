@@ -7,12 +7,7 @@ import Foundation
 struct DownWindowBaseline: Sendable {
     let pid: pid_t
     let frame: CGRect
-    let capturedAt: UInt64
-    let windowID: CGWindowID?
-
-    init(pid: pid_t, frame: CGRect, capturedAt: UInt64, windowID: CGWindowID? = nil) {
-        self.pid = pid; self.frame = frame; self.capturedAt = capturedAt; self.windowID = windowID
-    }
+    let windowID: CGWindowID
 }
 
 enum DownWindowCapture {
@@ -27,8 +22,7 @@ enum DownWindowCapture {
             guard DisplayGeometry.isFinite(frame), frame.width > 12, frame.height > 12, frame.contains(point) else { continue }
             guard let pid = window[kCGWindowOwnerPID as String] as? pid_t, pid != ownPID else { return nil }
             guard let number = window[kCGWindowNumber as String] as? NSNumber else { return nil }
-            return DownWindowBaseline(pid: pid, frame: frame, capturedAt: DispatchTime.now().uptimeNanoseconds,
-                                      windowID: number.uint32Value)
+            return DownWindowBaseline(pid: pid, frame: frame, windowID: number.uint32Value)
         }
         return nil
     }
@@ -47,74 +41,6 @@ enum DownWindowCapture {
     }
 }
 
-enum DragBaselineValidation {
-    struct CaptureContext {
-        let prewarm: DragWindowSnapshot?
-        let downWindow: DownWindowBaseline?
-        let hit: DragWindowSnapshot
-        let down: DragInputEvent
-        let latest: DragInputEvent
-        let pointerPath: [CGPoint]
-        let firstMotion: UInt64?
-        let mayRetry: Bool
-    }
-
-    enum Decision {
-        case accepted(CGRect)
-        case retry
-        case rejected(String)
-    }
-
-    static func decide(_ context: CaptureContext) -> Decision {
-        let prewarm = context.prewarm
-        let downWindow = context.downWindow
-        let hit = context.hit
-        let down = context.down
-        let latest = context.latest
-        let firstMotion = context.firstMotion
-        let mayRetry = context.mayRetry
-        if let prewarm {
-            if mayRetry, prewarm.token != hit.token || !hit.hitInTitleBar { return .retry }
-            guard validateCache(prewarm, against: hit, down: down) else {
-                return .rejected("The prewarm target, size, or revision changed.")
-            }
-        } else if let downWindow, firstMotion.map({ downWindow.capturedAt < $0 }) ?? true {
-            if mayRetry, hit.token.pid != downWindow.pid || !hit.hitInTitleBar { return .retry }
-            guard validateDownWindow(downWindow, against: hit, down: down, latest: latest,
-                                     pointerPath: context.pointerPath) else {
-                return .rejected("The mouse-down window no longer matches the dragged window.")
-            }
-        } else if let firstMotion, hit.capturedAt >= firstMotion {
-            return .rejected("The initial frame was unavailable before window movement.")
-        }
-        guard hit.hitInTitleBar else { return .rejected("The pointer did not hit a verified title-bar candidate.") }
-        return .accepted(prewarm?.frame ?? downWindow?.frame ?? hit.frame)
-    }
-
-    static func validateCache(_ cached: DragWindowSnapshot, against live: DragWindowSnapshot, down: DragInputEvent) -> Bool {
-        guard cached.token == live.token, live.notificationsVerified, live.hitInTitleBar,
-              abs(cached.frame.width - live.frame.width) <= 2, abs(cached.frame.height - live.frame.height) <= 2 else { return false }
-        guard live.revision >= cached.revision else { return false }
-        let changes = live.revisionChanges.filter { $0.revision > cached.revision }
-        guard UInt64(changes.count) == live.revision - cached.revision else { return false }
-        if changes.contains(where: { $0.kind != .moved || $0.timestamp <= down.timestamp }) { return false }
-        return true
-    }
-
-    static func validateDownWindow(_ cached: DownWindowBaseline, against live: DragWindowSnapshot,
-                                   down: DragInputEvent, latest: DragInputEvent, pointerPath: [CGPoint]) -> Bool {
-        guard cached.pid == live.token.pid, live.hitInTitleBar,
-              abs(cached.frame.width - live.frame.width) <= 2,
-              abs(cached.frame.height - live.frame.height) <= 2,
-              TitleBarHitClassifier.isCandidate(frame: cached.frame, point: down.location,
-                                                hitRole: live.hitRole, ancestorRoles: live.ancestorRoles) else { return false }
-        let frameDelta = CGPoint(x: live.frame.minX - cached.frame.minX, y: live.frame.minY - cached.frame.minY)
-        let matchedDelta = DragPointerPath.closestDelta(to: frameDelta, down: down.location,
-                                                       points: pointerPath.isEmpty ? [down.location, latest.location] : pointerPath)
-        return hypot(frameDelta.x - matchedDelta.x, frameDelta.y - matchedDelta.y) <= 12
-    }
-}
-
 @MainActor
 struct DragEnvironment {
     var accessibilityGranted: @MainActor () -> Bool
@@ -123,7 +49,6 @@ struct DragEnvironment {
     var displayFingerprint: @MainActor () -> String
     var now: @MainActor () -> UInt64
     var downWindow: @MainActor (CGPoint, pid_t) -> DownWindowBaseline? = { _, _ in nil }
-    var tracksWindowID = false
     var windowFrame: @MainActor (CGWindowID, pid_t) -> CGRect? = { _, _ in nil }
 
     static func live(displayProvider: DisplayProvider? = nil) -> DragEnvironment {
@@ -134,7 +59,6 @@ struct DragEnvironment {
                                }, buttonsReleased: { NSEvent.pressedMouseButtons == 0 }, displayFingerprint: { displays.snapshot.fingerprint },
                                now: { DispatchTime.now().uptimeNanoseconds },
                                downWindow: { DownWindowCapture.capture(at: $0, excluding: $1) },
-                               tracksWindowID: true,
                                windowFrame: { DownWindowCapture.frame(for: $0, pid: $1) })
     }
 }
@@ -188,35 +112,6 @@ struct RuntimeWindowOwnership: Sendable {
         dragCommits.insert(commit)
         dragLeases.remove(lease)
         return true
-    }
-}
-
-enum TitleBarHitClassifier {
-    private static let excludedRoles: Set<String> = [
-        "AXButton", "AXCheckBox", "AXComboBox", "AXLink", "AXMenuButton", "AXPopUpButton",
-        "AXRadioButton", "AXScrollArea", "AXScrollBar", "AXSlider", "AXSplitGroup", "AXSplitter",
-        "AXTab", "AXTabGroup", "AXTable", "AXTextArea", "AXTextField", "AXWebArea"
-    ]
-    private static let positiveFallbackRoles: Set<String> = ["AXGroup", "AXStaticText", "AXToolbar", "AXWindow"]
-
-    static func isCandidate(frame: CGRect, point: CGPoint, hitRole: String?, ancestorRoles: [String]) -> Bool {
-        guard DisplayGeometry.isFinite(frame), frame.width > 12, frame.height > 12,
-              point.x > frame.minX + 6, point.x < frame.maxX - 6,
-              point.y > frame.minY + 6, point.y < frame.maxY - 6,
-              point.y <= frame.minY + min(40, frame.height * 0.12),
-              hitRole.map({ !excludedRoles.contains($0) }) ?? true,
-              !ancestorRoles.contains(where: excludedRoles.contains) else { return false }
-        if ancestorRoles.contains("AXTitleBar") { return true }
-        guard let hitRole else { return false }
-        return positiveFallbackRoles.contains(hitRole)
-    }
-
-    static func hitRegion(frame: CGRect, point: CGPoint, isCandidate: Bool) -> CGRect {
-        guard isCandidate else { return .null }
-        let topBand = CGRect(x: frame.minX, y: frame.minY, width: frame.width,
-                             height: min(40, frame.height * 0.12))
-        let aroundPoint = CGRect(x: point.x - 6, y: point.y - 6, width: 12, height: 12)
-        return aroundPoint.intersection(frame).intersection(topBand)
     }
 }
 

@@ -54,12 +54,9 @@ extension AccessibilityWindowRuntime {
         guard ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else {
             throw WindowManagementError.displayConfigurationChanged
         }
-        writeInProgress = true
         defer {
-            writeInProgress = false
             let timestamp = DispatchTime.now().uptimeNanoseconds
             current.revisionTracker.recordWrite(at: timestamp)
-            lastWriteEndNanoseconds = timestamp
         }
         return try historyMover.movePlacement(operationWindow, to: frame, ticket: ticket).actualFrame
     }
@@ -285,12 +282,9 @@ extension AccessibilityWindowRuntime {
         guard ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else {
             throw WindowManagementError.displayConfigurationChanged
         }
-        writeInProgress = true
         defer {
-            writeInProgress = false
             let timestamp = DispatchTime.now().uptimeNanoseconds
             latest.revisionTracker.recordWrite(at: timestamp)
-            lastWriteEndNanoseconds = timestamp
         }
         return try mover.movePlacement(operationWindow, to: frame, ticket: ticket).actualFrame
     }
@@ -423,8 +417,6 @@ extension AccessibilityWindowRuntime {
         for registration in processRegistrations { registration.invalidate() }
     }
 
-    func isWriteInProgress() async -> Bool { writeInProgress }
-
     static func remainingTimeout(before deadline: UInt64) throws -> Float {
         let now = DispatchTime.now().uptimeNanoseconds
         guard now < deadline else { throw WindowManagementError.operationFailed }
@@ -498,12 +490,9 @@ extension AccessibilityWindowRuntime {
             guard ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else {
                 throw WindowManagementError.displayConfigurationChanged
             }
-            writeInProgress = true
-            defer { writeInProgress = false }
             defer {
                 let timestamp = DispatchTime.now().uptimeNanoseconds
                 record.revisionTracker.recordWrite(at: timestamp)
-                lastWriteEndNanoseconds = timestamp
             }
             return try operation(focused)
         } catch {

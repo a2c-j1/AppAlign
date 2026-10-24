@@ -26,6 +26,7 @@ private struct WiredDragSnapFlow {
         self.snap = snap
         self.gate = gate
         fixture.controller.onWillEnd = { snap.prepareCommit($0) }
+        fixture.controller.onWillResolveWindow = { snap.hideOverlayForWindowLookup() }
         fixture.controller.onAcceptedInput = { snap.acceptedInput($0) }
         fixture.controller.onCommitCancelled = { snap.cancel(reason: $0) }
         fixture.controller.onLifecycle = { snap.lifecycle($0) }
@@ -50,9 +51,10 @@ private struct WiredDragSnapFlow {
     }
 
     func drag(to point: CGPoint) async throws {
-        await fixture.reader.setFrame(CGRect(x: point.x, y: point.y, width: 400, height: 300))
+        let frame = CGRect(x: point.x, y: point.y, width: 400, height: 300)
+        fixture.context.windowFrame = frame
+        await fixture.reader.setFrame(frame)
         fixture.send(.leftDragged, gesture: 1, point: point, flags: CGEventFlags.maskShift.rawValue)
-        try await spin { fixture.controller.frameRequestCount == 0 }
     }
 
     func finish(at point: CGPoint) {
@@ -63,7 +65,8 @@ private struct WiredDragSnapFlow {
         try await spin {
             let owners = await fixture.reader.ownerSnapshot
             let leaseCount = await fixture.reader.leaseCount
-            return leaseCount == 0 && owners.dragLeases.isEmpty && owners.dragCommits.isEmpty
+            return !fixture.controller.windowServerResolutionInFlight && leaseCount == 0 &&
+                owners.dragLeases.isEmpty && owners.dragCommits.isEmpty
         }
         let owners = await fixture.reader.ownerSnapshot
         XCTAssertTrue(owners.dragLeases.isEmpty, file: file, line: line)
@@ -118,6 +121,9 @@ final class DragFinalReleaseAcceptanceTests: XCTestCase {
         try await flow.drag(to: firstPoint)
         XCTAssertEqual(flow.overlay.selected, [firstZone.id])
 
+        let releasedFrame = CGRect(x: secondPoint.x, y: secondPoint.y, width: 400, height: 300)
+        flow.fixture.context.windowFrame = releasedFrame
+        await flow.fixture.reader.setFrame(releasedFrame)
         flow.finish(at: secondPoint)
         try await spin { await flow.fixture.reader.commitCount == 1 }
         try await spin { !flow.snap.isCommitting }
@@ -176,6 +182,9 @@ final class DragFinalReleaseAcceptanceTests: XCTestCase {
         let expectedFrame = try XCTUnwrap(ZoneSelectionEngine.union(of: selected.map(\.frame)))
 
         // This release is the first input after the accepted control barrier.
+        let releasedFrame = CGRect(x: point.x, y: point.y, width: 400, height: 300)
+        flow.fixture.context.windowFrame = releasedFrame
+        await flow.fixture.reader.setFrame(releasedFrame)
         flow.finish(at: point)
         try await spin { await flow.fixture.reader.commitCount == 1 }
         try await spin { !flow.snap.isCommitting }
@@ -317,6 +326,9 @@ extension DragFinalReleaseAcceptanceTests {
                                                                       strategy: .smallest))
         let expectedFrame = try XCTUnwrap(ZoneSelectionEngine.union(of: selected.map(\.frame)))
 
+        let releasedFrame = CGRect(x: point.x, y: point.y, width: 400, height: 300)
+        flow.fixture.context.windowFrame = releasedFrame
+        await flow.fixture.reader.setFrame(releasedFrame)
         flow.finish(at: point)
         try await spin { await flow.fixture.reader.commitCount == 1 }
         try await spin { !flow.snap.isCommitting }
@@ -369,6 +381,9 @@ extension DragFinalReleaseAcceptanceTests {
         XCTAssertFalse(flow.overlay.isVisible)
         flow.fixture.send(.flagsChanged, gesture: 1, point: anchor, flags: 0)
         flow.fixture.send(.flagsChanged, gesture: 1, point: target, flags: option)
+        let moved = CGRect(x: target.x, y: target.y, width: 400, height: 300)
+        flow.fixture.context.windowFrame = moved
+        await flow.fixture.reader.setFrame(moved)
         flow.fixture.send(.leftDragged, gesture: 1, point: target, flags: option)
         flow.fixture.send(.flagsChanged, gesture: 1, point: target, flags: option | shift)
         XCTAssertTrue(flow.overlay.isVisible)
@@ -379,83 +394,5 @@ extension DragFinalReleaseAcceptanceTests {
         let writes = await flow.fixture.reader.commitCount
         XCTAssertEqual(actualFrame, targetZone.frame)
         XCTAssertEqual(writes, 1)
-    }
-}
-
-final class DragPointerPathTests: XCTestCase {
-    func testRecentPointerPathMatchesCurvedAndDelayedWindowFrames() {
-        let frame = CGRect(x: 100, y: 80, width: 400, height: 300)
-        var curved = DragStateMachine()
-        _ = curved.down(session: 1, point: .zero, frame: frame, titleBarHit: true, epoch: 1)
-        let first = frame.offsetBy(dx: 20, dy: 0)
-        _ = curved.observe(session: 1, point: CGPoint(x: 20, y: 0), frame: first, epoch: 1)
-        _ = curved.observe(session: 1, point: CGPoint(x: 20, y: 0), frame: first, epoch: 1)
-        let curve = [CGPoint(x: 79.6, y: -37.6), CGPoint(x: 150, y: -60), CGPoint(x: 277.7, y: -71.5)]
-        XCTAssertEqual(curved.observe(session: 1, point: curve[0], latestPoint: curve[2], pointerPath: curve,
-                                      frame: frame.offsetBy(dx: 150, dy: -60), epoch: 1).map(\.kind), [.updated])
-
-        var delayed = DragStateMachine()
-        _ = delayed.down(session: 2, point: .zero, frame: frame, titleBarHit: true, epoch: 1)
-        let moved = frame.offsetBy(dx: -20, dy: -20)
-        _ = delayed.observe(session: 2, point: CGPoint(x: -20, y: -20), frame: moved, epoch: 1)
-        _ = delayed.observe(session: 2, point: CGPoint(x: -20, y: -20), frame: moved, epoch: 1)
-        let path = [CGPoint(x: -587, y: -322), CGPoint(x: -623.1, y: -344.5), CGPoint(x: -680.8, y: -377.8)]
-        XCTAssertEqual(delayed.observe(session: 2, point: path[1], latestPoint: path[2], pointerPath: path,
-                                       frame: frame.offsetBy(dx: -587, dy: -322), epoch: 1).map(\.kind), [.updated])
-        for _ in 0 ..< 2 {
-            XCTAssertEqual(delayed.observe(session: 2, point: path[1], latestPoint: path[2], pointerPath: Array(path.dropFirst()),
-                                           frame: frame.offsetBy(dx: -587, dy: -322), epoch: 1).map(\.kind), [.updated])
-        }
-        XCTAssertEqual(delayed.observe(session: 2, point: path[1], latestPoint: path[2], pointerPath: Array(path.dropFirst()),
-                                       frame: frame.offsetBy(dx: -587, dy: -322), epoch: 1).map(\.kind), [.cancelled])
-    }
-
-    func testPointerPathExpiresOldSamplesAndKeepsLatest() {
-        var path = DragPointerPath()
-        for (time, offsetX) in [(100_000_000, 10), (200_000_000, 20), (450_000_000, 45)] {
-            path.append(DragInputEvent(kind: .leftDragged, location: CGPoint(x: offsetX, y: 0), timestamp: UInt64(time)))
-        }
-        XCTAssertEqual(path.recent(now: 500_000_000), [CGPoint(x: 20, y: 0), CGPoint(x: 45, y: 0)])
-        XCTAssertEqual(path.recent(now: 1_000_000_000), [CGPoint(x: 45, y: 0)])
-    }
-
-    func testSlowFrameReadRetainsItsRequestPoint() {
-        var path = DragPointerPath()
-        let request = DragInputEvent(kind: .leftDragged, location: CGPoint(x: 10, y: 0), timestamp: 100_000_000)
-        path.append(request)
-        path.append(DragInputEvent(kind: .leftDragged, location: CGPoint(x: 45, y: 0), timestamp: 405_000_000))
-
-        let points = path.duringFrameRead(startedAt: 100_000_000, including: request)
-        XCTAssertEqual(points, [CGPoint(x: 10, y: 0), CGPoint(x: 45, y: 0)])
-
-        let frame = CGRect(x: 100, y: 80, width: 400, height: 300)
-        var detector = DragStateMachine()
-        _ = detector.down(session: 1, point: .zero, frame: frame, titleBarHit: true, epoch: 1)
-        _ = detector.observe(session: 1, point: CGPoint(x: 10, y: 0), frame: frame.offsetBy(dx: 10, dy: 0), epoch: 1)
-        _ = detector.observe(session: 1, point: CGPoint(x: 10, y: 0), frame: frame.offsetBy(dx: 10, dy: 0), epoch: 1)
-        XCTAssertEqual(detector.observe(session: 1, point: request.location, latestPoint: CGPoint(x: 45, y: 0),
-                                        pointerPath: points, frame: frame.offsetBy(dx: 10, dy: 0), epoch: 1).map(\.kind), [.updated])
-    }
-
-    func testFrameReadKeepsPointerHistoryBeforeRequestAndToleratesMovingDivergence() {
-        var path = DragPointerPath()
-        let earlier = DragInputEvent(kind: .leftDragged, location: CGPoint(x: -136, y: -306), timestamp: 100_000_000)
-        let request = DragInputEvent(kind: .leftDragged, location: CGPoint(x: -138.6, y: -355.7), timestamp: 350_000_000)
-        path.append(earlier)
-        path.append(request)
-        path.append(DragInputEvent(kind: .leftDragged, location: CGPoint(x: -127.5, y: -438), timestamp: 450_000_000))
-        XCTAssertEqual(path.duringFrameRead(startedAt: 350_000_000, including: request).first, earlier.location)
-
-        let frame = CGRect(x: 100, y: 80, width: 400, height: 300)
-        var detector = DragStateMachine()
-        _ = detector.down(session: 1, point: .zero, frame: frame, titleBarHit: true, epoch: 1)
-        let first = frame.offsetBy(dx: -20, dy: -20)
-        _ = detector.observe(session: 1, point: CGPoint(x: -20, y: -20), frame: first, epoch: 1)
-        _ = detector.observe(session: 1, point: CGPoint(x: -20, y: -20), frame: first, epoch: 1)
-        let diverged = [CGPoint(x: -138.6, y: -355.7), CGPoint(x: -127.5, y: -438)]
-        for offset in [CGPoint(x: -136, y: -306), CGPoint(x: -135, y: -320), CGPoint(x: -134, y: -334)] {
-            XCTAssertEqual(detector.observe(session: 1, point: request.location, latestPoint: diverged[1],
-                                            pointerPath: diverged, frame: frame.offsetBy(dx: offset.x, dy: offset.y), epoch: 1).map(\.kind), [.updated])
-        }
     }
 }

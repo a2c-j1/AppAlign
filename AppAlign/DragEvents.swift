@@ -118,16 +118,6 @@ struct DragPointerPath: Sendable {
         return points.isEmpty ? [latest.point] : points
     }
 
-    func duringFrameRead(startedAt: UInt64, including request: DragInputEvent) -> [CGPoint] {
-        let cutoff = startedAt > Self.retention ? startedAt - Self.retention : 0
-        var retained = samples.filter { $0.timestamp >= cutoff }
-        if !retained.contains(where: { $0.timestamp == request.timestamp && $0.point == request.location }) {
-            let index = retained.firstIndex(where: { $0.timestamp > request.timestamp }) ?? retained.endIndex
-            retained.insert(Sample(timestamp: request.timestamp, point: request.location), at: index)
-        }
-        return retained.map(\.point)
-    }
-
     static func closestDelta(to frameDelta: CGPoint, down: CGPoint, points: [CGPoint]) -> CGPoint {
         guard let first = points.first else { return .zero }
         var closest = CGPoint(x: first.x - down.x, y: first.y - down.y)
@@ -145,91 +135,4 @@ struct DragPointerPath: Sendable {
         }
         return closest
     }
-}
-
-struct DragStateMachine: Sendable {
-    enum State: Sendable, Equatable {
-        case idle
-        case candidate(session: UInt64, down: CGPoint, original: CGRect, epoch: UInt64)
-        case moving(session: UInt64, down: CGPoint, original: CGRect, epoch: UInt64)
-        case committing, cancelled
-    }
-    private(set) var state: State = .idle
-    private var confirmingSamples = 0
-    private var stationaryMismatchCount = 0
-    private var lastObservedFrame: CGRect?
-
-    mutating func down(session: UInt64, point: CGPoint, frame: CGRect, titleBarHit: Bool, epoch: UInt64) -> [DragLifecycleEvent] {
-        let previous = cancel(reason: "A new mouse-down replaced the prior gesture.")
-        guard titleBarHit else { return previous }
-        confirmingSamples = 0
-        stationaryMismatchCount = 0
-        lastObservedFrame = frame
-        state = .candidate(session: session, down: point, original: frame, epoch: epoch)
-        return previous
-    }
-
-    mutating func observe(session: UInt64, point: CGPoint, latestPoint: CGPoint? = nil,
-                          pointerPath: [CGPoint]? = nil, frame: CGRect, epoch: UInt64) -> [DragLifecycleEvent] {
-        let original: CGRect
-        let down: CGPoint
-        let moving: Bool
-        switch state {
-        case let .candidate(active, start, initial, generation) where active == session && generation == epoch:
-            original = initial; down = start; moving = false
-        case let .moving(active, start, initial, generation) where active == session && generation == epoch:
-            original = initial; down = start; moving = true
-        default: return []
-        }
-        guard DisplayGeometry.isFinite(frame), frame.width > 0, frame.height > 0 else { return cancel(reason: "The window frame is invalid.") }
-        guard abs(frame.width - original.width) <= 2, abs(frame.height - original.height) <= 2 else {
-            return cancel(reason: "The gesture resized the window.")
-        }
-        let frameDelta = CGPoint(x: frame.minX - original.minX, y: frame.minY - original.minY)
-        // AX frame reads can lag input by multiple events. Compare against the
-        // recent pointer trajectory, including bends, rather than one segment.
-        let matchedDelta = DragPointerPath.closestDelta(to: frameDelta, down: down,
-                                                       points: pointerPath ?? [point, latestPoint ?? point])
-        if hypot(frameDelta.x - matchedDelta.x, frameDelta.y - matchedDelta.y) > 12 {
-            confirmingSamples = 0
-            guard moving else { return [] }
-            let stationary = lastObservedFrame.map { hypot(frame.minX - $0.minX, frame.minY - $0.minY) < 1 } ?? false
-            stationaryMismatchCount = stationary ? stationaryMismatchCount + 1 : 0
-            lastObservedFrame = frame
-            if stationaryMismatchCount >= 3 { return cancel(reason: "The window no longer follows the pointer.") }
-            return [DragLifecycleEvent(kind: .updated, session: session, frame: frame, reason: nil)]
-        }
-        stationaryMismatchCount = 0
-        lastObservedFrame = frame
-        guard hypot(frameDelta.x, frameDelta.y) >= 3, hypot(matchedDelta.x, matchedDelta.y) >= 3 else { return [] }
-        if !moving {
-            confirmingSamples += 1
-            guard confirmingSamples >= 2 else { return [] }
-            state = .moving(session: session, down: down, original: original, epoch: epoch)
-            return [DragLifecycleEvent(kind: .began, session: session, frame: original, reason: nil),
-                    DragLifecycleEvent(kind: .updated, session: session, frame: frame, reason: nil)]
-        }
-        return [DragLifecycleEvent(kind: .updated, session: session, frame: frame, reason: nil)]
-    }
-
-    mutating func modifierUpdate(session: UInt64, frame: CGRect?) -> [DragLifecycleEvent] {
-        guard case let .moving(active, _, _, _) = state, active == session else { return [] }
-        return [DragLifecycleEvent(kind: .updated, session: session, frame: frame, reason: nil)]
-    }
-
-    mutating func finish(reason: String? = nil) -> [DragLifecycleEvent] {
-        let session: UInt64
-        let moved: Bool
-        switch state {
-        case let .candidate(active, _, _, _): session = active; moved = false
-        case let .moving(active, _, _, _): session = active; moved = true
-        default: return []
-        }
-        state = moved && reason == nil ? .committing : .cancelled
-        defer { state = .idle; confirmingSamples = 0; stationaryMismatchCount = 0; lastObservedFrame = nil }
-        return [DragLifecycleEvent(kind: moved && reason == nil ? .ended : .cancelled, session: session, frame: nil,
-                                   reason: reason ?? (moved ? nil : "The gesture did not become a window move."))]
-    }
-
-    mutating func cancel(reason: String) -> [DragLifecycleEvent] { finish(reason: reason) }
 }

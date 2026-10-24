@@ -103,8 +103,6 @@
 			D1000000000000000000000F /* DisplayConfigurationControllerTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = C40000000000000000000009 /* DisplayConfigurationControllerTests.swift */; };
 			C10000000000000000000001 /* DragDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = C30000000000000000000001 /* DragDetection.swift */; };
 			C10000000000000000000002 /* DragDetection.swift in Tests */ = {isa = PBXBuildFile; fileRef = C30000000000000000000001 /* DragDetection.swift */; };
-			C10000000000000000000016 /* WindowServerDragDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = C30000000000000000000007 /* WindowServerDragDetection.swift */; };
-			C10000000000000000000017 /* WindowServerDragDetection.swift in Tests */ = {isa = PBXBuildFile; fileRef = C30000000000000000000007 /* WindowServerDragDetection.swift */; };
 			C20000000000000000000001 /* DragDetectionTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = C40000000000000000000001 /* DragDetectionTests.swift */; };
 			A10000000000000000000001 /* AppAlignApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* AppAlignApp.swift */; };
 			A10000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* ContentView.swift */; };
@@ -210,7 +208,6 @@
 			C30000000000000000000006 /* WindowPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowPlacement.swift; sourceTree = "<group>"; };
 			C30000000000000000000002 /* InputMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputMonitor.swift; sourceTree = "<group>"; };
 			C30000000000000000000001 /* DragDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragDetection.swift; sourceTree = "<group>"; };
-			C30000000000000000000007 /* WindowServerDragDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowServerDragDetection.swift; sourceTree = "<group>"; };
 			C40000000000000000000008 /* MultiDisplayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiDisplayTests.swift; sourceTree = "<group>"; };
 			D20000000000000000000009 /* DisplayLayoutRefresh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayLayoutRefresh.swift; sourceTree = "<group>"; };
 			C40000000000000000000007 /* PlacementValidityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacementValidityTests.swift; sourceTree = "<group>"; };
@@ -326,7 +323,6 @@
 					B2000000000000000000001D /* PlacementController.swift */,
 					B2000000000000000000001E /* KeyboardSettingsPersistence.swift */,
 					C30000000000000000000001 /* DragDetection.swift */,
-					C30000000000000000000007 /* WindowServerDragDetection.swift */,
 					C30000000000000000000002 /* InputMonitor.swift */,
 					C30000000000000000000003 /* DragEvents.swift */,
 					C30000000000000000000004 /* DragRuntimeSupport.swift */,
@@ -418,7 +414,6 @@
 					F10000000000000000000001 /* KeyboardExtension.swift in Sources */,
 					F10000000000000000000002 /* LayoutControllerTransactions.swift in Sources */,
 					C10000000000000000000001 /* DragDetection.swift in Sources */,
-					C10000000000000000000016 /* WindowServerDragDetection.swift in Sources */,
 					C10000000000000000000003 /* InputMonitor.swift in Sources */,
 					C10000000000000000000005 /* DragEvents.swift in Sources */,
 					C10000000000000000000008 /* DragRuntimeSupport.swift in Sources */,
@@ -494,7 +489,6 @@
 					B10000000000000000000031 /* KeyboardIntegrationTests.swift in Tests */,
 					B10000000000000000000032 /* KeyboardLifecycleTests.swift in Tests */,
 					C10000000000000000000002 /* DragDetection.swift in Tests */,
-					C10000000000000000000017 /* WindowServerDragDetection.swift in Tests */,
 					C10000000000000000000004 /* InputMonitor.swift in Tests */,
 					C10000000000000000000006 /* DragEvents.swift in Tests */,
 					C10000000000000000000009 /* DragRuntimeSupport.swift in Tests */,
