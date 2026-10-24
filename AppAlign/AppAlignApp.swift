@@ -67,6 +67,7 @@ struct AppAlignApp: App {
         drag.dragGateChanged = { gate.setDrag($0) }
         dragSnap.gateChanged = { gate.setCommit($0) }
         drag.onWillEnd = { dragSnap.prepareCommit($0) }
+        drag.onWillResolveWindow = { dragSnap.hideOverlayForWindowLookup() }
         drag.onAcceptedInput = { dragSnap.acceptedInput($0) }
         drag.onCommitCancelled = { dragSnap.cancel(reason: $0) }
         drag.onLifecycle = { dragSnap.lifecycle($0) }

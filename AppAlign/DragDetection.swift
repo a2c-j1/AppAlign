@@ -14,6 +14,7 @@ final class DragDetectionController: ObservableObject {
     var invalidateKeyboard: (@MainActor () -> Void)?
     var onLifecycle: (@MainActor (DragLifecycleEvent) -> Void)?
     var onWillEnd: (@MainActor (DragCommitContext) -> Bool)?
+    var onWillResolveWindow: (@MainActor () -> Void)?
     var onAcceptedInput: (@MainActor (DragInputEvent) -> Void)?
     var onCommitCancelled: (@MainActor (String) -> Void)?
 
@@ -32,15 +33,29 @@ final class DragDetectionController: ObservableObject {
         var pointerPath = DragPointerPath()
         var validationRetries = 0
     }
-    private let reader: any DragWindowReading
+    let reader: any DragWindowReading
     private let monitor: any DragInputMonitoring
-    private let environment: DragEnvironment
-    private let ownPID: pid_t
+    let environment: DragEnvironment
+    let ownPID: pid_t
     private let installsObservers: Bool
     private var machine = DragStateMachine()
     private var gesture: Gesture?
-    private var sessionGeneration: UInt64 = 0
-    private var runGeneration: UInt64 = 0
+    struct WindowServerGesture {
+        let session: UInt64
+        let inputID: UInt64
+        let down: DragInputEvent
+        let window: DownWindowBaseline
+        let fingerprint: String
+        var latest: DragInputEvent
+        var path = DragPointerPath()
+        var frame: CGRect
+        var dragged = false
+        var moving = false
+    }
+    var windowServerGesture: WindowServerGesture?
+    var windowServerResolutionInFlight = false
+    var sessionGeneration: UInt64 = 0
+    var runGeneration: UInt64 = 0
     private var inputEpoch: UInt64?
     private var lastSequence: UInt64 = 0
     private var environmentGeneration: UInt64 = 0
@@ -191,7 +206,7 @@ extension DragDetectionController {
                 Task { @MainActor in
                     guard let self, self.runGeneration == run, self.isRunning else { return }
                     if name == NSWorkspace.didTerminateApplicationNotification {
-                        guard pid == self.gesture?.hit?.token.pid else { return }
+                        guard pid == (self.gesture?.hit?.token.pid ?? self.windowServerGesture?.window.pid) else { return }
                     }
                     self.environmentChanged(reason: "The target, Space, display, or foreground environment changed.")
                 }
@@ -209,7 +224,9 @@ extension DragDetectionController {
         observationTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.runGeneration == run, self.isRunning else { return }
-                if let gesture = self.gesture, gesture.hit != nil { self.requestFrame(gesture.latest) } else if self.gesture == nil, let hover = self.lastHover, self.environment.buttonsReleased() {
+                if self.environment.tracksWindowID, self.windowServerGesture != nil {
+                    self.observeWindowServerFrame()
+                } else if let gesture = self.gesture, gesture.hit != nil { self.requestFrame(gesture.latest) } else if self.gesture == nil, let hover = self.lastHover, self.environment.buttonsReleased() {
                     self.pendingHover = DragInputEvent(kind: .mouseMoved, location: hover.location, flags: hover.flags,
                                                       timestamp: self.environment.now(), sequence: hover.sequence, epoch: hover.epoch, gesture: hover.gesture)
                     self.pumpCapture()
@@ -226,13 +243,15 @@ extension DragDetectionController {
         }
         if let cached = prewarmCache, environment.now() > cached.hit.capturedAt,
            environment.now() - cached.hit.capturedAt > Self.cacheFreshness { discardPrewarm() }
-        if let gesture, gesture.fingerprint != environment.displayFingerprint() {
+        if gesture?.fingerprint != nil && gesture?.fingerprint != environment.displayFingerprint() ||
+            windowServerGesture?.fingerprint != nil && windowServerGesture?.fingerprint != environment.displayFingerprint() {
             environmentChanged(reason: "The display fingerprint changed.")
         }
     }
 
     func environmentChanged(reason: String) {
         environmentGeneration &+= 1
+        sessionGeneration &+= 1
         discardPrewarm()
         pendingHover = nil
         cancel(reason: reason)
@@ -253,6 +272,7 @@ extension DragDetectionController {
         guard event.sequence > lastSequence else { return }
         lastSequence = event.sequence
         if event.kind == .tapDisabled { monitorStatus(.interrupted("The event tap was disabled")); return }
+        if environment.tracksWindowID { receiveWindowServer(event); return }
         if event.kind == .escape { onAcceptedInput?(event); cancel(reason: "Escape cancelled the gesture."); return }
         if event.kind == .mouseMoved {
             guard gesture == nil, event.buttonMask == 0 else { return }
@@ -429,7 +449,8 @@ extension DragDetectionController {
         publish(terminal)
     }
 
-    private func cancel(reason: String) {
+    func cancel(reason: String) {
+        cancelWindowServer(reason: reason)
         var emitted = machine.cancel(reason: reason)
         if emitted.isEmpty, let current = gesture {
             emitted = [DragLifecycleEvent(kind: .cancelled, session: current.session, frame: nil, reason: reason)]
@@ -508,16 +529,16 @@ extension DragDetectionController {
         }
     }
 
-    private var resourcesDrained: Bool { !captureInFlight && frameInFlightID == nil && cleanupQueue.isEmpty }
+    private var resourcesDrained: Bool { !captureInFlight && frameInFlightID == nil && cleanupQueue.isEmpty && !windowServerResolutionInFlight }
 
-    private func completeShutdownIfDrained() {
+    func completeShutdownIfDrained() {
         guard resourcesDrained else { return }
         let waiting = shutdownWaiters
         shutdownWaiters.removeAll()
         for waiter in waiting { waiter.resume() }
     }
 
-    private func queueRelease(_ lease: DragLeaseID) {
+    func queueRelease(_ lease: DragLeaseID) {
         guard !cleanupQueue.contains(lease) else { return }
         // Capture backpressure at two cleanup entries reserves room for the
         // single in-flight capture plus the frozen baseline. Maximum: four.
@@ -554,12 +575,12 @@ extension DragDetectionController {
         }
     }
 
-    private func publish(_ decorated: [DragLifecycleEvent]) {
+    func publish(_ decorated: [DragLifecycleEvent]) {
         lifecycleEvents.append(contentsOf: decorated)
         if lifecycleEvents.count > 256 { lifecycleEvents.removeFirst(lifecycleEvents.count - 256) }
         for event in decorated {
             if event.kind == .began || event.kind == .updated,
-               gesture?.session != event.session { continue }
+               (gesture?.session ?? windowServerGesture?.session) != event.session { continue }
             onLifecycle?(event)
         }
         if let reason = decorated.last?.reason { statusMessage = reason }

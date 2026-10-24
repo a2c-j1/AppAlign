@@ -8,6 +8,11 @@ struct DownWindowBaseline: Sendable {
     let pid: pid_t
     let frame: CGRect
     let capturedAt: UInt64
+    let windowID: CGWindowID?
+
+    init(pid: pid_t, frame: CGRect, capturedAt: UInt64, windowID: CGWindowID? = nil) {
+        self.pid = pid; self.frame = frame; self.capturedAt = capturedAt; self.windowID = windowID
+    }
 }
 
 enum DownWindowCapture {
@@ -21,9 +26,24 @@ enum DownWindowCapture {
             let frame = CGRect(x: originX.doubleValue, y: originY.doubleValue, width: width.doubleValue, height: height.doubleValue)
             guard DisplayGeometry.isFinite(frame), frame.width > 12, frame.height > 12, frame.contains(point) else { continue }
             guard let pid = window[kCGWindowOwnerPID as String] as? pid_t, pid != ownPID else { return nil }
-            return DownWindowBaseline(pid: pid, frame: frame, capturedAt: DispatchTime.now().uptimeNanoseconds)
+            guard let number = window[kCGWindowNumber as String] as? NSNumber else { return nil }
+            return DownWindowBaseline(pid: pid, frame: frame, capturedAt: DispatchTime.now().uptimeNanoseconds,
+                                      windowID: number.uint32Value)
         }
         return nil
+    }
+
+    static func frame(for windowID: CGWindowID, pid: pid_t) -> CGRect? {
+        guard let windows = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
+              let window = windows.first,
+              let number = window[kCGWindowNumber as String] as? NSNumber, number.uint32Value == windowID,
+              let owner = window[kCGWindowOwnerPID as String] as? pid_t, owner == pid,
+              let bounds = window[kCGWindowBounds as String] as? [String: NSNumber],
+              let originX = bounds["X"], let originY = bounds["Y"],
+              let width = bounds["Width"], let height = bounds["Height"] else { return nil }
+        let frame = CGRect(x: originX.doubleValue, y: originY.doubleValue,
+                           width: width.doubleValue, height: height.doubleValue)
+        return DisplayGeometry.isFinite(frame) && frame.width > 0 && frame.height > 0 ? frame : nil
     }
 }
 
@@ -103,6 +123,8 @@ struct DragEnvironment {
     var displayFingerprint: @MainActor () -> String
     var now: @MainActor () -> UInt64
     var downWindow: @MainActor (CGPoint, pid_t) -> DownWindowBaseline? = { _, _ in nil }
+    var tracksWindowID = false
+    var windowFrame: @MainActor (CGWindowID, pid_t) -> CGRect? = { _, _ in nil }
 
     static func live(displayProvider: DisplayProvider? = nil) -> DragEnvironment {
         let displays = displayProvider ?? DisplayProvider()
@@ -111,7 +133,9 @@ struct DragEnvironment {
                                    _ = AXIsProcessTrustedWithOptions(options)
                                }, buttonsReleased: { NSEvent.pressedMouseButtons == 0 }, displayFingerprint: { displays.snapshot.fingerprint },
                                now: { DispatchTime.now().uptimeNanoseconds },
-                               downWindow: { DownWindowCapture.capture(at: $0, excluding: $1) })
+                               downWindow: { DownWindowCapture.capture(at: $0, excluding: $1) },
+                               tracksWindowID: true,
+                               windowFrame: { DownWindowCapture.frame(for: $0, pid: $1) })
     }
 }
 

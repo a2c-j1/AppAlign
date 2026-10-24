@@ -277,6 +277,8 @@ extension DragSnapController {
         }
     }
 
+    func hideOverlayForWindowLookup() { overlay.hideAll() }
+
     func reselectAfterQuickSwitch(point: CGPoint, flags: UInt64) {
         guard gestureActive else { return }
         generation &+= 1
