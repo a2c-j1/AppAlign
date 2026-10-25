@@ -1,0 +1,517 @@
+import Combine
+import AppKit
+@preconcurrency import ApplicationServices
+import Foundation
+import Dispatch
+
+final class AXWindowCreationRegistration: @unchecked Sendable {
+    let isVerified: Bool
+    private let observer: AXObserver
+    private let source: CFRunLoopSource
+    private let applicationElement: AXUIElement
+    private let context: AXWindowCreationCallbackContext
+    private let callbackContext: UnsafeMutableRawPointer
+    private var invalidated = false
+
+    init?(pid: pid_t, signal: @escaping @Sendable () -> Void) {
+        var createdObserver: AXObserver?
+        guard AXObserverCreate(pid, axWindowCreationCallback, &createdObserver) == .success,
+              let createdObserver else { return nil }
+        observer = createdObserver
+        source = AXObserverGetRunLoopSource(createdObserver)
+        applicationElement = AXUIElementCreateApplication(pid)
+        context = AXWindowCreationCallbackContext(signal: signal)
+        callbackContext = Unmanaged.passRetained(context).toOpaque()
+        let timeoutResult = AXUIElementSetMessagingTimeout(applicationElement, 0.2)
+        guard timeoutResult == .success else {
+            isVerified = false
+            context.invalidate()
+            Unmanaged<AXWindowCreationCallbackContext>.fromOpaque(callbackContext).release()
+            return nil
+        }
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        let result = AXObserverAddNotification(observer, applicationElement,
+                                               kAXWindowCreatedNotification as CFString, callbackContext)
+        isVerified = result == .success
+        if !isVerified {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            context.invalidate()
+            Unmanaged<AXWindowCreationCallbackContext>.fromOpaque(callbackContext).release()
+            return nil
+        }
+    }
+
+    func invalidate() {
+        guard !invalidated else { return }
+        invalidated = true
+        context.invalidate()
+        AXObserverRemoveNotification(observer, applicationElement, kAXWindowCreatedNotification as CFString)
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        let releasingContext = context
+        DispatchQueue.main.async {
+            Unmanaged.passUnretained(releasingContext).release()
+        }
+    }
+}
+
+private final class AXWindowCreationCallbackContext: @unchecked Sendable {
+    private let lock = NSLock()
+    private let signal: @Sendable () -> Void
+    private var active = true
+
+    init(signal: @escaping @Sendable () -> Void) { self.signal = signal }
+
+    func receive() {
+        lock.lock()
+        let shouldSignal = active
+        lock.unlock()
+        if shouldSignal { signal() }
+    }
+
+    func invalidate() {
+        lock.lock()
+        active = false
+        lock.unlock()
+    }
+}
+
+private let axWindowCreationCallback: AXObserverCallback = { _, _, _, refcon in
+    guard let refcon else { return }
+    Unmanaged<AXWindowCreationCallbackContext>.fromOpaque(refcon).takeUnretainedValue().receive()
+}
+
+func configureAXMessagingTimeout(_ element: AXUIElement, timeout: Float) -> AXError {
+    AXUIElementSetMessagingTimeout(element, timeout)
+}
+
+struct AXWindow: @unchecked Sendable {
+    let applicationElement: AXUIElement
+    let element: AXUIElement
+    let pid: pid_t
+    let messagingTimeout: Float
+    let operationDeadline: UInt64?
+
+    init(applicationElement: AXUIElement, element: AXUIElement, pid: pid_t, messagingTimeout: Float = 0.5,
+         operationDeadline: UInt64? = nil) {
+        self.applicationElement = applicationElement
+        self.element = element
+        self.pid = pid
+        self.messagingTimeout = max(0.01, messagingTimeout)
+        self.operationDeadline = operationDeadline
+    }
+
+    func configureMessagingTimeout(_ timeout: Float) throws {
+        let result = AXUIElementSetMessagingTimeout(applicationElement, timeout)
+        guard result == .success else {
+            throw WindowManagementError.writeFailed(attribute: "messaging timeout", code: result.rawValue)
+        }
+    }
+
+    private func setElementTimeout() throws {
+        let timeout: Float
+        if let operationDeadline {
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < operationDeadline else { throw WindowManagementError.operationFailed }
+            timeout = min(messagingTimeout, Float(operationDeadline - now) / 1_000_000_000)
+            guard timeout > 0.01 else { throw WindowManagementError.operationFailed }
+        } else { timeout = messagingTimeout }
+        let result = AXUIElementSetMessagingTimeout(element, timeout)
+        guard result == .success else {
+            throw WindowManagementError.readFailed(attribute: "messaging timeout", code: result.rawValue)
+        }
+    }
+
+    func frame() throws -> CGRect {
+        try setElementTimeout()
+        let position = try pointAttribute(kAXPositionAttribute as CFString)
+        let size = try sizeAttribute(kAXSizeAttribute as CFString)
+        return CGRect(origin: position, size: size)
+    }
+
+    func stableFrame() throws -> CGRect {
+        try setElementTimeout()
+        let firstPosition = try pointAttribute(kAXPositionAttribute as CFString)
+        let size = try sizeAttribute(kAXSizeAttribute as CFString)
+        let finalPosition = try pointAttribute(kAXPositionAttribute as CFString)
+        guard abs(firstPosition.x - finalPosition.x) <= 2, abs(firstPosition.y - finalPosition.y) <= 2 else {
+            throw WindowManagementError.displayConfigurationChanged
+        }
+        return CGRect(origin: finalPosition, size: size)
+    }
+
+    func stringAttribute(_ attribute: CFString) throws -> String? {
+        try setElementTimeout()
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
+
+        if result == .noValue || result == .attributeUnsupported {
+            return nil
+        }
+        guard result == .success else {
+            throw WindowManagementError.readFailed(
+                attribute: attribute as String,
+                code: result.rawValue
+            )
+        }
+        return value as? String
+    }
+
+    func boolAttribute(_ attribute: CFString) throws -> Bool? {
+        try setElementTimeout()
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
+
+        if result == .noValue || result == .attributeUnsupported {
+            return nil
+        }
+        guard result == .success else {
+            throw WindowManagementError.readFailed(
+                attribute: attribute as String,
+                code: result.rawValue
+            )
+        }
+        return value as? Bool
+    }
+
+    func isAttributeSettable(_ attribute: CFString) throws -> Bool {
+        try setElementTimeout()
+        var settable = DarwinBoolean(false)
+        let result = AXUIElementIsAttributeSettable(element, attribute, &settable)
+        guard result == .success else {
+            throw WindowManagementError.readFailed(
+                attribute: attribute as String,
+                code: result.rawValue
+            )
+        }
+        return settable.boolValue
+    }
+
+    func setPosition(_ point: CGPoint) throws {
+        try setElementTimeout()
+        var mutablePoint = point
+        guard let value = AXValueCreate(.cgPoint, &mutablePoint) else {
+            throw WindowManagementError.invalidAttribute(attribute: kAXPositionAttribute as String)
+        }
+        let result = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value)
+        guard result == .success else {
+            throw WindowManagementError.writeFailed(
+                attribute: kAXPositionAttribute as String,
+                code: result.rawValue
+            )
+        }
+    }
+
+    func setSize(_ size: CGSize) throws {
+        try setElementTimeout()
+        var mutableSize = size
+        guard let value = AXValueCreate(.cgSize, &mutableSize) else {
+            throw WindowManagementError.invalidAttribute(attribute: kAXSizeAttribute as String)
+        }
+        let result = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, value)
+        guard result == .success else {
+            throw WindowManagementError.writeFailed(
+                attribute: kAXSizeAttribute as String,
+                code: result.rawValue
+            )
+        }
+    }
+
+    private func pointAttribute(_ attribute: CFString) throws -> CGPoint {
+        try setElementTimeout()
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard result == .success else {
+            throw WindowManagementError.readFailed(
+                attribute: attribute as String,
+                code: result.rawValue
+            )
+        }
+        guard
+            let value,
+            CFGetTypeID(value) == AXValueGetTypeID()
+        else {
+            throw WindowManagementError.invalidAttribute(attribute: attribute as String)
+        }
+
+        var point = CGPoint.zero
+        // CoreFoundation type ID was checked immediately above.
+        // swiftlint:disable:next force_cast
+        guard AXValueGetValue(value as! AXValue, .cgPoint, &point) else {
+            throw WindowManagementError.invalidAttribute(attribute: attribute as String)
+        }
+        return point
+    }
+
+    private func sizeAttribute(_ attribute: CFString) throws -> CGSize {
+        try setElementTimeout()
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard result == .success else {
+            throw WindowManagementError.readFailed(
+                attribute: attribute as String,
+                code: result.rawValue
+            )
+        }
+        guard
+            let value,
+            CFGetTypeID(value) == AXValueGetTypeID()
+        else {
+            throw WindowManagementError.invalidAttribute(attribute: attribute as String)
+        }
+
+        var size = CGSize.zero
+        // CoreFoundation type ID was checked immediately above.
+        // swiftlint:disable:next force_cast
+        guard AXValueGetValue(value as! AXValue, .cgSize, &size) else {
+            throw WindowManagementError.invalidAttribute(attribute: attribute as String)
+        }
+        return size
+    }
+}
+
+struct WindowRepository {
+    let messagingTimeout: Float
+    init(messagingTimeout: Float = 0.5) {
+        self.messagingTimeout = messagingTimeout
+    }
+    func focusedWindow(applicationPID: pid_t) throws -> AXWindow {
+        let applicationElement = AXUIElementCreateApplication(applicationPID)
+        let timeoutResult = AXUIElementSetMessagingTimeout(applicationElement, messagingTimeout)
+        guard timeoutResult == .success else {
+            throw WindowManagementError.readFailed(
+                attribute: "messaging timeout",
+                code: timeoutResult.rawValue
+            )
+        }
+
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXFocusedWindowAttribute as CFString,
+            &value
+        )
+        guard result == .success else {
+            throw WindowManagementError.noFocusedWindow(code: result.rawValue)
+        }
+        guard
+            let value,
+            CFGetTypeID(value) == AXUIElementGetTypeID()
+        else {
+            throw WindowManagementError.invalidFocusedWindow
+        }
+
+        // CoreFoundation type ID was checked immediately above.
+        // swiftlint:disable:next force_cast
+        let element = value as! AXUIElement
+        let windowTimeout = AXUIElementSetMessagingTimeout(element, messagingTimeout)
+        guard windowTimeout == .success else {
+            throw WindowManagementError.readFailed(attribute: "messaging timeout", code: windowTimeout.rawValue)
+        }
+        var pid = applicationPID
+        let pidResult = AXUIElementGetPid(element, &pid)
+        guard pidResult == .success else {
+            throw WindowManagementError.readFailed(
+                attribute: "window pid",
+                code: pidResult.rawValue
+            )
+        }
+
+        return AXWindow(
+            applicationElement: applicationElement,
+            element: element,
+            pid: pid
+        )
+    }
+    func applicationWindows(applicationPID: pid_t, timeout: Float? = nil,
+                            deadline: UInt64? = nil) throws -> [AXWindow] {
+        let timeout = timeout ?? messagingTimeout
+        let applicationElement = AXUIElementCreateApplication(applicationPID)
+        let timeoutResult = AXUIElementSetMessagingTimeout(applicationElement, timeout)
+        guard timeoutResult == .success else {
+            throw WindowManagementError.readFailed(attribute: "messaging timeout", code: timeoutResult.rawValue)
+        }
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(applicationElement, kAXWindowsAttribute as CFString, &value)
+        guard result == .success, let value, CFGetTypeID(value) == CFArrayGetTypeID(),
+              let elements = value as? [AXUIElement] else {
+            throw WindowManagementError.readFailed(attribute: kAXWindowsAttribute as String, code: result.rawValue)
+        }
+        return elements.map { AXWindow(applicationElement: applicationElement, element: $0, pid: applicationPID,
+                                       messagingTimeout: timeout, operationDeadline: deadline) }
+    }
+    static func focusedWindowIdentity(_ processID: pid_t) async -> Int? {
+        await Task.detached(priority: .utility) { (try? WindowRepository(messagingTimeout: 0.5).focusedWindow(applicationPID: processID)).map { Int(CFHash($0.element)) } }.value
+    }
+}
+
+private struct AXHitResult {
+    let pid: pid_t
+    let applicationElement: AXUIElement
+    let windowElement: AXUIElement
+}
+
+extension AccessibilityWindowRuntime {
+    static func stringAttribute(_ attribute: CFString, from element: AXUIElement, timeout: Float = 0.5) throws -> String? {
+        let timeout = AXUIElementSetMessagingTimeout(element, timeout)
+        guard timeout == .success else { throw WindowManagementError.readFailed(attribute: "messaging timeout", code: timeout.rawValue) }
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
+        if result == .noValue || result == .attributeUnsupported { return nil }
+        guard result == .success else { throw WindowManagementError.readFailed(attribute: attribute as String, code: result.rawValue) }
+        return value as? String
+    }
+
+    static func associatedWindow(for element: AXUIElement, timeout: Float) throws -> AXUIElement? {
+        let timeoutResult = AXUIElementSetMessagingTimeout(element, timeout)
+        guard timeoutResult == .success else {
+            throw WindowManagementError.readFailed(attribute: "messaging timeout", code: timeoutResult.rawValue)
+        }
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &value)
+        if result == .noValue || result == .attributeUnsupported { return nil }
+        guard result == .success else {
+            throw WindowManagementError.readFailed(attribute: kAXWindowAttribute as String, code: result.rawValue)
+        }
+        guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            throw WindowManagementError.invalidAttribute(attribute: kAXWindowAttribute as String)
+        }
+        // The type id is checked directly above.
+        // swiftlint:disable:next force_cast
+        return value as! AXUIElement
+    }
+
+    static func configure(_ element: AXUIElement, before deadline: UInt64) throws {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard now < deadline else { throw WindowManagementError.operationFailed }
+        let remaining = Float(deadline - now) / 1_000_000_000
+        let timeout = AXUIElementSetMessagingTimeout(element, min(0.5, remaining))
+        guard timeout == .success else {
+            throw WindowManagementError.readFailed(attribute: "messaging timeout", code: timeout.rawValue)
+        }
+    }
+
+    func window(at point: CGPoint, ownPID: pid_t) async throws -> DragWindowSnapshot {
+        guard AXIsProcessTrusted() else { throw WindowManagementError.accessibilityPermissionRequired }
+        let deadline = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
+        let hit = try hitTest(point, ownPID: ownPID, deadline: deadline)
+        let windowTimeout = try Self.remainingTimeout(before: deadline) / 8
+        let window = AXWindow(applicationElement: hit.applicationElement, element: hit.windowElement, pid: hit.pid,
+                              messagingTimeout: max(0.01, windowTimeout))
+        try WindowFilter(ownPID: ownPID).validate(window)
+        let frame = try window.stableFrame()
+        guard Self.isFinite(frame), frame.width > 0, frame.height > 0,
+              DispatchTime.now().uptimeNanoseconds < deadline else { throw WindowManagementError.invalidFocusedWindow }
+        let token = try token(for: window)
+        guard var record = records[token.id], !record.revisionTracker.snapshot(since: 0).destroyed else {
+            throw WindowManagementError.noCapturedWindow
+        }
+        let lease = DragLeaseID(rawValue: UUID())
+        record.ownership.retainDrag(lease)
+        records[token.id] = record
+        return DragWindowSnapshot(token: token, lease: lease, frame: frame)
+    }
+
+    private func hitTest(_ point: CGPoint, ownPID: pid_t, deadline: UInt64) throws -> AXHitResult {
+        let system = AXUIElementCreateSystemWide()
+        try Self.configure(system, before: deadline)
+        var hitValue: AXUIElement?
+        let hitResult = AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hitValue)
+        guard hitResult == .success, let hit = hitValue else {
+            throw WindowManagementError.readFailed(attribute: "hit-test", code: hitResult.rawValue)
+        }
+        try Self.configure(hit, before: deadline)
+        var pid = pid_t.zero
+        guard AXUIElementGetPid(hit, &pid) == .success, pid != ownPID else {
+            throw WindowManagementError.excludedWindow(reason: "the pointer is not over an external application")
+        }
+        let applicationElement = AXUIElementCreateApplication(pid)
+        try Self.configure(applicationElement, before: deadline)
+        var current: AXUIElement? = hit
+        var visited: [AXUIElement] = []
+        let associatedTimeout = try Self.remainingTimeout(before: deadline)
+        var windowElement: AXUIElement? = try Self.associatedWindow(for: hit, timeout: associatedTimeout)
+        for _ in 0 ..< 24 where windowElement == nil {
+            guard let element = current else { break }
+            guard !visited.contains(where: { CFEqual($0, element) }) else { break }
+            visited.append(element)
+            let roleTimeout = try Self.remainingTimeout(before: deadline)
+            let role = try Self.stringAttribute(kAXRoleAttribute as CFString, from: element, timeout: roleTimeout)
+            if role == "AXWindow" { windowElement = element; break }
+            var parentValue: CFTypeRef?
+            try Self.configure(element, before: deadline)
+            let parentResult = AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parentValue)
+            if parentResult == .noValue || parentResult == .attributeUnsupported { break }
+            guard parentResult == .success, let parentValue, CFGetTypeID(parentValue) == AXUIElementGetTypeID() else {
+                throw WindowManagementError.readFailed(attribute: kAXParentAttribute as String, code: parentResult.rawValue)
+            }
+            // The type id is checked directly above.
+            // swiftlint:disable:next force_cast
+            current = parentValue as! AXUIElement
+        }
+        guard let windowElement else { throw WindowManagementError.invalidFocusedWindow }
+        return AXHitResult(pid: pid, applicationElement: applicationElement, windowElement: windowElement)
+    }
+
+    func releaseDragLease(_ lease: DragLeaseID) async {
+        guard let id = records.first(where: { $0.value.ownership.dragLeases.contains(lease) })?.key else { return }
+        releaseOwnership(id: id) { $0.releaseDrag(lease) }
+    }
+
+    func handoffDragLease(token: RuntimeWindowToken, sourceLease: DragLeaseID, commitID: DragCommitID,
+                          ticket: DragCommitTicket) async -> Bool {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard ticket.state == .pending, now < ticket.startDeadline, now < ticket.totalDeadline,
+              var record = records[token.id], record.window.pid == token.pid,
+              !record.revisionTracker.snapshot(since: 0).destroyed,
+              record.ownership.handoffDrag(sourceLease, to: commitID) else { return false }
+        records[token.id] = record
+        return true
+    }
+
+    func commitDrag(_ offer: DragCommitOffer,
+                    preflight: @MainActor @Sendable () -> Bool) async throws -> CGRect {
+        guard offer.ticket.state == .pending,
+              DispatchTime.now().uptimeNanoseconds < offer.ticket.startDeadline,
+              let before = records[offer.token.id], before.window.pid == offer.token.pid,
+              before.ownership.dragCommits.contains(offer.id) else {
+            throw WindowManagementError.noCapturedWindow
+        }
+        guard await preflight() else { throw WindowManagementError.displayConfigurationChanged }
+
+        // Actor reentrancy is possible at the preflight await. Re-fetch and
+        // validate the exact retained AX window before it can become a write.
+        guard let record = records[offer.token.id], record.window.pid == offer.token.pid,
+              record.ownership.dragCommits.contains(offer.id),
+              !record.revisionTracker.snapshot(since: 0).destroyed,
+              AXIsProcessTrusted() else { throw WindowManagementError.noCapturedWindow }
+        let deadline = offer.ticket.totalDeadline
+        let frame = try Self.dragWindow(record.window, before: deadline).stableFrame()
+        try WindowFilter(ownPID: ProcessInfo.processInfo.processIdentifier)
+            .validate(Self.dragWindow(record.window, before: deadline))
+        guard Self.isFinite(frame), frame.width > 0, frame.height > 0,
+              abs(frame.width - offer.originalFrame.width) <= 2,
+              abs(frame.height - offer.originalFrame.height) <= 2,
+              offer.ticket.beginWrite(now: DispatchTime.now().uptimeNanoseconds) else {
+            throw WindowManagementError.displayConfigurationChanged
+        }
+
+        defer {
+            let timestamp = DispatchTime.now().uptimeNanoseconds
+            record.revisionTracker.recordWrite(at: timestamp)
+        }
+        let result = try mover.moveDrag(Self.dragWindow(record.window, before: deadline),
+                                        to: offer.targetFrame, ticket: offer.ticket)
+        guard let latest = records[offer.token.id], latest.window.pid == offer.token.pid,
+              latest.ownership.dragCommits.contains(offer.id) else { throw WindowManagementError.noCapturedWindow }
+        return result.actualFrame
+    }
+
+    func releaseDragCommit(token: RuntimeWindowToken, commitID: DragCommitID) async {
+        guard let record = records[token.id], record.window.pid == token.pid else { return }
+        releaseOwnership(id: token.id) { $0.releaseDragCommit(commitID) }
+    }
+
+}
+
+extension AccessibilityWindowRuntime: DragWindowReading {}
+extension AccessibilityWindowRuntime: DragCommitOperating {}

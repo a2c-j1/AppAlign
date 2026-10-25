@@ -18,7 +18,7 @@ rules:
       include:
         - AppAlign/**/*.swift
       exclude:
-        - AppAlign/WindowManagement.swift
+        - AppAlign/Window/WindowManagement.swift
     pattern-regex: '\bAXUIElement(?:CreateApplication|CopyAttributeValue|GetPid|IsAttributeSettable|PerformAction|SetAttributeValue|SetMessagingTimeout)\s*\('
 
   - id: appalign.input.centralize-event-tap
@@ -30,7 +30,7 @@ rules:
       include:
         - AppAlign/**/*.swift
       exclude:
-        - AppAlign/InputMonitor.swift
+        - AppAlign/Keyboard/InputMonitor.swift
     pattern-regex: '\b(?:CGEvent\.tapCreate|CGEventTapCreate)\s*\('
 
   - id: appalign.spaces.centralize-private-api
@@ -42,5 +42,5 @@ rules:
       include:
         - AppAlign/**/*.swift
       exclude:
-        - AppAlign/SpaceProvider.swift
-    pattern-regex: '\b(?:CGS|SLS)[A-Za-z0-9_]*\s*\('
+        - AppAlign/Space/SpaceProvider.swift
+    pattern-regex: '\b(?:CGS(?!ize\b)|SLS)[A-Za-z0-9_]*\s*\('

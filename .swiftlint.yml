@@ -1,5 +1,6 @@
 included:
   - AppAlign
+  - AppAlignTests
 
 excluded:
   - AppAlign/Assets.xcassets
