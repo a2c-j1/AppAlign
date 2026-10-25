@@ -883,6 +883,8 @@
 						INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 						INFOPLIST_KEY_LSUIElement = YES;
 						MACOSX_DEPLOYMENT_TARGET = 15.0;
+						MARKETING_VERSION = 0.0.1;
+						CURRENT_PROJECT_VERSION = 1;
 						PRODUCT_BUNDLE_IDENTIFIER = jp.a2c.AppAlign;
 						PRODUCT_NAME = "$(TARGET_NAME)";
 						SDKROOT = macosx;
@@ -907,6 +909,8 @@
 						INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 						INFOPLIST_KEY_LSUIElement = YES;
 						MACOSX_DEPLOYMENT_TARGET = 15.0;
+						MARKETING_VERSION = 0.0.1;
+						CURRENT_PROJECT_VERSION = 1;
 						PRODUCT_BUNDLE_IDENTIFIER = jp.a2c.AppAlign;
 						PRODUCT_NAME = "$(TARGET_NAME)";
 						SDKROOT = macosx;
