@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
+    @AppStorage(AppLanguage.defaultsKey) private var selectedLanguage = AppLanguage.english.rawValue
     @EnvironmentObject private var placementController: PlacementController
     @EnvironmentObject private var layoutController: LayoutController
     @EnvironmentObject private var dragDetectionController: DragDetectionController
@@ -17,6 +18,8 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
 
+            languageSection
+
             GroupBox("Display layout") {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -25,7 +28,7 @@ struct ContentView: View {
                             set: { if let id = $0 { layoutController.selectDisplay(id) } }
                         )) {
                             ForEach(layoutController.displayProvider.snapshot.displays) { display in
-                                Text(display.name + (display.isPrimary ? " (Primary)" : ""))
+                                Text(display.name + (display.isPrimary ? L10n.string(" (Primary)") : ""))
                                     .tag(Optional(display.id))
                             }
                         }
@@ -42,15 +45,15 @@ struct ContentView: View {
 
                     if SkyLightReadOnlyBackend.currentHostSupportsScopedSpaceUse {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Space別レイアウト（対象環境で動作確認済み）")
+                            Text("Space-specific layouts (validated on this Mac)")
                                 .font(.caption.weight(.semibold))
                             if let display = layoutController.selectedDisplay {
                                 let snapshot = layoutController.spaceSnapshot(for: display)
                                 if snapshot.mode == .validatedScoped, let id = snapshot.spaceID {
-                                    Text("Space別保存が有効 · ID末尾: \(String(id.value.suffix(8)))")
+                                    Text("Space-specific saving is active · ID suffix: \(String(id.value.suffix(8)))")
                                         .font(.caption.monospaced())
                                 } else {
-                                    Text("共通レイアウトを使用 · \(snapshot.reason ?? "この画面のSpaceを取得できません")")
+                                    Text("Using the common layout · \(L10n.string(snapshot.reason ?? "Could not identify this display's Space."))")
                                         .font(.caption)
                                 }
                             }
@@ -61,7 +64,7 @@ struct ContentView: View {
                     HStack {
                         Picker("Template", selection: $layoutController.template) {
                             ForEach(LayoutTemplate.allCases) { template in
-                                Text(template.title).tag(template)
+                                Text(L10n.string(template.title)).tag(template)
                             }
                         }
                         Stepper("Zones: \(layoutController.zoneCount)", value: $layoutController.zoneCount, in: 1 ... 128)
@@ -90,7 +93,7 @@ struct ContentView: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(!layoutController.canEdit || !placementController.hasCapturedWindow || placementController.isBusy || layoutController.selectedZoneID == nil)
                         if let error = layoutController.persistenceErrorMessage ?? layoutController.errorMessage {
-                            Text(error).font(.caption).foregroundStyle(.red)
+                            Text(L10n.string(error)).font(.caption).foregroundStyle(.red)
                         }
                         if layoutController.canRetrySave {
                             Button("Retry Save") {
@@ -180,7 +183,7 @@ struct ContentView: View {
                     }
                     .disabled(!layoutController.canEdit)
                     HStack {
-                        Text("Selection radius: \(Int(dragSnapController.settings.selectionRadius)) pt")
+                        Text(L10n.string("Selection radius: \(Int(dragSnapController.settings.selectionRadius)) pt"))
                         Slider(value: Binding(
                             get: { dragSnapController.settings.selectionRadius },
                             set: { value in var updated = dragSnapController.settings; updated.selectionRadius = value; dragSnapController.updateSettings(updated) }
@@ -188,7 +191,7 @@ struct ContentView: View {
                     }
                     .disabled(!layoutController.canEdit)
                     HStack {
-                        Text(dragDetectionController.statusMessage)
+                        Text(L10n.string(dragDetectionController.statusMessage))
                             .font(.callout)
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -199,7 +202,7 @@ struct ContentView: View {
                             }
                         }
                     }
-                    Text(dragSnapController.statusMessage).font(.caption).foregroundStyle(.secondary)
+                    Text(L10n.string(dragSnapController.statusMessage)).font(.caption).foregroundStyle(.secondary)
                     Text("Accessibility lets AppAlign observe pointer events and identify the window under the pointer. It is requested only when this feature is enabled. AppAlign never changes or injects input.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -210,11 +213,11 @@ struct ContentView: View {
 
             GroupBox("Focused-window placement") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(
+                    Text(L10n.string(
                         "Keep another app active, open the AppAlign menu-bar item, and choose “Capture Focused Window”. " +
                             "AppAlign excludes its own windows, dialogs, minimized/full-screen windows, and windows whose " +
                             "position or size is not writable."
-                    )
+                    ))
                         .font(.callout)
 
                     HStack {
@@ -229,7 +232,7 @@ struct ContentView: View {
                         .disabled(!placementController.hasCapturedWindow || placementController.isBusy)
                     }
 
-                    Text(placementController.statusMessage)
+                    Text(L10n.string(placementController.statusMessage))
                         .font(.callout.monospaced())
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
@@ -270,6 +273,17 @@ struct ContentView: View {
 }
 
 private extension ContentView {
+    var languageSection: some View {
+        GroupBox("Language") {
+            Picker("App language", selection: $selectedLanguage) {
+                Text("English").tag(AppLanguage.english.rawValue)
+                Text("Japanese").tag(AppLanguage.japanese.rawValue)
+            }
+            .frame(maxWidth: 280)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     var newWindowHistorySection: some View {
         GroupBox("New-window history") {
             VStack(alignment: .leading, spacing: 10) {
@@ -292,8 +306,8 @@ private extension ContentView {
                 ))
                 .disabled(!layoutController.canEdit || !layoutController.appZoneHistoryAvailable ||
                           !layoutController.appHistorySettings.monitorNewWindows)
-                Text(layoutController.appZoneHistoryErrorMessage ??
-                     "History is learned after a successful placement. New-window monitoring and automatic restoration start off.")
+                Text(L10n.string(layoutController.appZoneHistoryErrorMessage ??
+                     "History is learned after a successful placement. New-window monitoring and automatic restoration start off."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if placementController.historyPermissionRetryRequired {

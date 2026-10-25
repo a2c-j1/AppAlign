@@ -47,7 +47,7 @@ struct KeyboardSettingsView: View {
                     Picker("Add shortcut for zone", selection: $zoneToAdd) {
                         Text("Choose a zone").tag(Optional<ZoneID>.none)
                         ForEach(layoutController.keyboardZoneChoices, id: \.self) { id in
-                            Text(zoneLabel(id)).tag(Optional(id))
+                            Text(L10n.string(zoneLabel(id))).tag(Optional(id))
                         }
                     }
                     .frame(maxWidth: 260)
@@ -58,25 +58,25 @@ struct KeyboardSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 ForEach(settings.shortcutIssues, id: \.self) { issue in
-                    Text(issue).font(.caption).foregroundStyle(.red)
+                    Text(L10n.string(issue)).font(.caption).foregroundStyle(.red)
                 }
 
                 Divider()
                 HStack {
-                    Label(placementController.accessibilityGranted ? "Accessibility access granted" : "Accessibility access required", systemImage: placementController.accessibilityGranted ? "checkmark.shield" : "hand.raised")
+                    Label(L10n.string(placementController.accessibilityGranted ? "Accessibility access granted" : "Accessibility access required"), systemImage: placementController.accessibilityGranted ? "checkmark.shield" : "hand.raised")
                     if !placementController.accessibilityGranted {
                         Button("Request access") { placementController.requestAccessibilityAccess() }
                     }
                 }
-                Text(globalHotkeys.statusMessage)
+                Text(L10n.string(globalHotkeys.statusMessage))
                     .font(.callout)
                     .foregroundStyle(globalHotkeys.statusMessage.contains("Could not") || globalHotkeys.statusMessage.contains("not") ? .red : .secondary)
-                Text(keyboardSnapController.statusMessage)
+                Text(L10n.string(keyboardSnapController.statusMessage))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                 if let error = layoutController.keyboardSettingsErrorMessage {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                    Text(L10n.string(error)).font(.caption).foregroundStyle(.red)
                 }
                 Text("Carbon consumes a registered shortcut. If Accessibility fails after macOS delivers a registered key, AppAlign cannot guarantee that the original app receives it.")
                     .font(.caption)
@@ -97,7 +97,7 @@ struct KeyboardSettingsView: View {
                         ForEach(layoutHotkeyLayouts, id: \.id) { layout in
                             layoutShortcutRow(layout)
                         }
-                        Text(layoutHotkeys.statusMessage).font(.caption).foregroundStyle(.secondary)
+                        Text(L10n.string(layoutHotkeys.statusMessage)).font(.caption).foregroundStyle(.secondary)
                         Text("Each shortcut applies its saved layout to the display under the pointer. Drag detection uses Accessibility permission and input is never suppressed.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -113,7 +113,7 @@ struct KeyboardSettingsView: View {
         let shortcut = settings.shortcuts[action] ?? KeyboardShortcut(keyCode: 0, modifiers: 0)
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(actionName(action)).frame(width: 120, alignment: .leading)
+                Text(L10n.string(actionName(action))).frame(width: 120, alignment: .leading)
                 Picker("Key", selection: Binding(
                     get: { shortcut.keyCode },
                     set: { value in updateShortcut(action) { $0.keyCode = value } }
@@ -132,7 +132,7 @@ struct KeyboardSettingsView: View {
             }
             .disabled(!layoutController.canEdit)
             if case .zone(let id) = action {
-                Text("Display number: \(id.displayNumber)")
+                Text(L10n.string("Display number: \(id.displayNumber)"))
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
@@ -190,7 +190,7 @@ struct KeyboardSettingsView: View {
         let current = layoutController.layoutHotkeySettings.bindings[layout.id]
             ?? KeyboardShortcut(keyCode: 37, modifiers: KeyboardShortcut.defaultModifiers | KeyboardShortcut.shift)
         HStack {
-            Text(layout.name ?? (layout.id == PersistentStoreCoordinator.defaultLayoutID ? "Default" : "Layout"))
+            Text(layout.name ?? L10n.string(layout.id == PersistentStoreCoordinator.defaultLayoutID ? "Default" : "Layout"))
                 .frame(width: 130, alignment: .leading)
             Picker("Key", selection: Binding(
                 get: { current.keyCode },

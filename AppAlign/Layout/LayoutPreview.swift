@@ -24,7 +24,7 @@ struct LayoutPreview: View {
                                         .fill(zone.id == selectedZoneID ? Color.accentColor.opacity(0.38) : Color.accentColor.opacity(0.14))
                                     RoundedRectangle(cornerRadius: 5)
                                         .stroke(zone.id == selectedZoneID ? Color.accentColor : Color.accentColor.opacity(0.65), lineWidth: 2)
-                                    Text("Zone \(zone.id.displayNumber)")
+                                    Text(L10n.string("Zone \(zone.id.displayNumber)"))
                                         .font(.caption.weight(.semibold))
                                         .foregroundStyle(.primary)
                                 }

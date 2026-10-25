@@ -58,7 +58,7 @@ struct EditableLayoutPreview: View {
             RoundedRectangle(cornerRadius: 5)
                 .fill(selected ? Color.accentColor.opacity(0.38) : Color.accentColor.opacity(0.18))
                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(selected ? Color.accentColor : Color.accentColor.opacity(0.8), lineWidth: 2))
-                .overlay(Text("Zone \(zone.id.displayNumber)").font(.caption.weight(.semibold)).foregroundStyle(.primary))
+                .overlay(Text(L10n.string("Zone \(zone.id.displayNumber)")).font(.caption.weight(.semibold)).foregroundStyle(.primary))
                 .contentShape(Rectangle())
                 .onTapGesture {
                     if NSEvent.modifierFlags.contains(.shift) {
