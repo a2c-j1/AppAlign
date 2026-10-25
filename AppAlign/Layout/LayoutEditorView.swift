@@ -117,7 +117,7 @@ extension LayoutEditorView {
                 set: { newDisplay in requestDisplayChange(newDisplay) }
             )) {
                 ForEach(controller.displayProvider.snapshot.displays) { display in
-                    Text(display.name + (display.isPrimary ? " (Primary)" : "")).tag(display.id)
+                    Text(display.name + (display.isPrimary ? L10n.string(" (Primary)") : "")).tag(display.id)
                 }
             }
             .labelsHidden()
@@ -147,7 +147,7 @@ extension LayoutEditorView {
                         } label: {
                             HStack {
                                 Image(systemName: symbol(for: layout))
-                                Text(layout.name ?? layout.template)
+                                Text(layout.name ?? L10n.string(layout.template))
                                     .lineLimit(1)
                                 Spacer(minLength: 0)
                                 if layout.id == controller.editorCatalog(for: targetDisplayID).appliedLayoutID {
@@ -165,7 +165,7 @@ extension LayoutEditorView {
                         Button {
                             chooseTemplate(template)
                         } label: {
-                            Label(template.title, systemImage: "square.grid.2x2")
+                            Label(L10n.string(template.title), systemImage: "square.grid.2x2")
                         }
                         .buttonStyle(.plain)
                     }
@@ -221,7 +221,7 @@ extension LayoutEditorView {
             }
 
             if let error = model.errorMessage ?? statusMessage ?? controller.persistenceErrorMessage {
-                Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
+                Text(L10n.string(error)).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
 
             HStack {
@@ -311,7 +311,7 @@ extension LayoutEditorView {
         ScrollView(.horizontal) {
             HStack {
                 ForEach(ids, id: \.self) { id in
-                    Toggle("Zone \(ZoneID(rawValue: id).displayNumber)", isOn: Binding(
+                    Toggle(L10n.string("Zone \(ZoneID(rawValue: id).displayNumber)"), isOn: Binding(
                         get: { model.selectedZoneIDs.contains(id) },
                         set: { selected in
                             var ids = model.selectedZoneIDs

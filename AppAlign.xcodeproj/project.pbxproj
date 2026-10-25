@@ -106,6 +106,11 @@
 			C20000000000000000000001 /* DragDetectionTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = C40000000000000000000001 /* DragDetectionTests.swift */; };
 			A10000000000000000000001 /* AppAlignApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* AppAlignApp.swift */; };
 			A10000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* ContentView.swift */; };
+			A10000000000000000000030 /* AppLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000030 /* AppLanguage.swift */; };
+			A10000000000000000000031 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000031 /* Localizable.strings */; };
+			A10000000000000000000034 /* AppLanguage.swift in Tests */ = {isa = PBXBuildFile; fileRef = A20000000000000000000030 /* AppLanguage.swift */; };
+			A10000000000000000000035 /* AppLanguageTests.swift in Tests */ = {isa = PBXBuildFile; fileRef = A20000000000000000000035 /* AppLanguageTests.swift */; };
+			A10000000000000000000036 /* Localizable.strings in Tests Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000031 /* Localizable.strings */; };
 			A10000000000000000000006 /* LayoutEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* LayoutEditorView.swift */; };
 			A10000000000000000000007 /* LayoutEditorPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* LayoutEditorPreview.swift */; };
 			A10000000000000000000003 /* WindowManagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* WindowManagement.swift */; };
@@ -215,6 +220,10 @@
 			C40000000000000000000001 /* DragDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragDetectionTests.swift; sourceTree = "<group>"; };
 			A20000000000000000000001 /* AppAlignApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAlignApp.swift; sourceTree = "<group>"; };
 			A20000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+			A20000000000000000000030 /* AppLanguage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLanguage.swift; sourceTree = "<group>"; };
+			A20000000000000000000032 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+			A20000000000000000000033 /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ja; path = ja.lproj/Localizable.strings; sourceTree = "<group>"; };
+			A20000000000000000000035 /* AppLanguageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLanguageTests.swift; sourceTree = "<group>"; };
 			A20000000000000000000005 /* WindowManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowManagement.swift; sourceTree = "<group>"; };
 			A20000000000000000000006 /* LayoutEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEditorView.swift; sourceTree = "<group>"; };
 			A20000000000000000000007 /* LayoutEditorPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEditorPreview.swift; sourceTree = "<group>"; };
@@ -294,6 +303,7 @@
 					2EE33C677E22FF397F711E2B /* Space */,
 					9848074216CEA6E378E026A5 /* Window */,
 					A20000000000000000000003 /* Assets.xcassets */,
+					A20000000000000000000031 /* Localizable.strings */,
 				);
 				path = AppAlign;
 				sourceTree = "<group>";
@@ -335,6 +345,7 @@
 				children = (
 					A20000000000000000000001 /* AppAlignApp.swift */,
 					A20000000000000000000002 /* ContentView.swift */,
+					A20000000000000000000030 /* AppLanguage.swift */,
 				);
 				path = App;
 				sourceTree = "<group>";
@@ -534,6 +545,7 @@
 				isa = PBXGroup;
 				children = (
 					B2000000000000000000000D /* PersistenceTests.swift */,
+					A20000000000000000000035 /* AppLanguageTests.swift */,
 				);
 				path = Persistence;
 				sourceTree = "<group>";
@@ -574,6 +586,15 @@
 			};
 /* End PBXGroup section */
 
+/* Begin PBXVariantGroup section */
+			A20000000000000000000031 /* Localizable.strings */ = {
+				isa = PBXVariantGroup;
+				children = (A20000000000000000000032 /* en */, A20000000000000000000033 /* ja */,);
+				name = Localizable.strings;
+				sourceTree = "<group>";
+			};
+/* End PBXVariantGroup section */
+
 /* Begin PBXSourcesBuildPhase section */
 				A50000000000000000000001 /* Sources */ = {
 				isa = PBXSourcesBuildPhase;
@@ -581,6 +602,7 @@
 				files = (
 					A10000000000000000000001 /* AppAlignApp.swift in Sources */,
 					A10000000000000000000002 /* ContentView.swift in Sources */,
+					A10000000000000000000030 /* AppLanguage.swift in Sources */,
 					A10000000000000000000006 /* LayoutEditorView.swift in Sources */,
 					A10000000000000000000007 /* LayoutEditorPreview.swift in Sources */,
 					A10000000000000000000003 /* WindowManagement.swift in Sources */,
@@ -665,6 +687,8 @@
 					D1000000000000000000000E /* DisplayLayoutRefresh.swift in Tests */,
 					B10000000000000000000014 /* WindowManagement.swift in Tests */,
 					B10000000000000000000015 /* PersistenceTests.swift in Tests */,
+					A10000000000000000000034 /* AppLanguage.swift in Tests */,
+					A10000000000000000000035 /* AppLanguageTests.swift in Tests */,
 					N10000000000000000000001 /* AppHistoryCoordinatorTests.swift in Tests */,
 					M10000000000000000000001 /* LayoutPersistenceControllerTests.swift in Tests */,
 					L10000000000000000000001 /* AppZoneHistoryPersistenceTests.swift in Tests */,
@@ -801,7 +825,7 @@
 					compatibilityVersion = "Xcode 16.0";
 					developmentRegion = en;
 					hasScannedForEncodings = 0;
-					knownRegions = (en, Base,);
+				knownRegions = (en, ja, Base,);
 					mainGroup = A40000000000000000000001;
 					productRefGroup = A40000000000000000000003 /* Products */;
 					projectDirPath = "";
@@ -814,13 +838,13 @@
 			A80000000000000000000001 /* Resources */ = {
 				isa = PBXResourcesBuildPhase;
 				buildActionMask = 2147483647;
-				files = (B1000000000000000000000F /* THIRD_PARTY_NOTICES.md in Resources */,);
+			files = (B1000000000000000000000F /* THIRD_PARTY_NOTICES.md in Resources */, A10000000000000000000031 /* Localizable.strings in Resources */,);
 					runOnlyForDeploymentPostprocessing = 0;
 			};
 			A80000000000000000000002 /* AppAlignTests Resources */ = {
 				isa = PBXResourcesBuildPhase;
 				buildActionMask = 2147483647;
-				files = ();
+				files = (A10000000000000000000036 /* Localizable.strings in Tests Resources */,);
 				runOnlyForDeploymentPostprocessing = 0;
 			};
 /* End PBXResourcesBuildPhase section */

@@ -6,6 +6,7 @@ import SwiftUI
 @main
 struct AppAlignApp: App {
     @NSApplicationDelegateAdaptor(AppLifecycleDelegate.self) private var appDelegate
+    @AppStorage(AppLanguage.defaultsKey) private var selectedLanguage = AppLanguage.english.rawValue
     @StateObject private var placementController: PlacementController
     @StateObject private var layoutController: LayoutController
     @StateObject private var keyboardSnapController: KeyboardSnapController
@@ -99,6 +100,7 @@ struct AppAlignApp: App {
     var body: some Scene {
         MenuBarExtra("AppAlign", systemImage: "rectangle.split.3x1") {
             MenuBarView()
+                .id(selectedLanguage)
                 .environmentObject(placementController)
                 .environmentObject(layoutController)
                 .environmentObject(keyboardSnapController)
@@ -106,6 +108,7 @@ struct AppAlignApp: App {
                 .environmentObject(layoutHotkeys)
                 .environmentObject(dragDetectionController)
                 .environmentObject(dragSnapController)
+                .environment(\.locale, AppLanguage(rawValue: selectedLanguage)?.locale ?? AppLanguage.english.locale)
                 .task {
                     appDelegate.layoutController = layoutController
                     appDelegate.globalHotkeys = globalHotkeys
@@ -123,6 +126,7 @@ struct AppAlignApp: App {
 
         Settings {
             ContentView()
+                .id(selectedLanguage)
                 .environmentObject(placementController)
                 .environmentObject(layoutController)
                 .environmentObject(keyboardSnapController)
@@ -130,6 +134,7 @@ struct AppAlignApp: App {
                 .environmentObject(layoutHotkeys)
                 .environmentObject(dragDetectionController)
                 .environmentObject(dragSnapController)
+                .environment(\.locale, AppLanguage(rawValue: selectedLanguage)?.locale ?? AppLanguage.english.locale)
                 .task {
                     appDelegate.layoutController = layoutController
                     appDelegate.globalHotkeys = globalHotkeys
@@ -351,10 +356,10 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             let alert = NSAlert()
-            alert.messageText = "AppAlign could not save your changes."
-            alert.informativeText = layoutController.persistenceErrorMessage ?? "The save did not complete. Retry before quitting."
-            alert.addButton(withTitle: "Retry Save")
-            alert.addButton(withTitle: "Cancel Quit")
+            alert.messageText = L10n.string("AppAlign could not save your changes.")
+            alert.informativeText = L10n.string(layoutController.persistenceErrorMessage ?? "The save did not complete. Retry before quitting.")
+            alert.addButton(withTitle: L10n.string("Retry Save"))
+            alert.addButton(withTitle: L10n.string("Cancel Quit"))
             let response = alert.runModal()
             let retrySucceeded: Bool
             if response == .alertFirstButtonReturn {
